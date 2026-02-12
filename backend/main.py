@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from api.routes import picks, odds, models as models_router, copilot
+from api.routes import picks, odds, models as models_router, copilot, ev
 
 load_dotenv()
 
@@ -24,6 +24,7 @@ app.include_router(picks.router, prefix="/api/picks", tags=["picks"])
 app.include_router(odds.router, prefix="/api/odds", tags=["odds"])
 app.include_router(models_router.router, prefix="/api/models", tags=["models"])
 app.include_router(copilot.router, prefix="/api/copilot", tags=["copilot"])
+app.include_router(ev.router, prefix="/api/ev-opportunities", tags=["ev"])
 
 
 @app.get("/health")

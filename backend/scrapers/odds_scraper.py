@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """NBA odds pipeline - fetches odds, calculates no-vig lines, finds +EV bets.
 
+Stores every pull (games, odds_snapshots, true_lines, ev_opportunities) in
+Supabase and prints results to the console.
+
 Usage:
     python backend/scrapers/odds_scraper.py
 """
@@ -32,15 +35,20 @@ MIN_EV_THRESHOLD = 1.0
 # Default Kelly fraction (quarter Kelly).
 DEFAULT_KELLY_FRACTION = 0.25
 
+# Default bankroll units for recommended-units sizing.
+DEFAULT_BANKROLL_UNITS = 100.0
+
 
 @dataclass
 class EVOpportunity:
+    game_id: str
     game: str
     commence_time: str
     market: str
     selection: str
     point: float | None
     book: str
+    book_key: str
     book_odds: int
     book_implied_prob: float
     true_prob: float
@@ -129,12 +137,14 @@ def scan_game(game: Game) -> list[EVOpportunity]:
 
                 opportunities.append(
                     EVOpportunity(
+                        game_id=game.id,
                         game=game_label,
                         commence_time=game.commence_time,
                         market=market_key,
                         selection=outcome.name,
                         point=outcome.point,
                         book=bk.title,
+                        book_key=bk.key,
                         book_odds=outcome.price,
                         book_implied_prob=american_to_implied_prob(outcome.price),
                         true_prob=true_prob,
@@ -145,6 +155,107 @@ def scan_game(game: Game) -> list[EVOpportunity]:
 
     return opportunities
 
+
+# ---------------------------------------------------------------------------
+# Database persistence
+# ---------------------------------------------------------------------------
+
+def store_games(db_client: object, games: list[Game]) -> None:
+    """Upsert all games into the database."""
+    from db import upsert_game
+
+    for game in games:
+        upsert_game(
+            db_client,
+            game_id=game.id,
+            sport=game.sport_key,
+            home_team=game.home_team,
+            away_team=game.away_team,
+            start_time=game.commence_time,
+        )
+
+
+def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
+    """Store raw odds from every sportsbook/market combination."""
+    from db import insert_odds_snapshot
+
+    for game in games:
+        for bk in game.bookmakers:
+            for mkt in bk.markets:
+                if len(mkt.outcomes) != 2:
+                    continue
+                home_out = mkt.outcomes[0]
+                away_out = mkt.outcomes[1]
+                insert_odds_snapshot(
+                    db_client,
+                    game_id=game.id,
+                    sportsbook=bk.key,
+                    market_type=mkt.key,
+                    home_odds=home_out.price,
+                    away_odds=away_out.price,
+                    spread_value=home_out.point if mkt.key == "spreads" else None,
+                    total_value=home_out.point if mkt.key == "totals" else None,
+                )
+
+
+def store_true_lines(db_client: object, games: list[Game]) -> None:
+    """Devig sharp lines and store true probabilities."""
+    from db import insert_true_line
+
+    for game in games:
+        sharp_key = find_sharp_book(game)
+        if sharp_key is None:
+            continue
+        sharp_bk = next(bk for bk in game.bookmakers if bk.key == sharp_key)
+
+        for market_key in ("h2h", "spreads", "totals"):
+            sharp_market = get_market(sharp_bk.markets, market_key)
+            if sharp_market is None or len(sharp_market.outcomes) != 2:
+                continue
+            true_home, true_away = calculate_no_vig_probability(
+                sharp_market.outcomes[0].price,
+                sharp_market.outcomes[1].price,
+            )
+            no_vig_line = sharp_market.outcomes[0].point
+            insert_true_line(
+                db_client,
+                game_id=game.id,
+                market_type=market_key,
+                true_home_prob=round(true_home, 6),
+                true_away_prob=round(true_away, 6),
+                sharp_book=sharp_key,
+                no_vig_line=no_vig_line,
+            )
+
+
+def store_ev_opportunities(
+    db_client: object, opportunities: list[EVOpportunity]
+) -> None:
+    """Store +EV opportunities in the database."""
+    from db import insert_ev_opportunity
+
+    for opp in opportunities:
+        recommended_units = round(opp.kelly_pct * DEFAULT_BANKROLL_UNITS, 2)
+        insert_ev_opportunity(
+            db_client,
+            game_id=opp.game_id,
+            sportsbook=opp.book_key,
+            market_type=opp.market,
+            side=opp.selection + (
+                f" {opp.point}" if opp.point is not None else ""
+            ),
+            book_odds=opp.book_odds,
+            book_implied_prob=round(opp.book_implied_prob, 6),
+            true_prob=round(opp.true_prob, 6),
+            ev_percentage=round(opp.ev_pct, 2),
+            kelly_frac=round(opp.kelly_pct, 6),
+            recommended_units=recommended_units,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Console output
+# ---------------------------------------------------------------------------
 
 def format_american(odds: int) -> str:
     """Format American odds with a leading + for positive values."""
@@ -204,6 +315,10 @@ def print_results(opportunities: list[EVOpportunity]) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main() -> None:
     """Run the NBA odds pipeline."""
     # Load .env from project root.
@@ -218,10 +333,35 @@ def main() -> None:
         print("No NBA games available right now.")
         return
 
+    # --- Persist to Supabase ---
+    try:
+        from db import get_supabase
+
+        db = get_supabase()
+        print("Storing games...")
+        store_games(db, games)
+        print("Storing odds snapshots...")
+        store_odds_snapshots(db, games)
+        print("Storing true lines...")
+        store_true_lines(db, games)
+    except Exception as e:
+        print(f"Warning: DB write failed ({e}). Continuing with console output.")
+        db = None
+
+    # --- Scan for +EV ---
     all_opportunities: list[EVOpportunity] = []
     for game in games:
         all_opportunities.extend(scan_game(game))
 
+    if db is not None:
+        try:
+            print(f"Storing {len(all_opportunities)} EV opportunities...")
+            store_ev_opportunities(db, all_opportunities)
+            print("All data persisted to Supabase.")
+        except Exception as e:
+            print(f"Warning: EV opportunity DB write failed ({e}).")
+
+    # --- Console output ---
     print_results(all_opportunities)
 
 
