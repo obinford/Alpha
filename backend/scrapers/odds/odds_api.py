@@ -1,14 +1,113 @@
 """Scraper for The Odds API - fetches live odds from multiple sportsbooks."""
 
+import os
+from dataclasses import dataclass, field
 
-def fetch_odds(sport: str, markets: list[str] | None = None) -> list[dict]:
+import httpx
+
+
+API_BASE = "https://api.the-odds-api.com/v4/sports"
+
+
+@dataclass
+class Outcome:
+    name: str
+    price: int  # American odds
+    point: float | None = None  # spread/total line
+
+
+@dataclass
+class Market:
+    key: str  # h2h, spreads, totals
+    outcomes: list[Outcome] = field(default_factory=list)
+
+
+@dataclass
+class Bookmaker:
+    key: str
+    title: str
+    markets: list[Market] = field(default_factory=list)
+
+
+@dataclass
+class Game:
+    id: str
+    sport_key: str
+    home_team: str
+    away_team: str
+    commence_time: str
+    bookmakers: list[Bookmaker] = field(default_factory=list)
+
+
+def get_api_key() -> str:
+    """Read API key from environment."""
+    key = os.environ.get("THE_ODDS_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "THE_ODDS_API_KEY environment variable is not set. "
+            "Add it to .env in the project root."
+        )
+    return key
+
+
+def fetch_odds(
+    sport: str,
+    markets: list[str] | None = None,
+    regions: str = "us",
+) -> list[Game]:
     """Fetch current odds for a given sport from The Odds API.
 
     Args:
-        sport: Sport key (e.g. 'baseball_mlb', 'basketball_nba').
-        markets: List of market types (e.g. ['h2h', 'spreads', 'totals']).
+        sport: Sport key (e.g. 'basketball_nba').
+        markets: Market types to fetch (default: h2h, spreads, totals).
+        regions: Comma-separated regions (default: 'us').
 
     Returns:
-        List of odds data dicts.
+        List of Game objects with bookmaker odds attached.
     """
-    raise NotImplementedError
+    if markets is None:
+        markets = ["h2h", "spreads", "totals"]
+
+    api_key = get_api_key()
+
+    resp = httpx.get(
+        f"{API_BASE}/{sport}/odds",
+        params={
+            "apiKey": api_key,
+            "regions": regions,
+            "markets": ",".join(markets),
+            "oddsFormat": "american",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+    games: list[Game] = []
+    for g in resp.json():
+        bookmakers: list[Bookmaker] = []
+        for bk in g.get("bookmakers", []):
+            bk_markets: list[Market] = []
+            for mkt in bk.get("markets", []):
+                outcomes = [
+                    Outcome(
+                        name=o["name"],
+                        price=int(o["price"]),
+                        point=o.get("point"),
+                    )
+                    for o in mkt.get("outcomes", [])
+                ]
+                bk_markets.append(Market(key=mkt["key"], outcomes=outcomes))
+            bookmakers.append(
+                Bookmaker(key=bk["key"], title=bk["title"], markets=bk_markets)
+            )
+        games.append(
+            Game(
+                id=g["id"],
+                sport_key=g["sport_key"],
+                home_team=g["home_team"],
+                away_team=g["away_team"],
+                commence_time=g["commence_time"],
+                bookmakers=bookmakers,
+            )
+        )
+    return games
