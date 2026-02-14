@@ -10,17 +10,16 @@ ODDS_API_SPORT_KEYS: dict[str, str] = {
     "NHL": "icehockey_nhl",
     "CFB": "americanfootball_ncaaf",
     "CBB": "basketball_ncaab",
-    # Tennis
-    "ATP": "tennis_atp_aus_open",
-    "WTA": "tennis_wta_aus_open",
-    # Soccer
-    "EPL": "soccer_epl",
-    "MLS": "soccer_usa_mls",
-    # Other
-    "CFL": "americanfootball_cfl",
     "WNBA": "basketball_wnba",
-    "KBO": "baseball_kbo",
-    "NPB": "baseball_npb",
+    # Major tennis (Grand Slam level)
+    "ATP_AUS_OPEN": "tennis_atp_aus_open",
+    "ATP_FRENCH_OPEN": "tennis_atp_french_open",
+    "ATP_WIMBLEDON": "tennis_atp_wimbledon",
+    "ATP_US_OPEN": "tennis_atp_us_open",
+    "WTA_AUS_OPEN": "tennis_wta_aus_open",
+    "WTA_FRENCH_OPEN": "tennis_wta_french_open",
+    "WTA_WIMBLEDON": "tennis_wta_wimbledon",
+    "WTA_US_OPEN": "tennis_wta_us_open",
 }
 
 SUPPORTED_SPORTS = list(ODDS_API_SPORT_KEYS.keys())
@@ -33,14 +32,15 @@ SPORT_DISPLAY_NAMES: dict[str, str] = {
     "icehockey_nhl": "NHL",
     "americanfootball_ncaaf": "CFB",
     "basketball_ncaab": "CBB",
-    "tennis_atp_aus_open": "ATP Tennis",
-    "tennis_wta_aus_open": "WTA Tennis",
-    "soccer_epl": "EPL",
-    "soccer_usa_mls": "MLS",
-    "americanfootball_cfl": "CFL",
     "basketball_wnba": "WNBA",
-    "baseball_kbo": "KBO",
-    "baseball_npb": "NPB",
+    "tennis_atp_aus_open": "ATP Australian Open",
+    "tennis_atp_french_open": "ATP French Open",
+    "tennis_atp_wimbledon": "ATP Wimbledon",
+    "tennis_atp_us_open": "ATP US Open",
+    "tennis_wta_aus_open": "WTA Australian Open",
+    "tennis_wta_french_open": "WTA French Open",
+    "tennis_wta_wimbledon": "WTA Wimbledon",
+    "tennis_wta_us_open": "WTA US Open",
 }
 
 # Sharp books in preference order - first available is used as the "true" line.
