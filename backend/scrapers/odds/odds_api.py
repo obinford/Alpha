@@ -10,6 +10,14 @@ API_BASE = "https://api.the-odds-api.com/v4/sports"
 
 
 @dataclass
+class SportInfo:
+    key: str
+    group: str
+    title: str
+    active: bool
+
+
+@dataclass
 class Outcome:
     name: str
     price: int  # American odds
@@ -48,6 +56,30 @@ def get_api_key() -> str:
             "Add it to .env in the project root."
         )
     return key
+
+
+def fetch_sports() -> list[SportInfo]:
+    """Fetch all sports currently available on The Odds API.
+
+    Returns only active (in-season) sports.
+    """
+    api_key = get_api_key()
+    resp = httpx.get(
+        API_BASE,
+        params={"apiKey": api_key},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return [
+        SportInfo(
+            key=s["key"],
+            group=s.get("group", ""),
+            title=s.get("title", s["key"]),
+            active=s.get("active", False),
+        )
+        for s in resp.json()
+        if s.get("active", False)
+    ]
 
 
 def fetch_odds(

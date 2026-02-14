@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""NBA odds pipeline - fetches odds, calculates no-vig lines, finds +EV bets.
+"""Multi-sport odds pipeline - fetches odds, calculates no-vig lines, finds +EV bets.
 
-Stores every pull (games, odds_snapshots, true_lines, ev_opportunities) in
-Supabase and prints results to the console.
+Discovers all in-season sports via The Odds API, fetches odds for each,
+stores every pull (games, odds_snapshots, true_lines, ev_opportunities) in
+Supabase, and prints results to the console.
 
 Usage:
-    python backend/scrapers/odds_scraper.py
+    python backend/scrapers/odds_scraper.py              # all available sports
+    python backend/scrapers/odds_scraper.py NBA NFL       # specific sports only
 """
 
 import os
@@ -15,6 +17,7 @@ from datetime import datetime, timezone
 
 # Allow running as a standalone script from the repo root.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
 
 from dotenv import load_dotenv
 
@@ -24,10 +27,9 @@ from models.ev_calculator import (
     calculate_no_vig_probability,
 )
 from models.kelly import kelly_fraction
-from scrapers.odds.odds_api import Game, Market, fetch_odds
+from scrapers.odds.odds_api import Game, Market, fetch_odds, fetch_sports
 
-# Sharp books in preference order - first available is used as the "true" line.
-SHARP_BOOKS = ["pinnacle", "circa", "betonlineag"]
+from config import ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES
 
 # Only surface bets with EV above this threshold.
 MIN_EV_THRESHOLD = 1.0
@@ -42,6 +44,7 @@ DEFAULT_BANKROLL_UNITS = 100.0
 @dataclass
 class EVOpportunity:
     game_id: str
+    sport_key: str
     game: str
     commence_time: str
     market: str
@@ -138,6 +141,7 @@ def scan_game(game: Game) -> list[EVOpportunity]:
                 opportunities.append(
                     EVOpportunity(
                         game_id=game.id,
+                        sport_key=game.sport_key,
                         game=game_label,
                         commence_time=game.commence_time,
                         market=market_key,
@@ -273,13 +277,18 @@ def format_point(market: str, point: float | None) -> str:
     return ""
 
 
-def print_results(opportunities: list[EVOpportunity]) -> None:
-    """Print +EV opportunities in a readable table."""
+def sport_display_name(sport_key: str) -> str:
+    """Return a human-readable sport name from the API sport key."""
+    return SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+
+
+def print_sport_results(sport_key: str, opportunities: list[EVOpportunity]) -> None:
+    """Print +EV opportunities for a single sport."""
+    sport_name = sport_display_name(sport_key)
     if not opportunities:
-        print("\nNo +EV opportunities found right now.")
+        print(f"  {sport_name}: no +EV opportunities\n")
         return
 
-    # Sort by EV% descending.
     opportunities.sort(key=lambda o: o.ev_pct, reverse=True)
 
     header = (
@@ -287,15 +296,12 @@ def print_results(opportunities: list[EVOpportunity]) -> None:
         f"{'Book':<20} {'Odds':>7} {'True%':>7} {'Book%':>7} "
         f"{'EV%':>7} {'Kelly%':>7}"
     )
-    print(f"\n{'=' * len(header)}")
-    print(
-        f"  NBA +EV Scanner  |  "
-        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  |  "
-        f"{len(opportunities)} opportunities"
-    )
-    print(f"{'=' * len(header)}")
+    divider = "-" * len(header)
+
+    print(f"\n  {sport_name}  ({len(opportunities)} opportunities)")
+    print(divider)
     print(header)
-    print("-" * len(header))
+    print(divider)
 
     for opp in opportunities:
         sel_display = opp.selection + format_point(opp.market, opp.point)
@@ -306,13 +312,72 @@ def print_results(opportunities: list[EVOpportunity]) -> None:
             f"{opp.ev_pct:>+6.1f}% {opp.kelly_pct * 100:>6.2f}%"
         )
 
-    print("-" * len(header))
-    best = opportunities[0]
+    print(divider)
+
+
+def print_results(all_opportunities: list[EVOpportunity]) -> None:
+    """Print +EV opportunities grouped by sport with a combined summary."""
+    banner_width = 120
+    print(f"\n{'=' * banner_width}")
+    print(
+        f"  RTM +EV Scanner  |  "
+        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  |  "
+        f"{len(all_opportunities)} total opportunities"
+    )
+    print(f"{'=' * banner_width}")
+
+    if not all_opportunities:
+        print("\nNo +EV opportunities found across any sport right now.\n")
+        return
+
+    # Group by sport.
+    sports_seen: list[str] = []
+    by_sport: dict[str, list[EVOpportunity]] = {}
+    for opp in all_opportunities:
+        if opp.sport_key not in by_sport:
+            by_sport[opp.sport_key] = []
+            sports_seen.append(opp.sport_key)
+        by_sport[opp.sport_key].append(opp)
+
+    for sport_key in sports_seen:
+        print_sport_results(sport_key, by_sport[sport_key])
+
+    # Best overall.
+    best = max(all_opportunities, key=lambda o: o.ev_pct)
     print(
         f"\nBest opportunity: {best.selection} "
-        f"({best.game}) at {best.book} "
-        f"[{format_american(best.book_odds)}] -> {best.ev_pct:+.1f}% EV"
+        f"({best.game}, {sport_display_name(best.sport_key)}) at {best.book} "
+        f"[{format_american(best.book_odds)}] -> {best.ev_pct:+.1f}% EV\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Sport discovery
+# ---------------------------------------------------------------------------
+
+def resolve_sport_keys(cli_args: list[str]) -> list[str]:
+    """Determine which sport keys to fetch.
+
+    If CLI args are provided (e.g. "NBA", "NFL"), map them to API keys.
+    Otherwise, call The Odds API /sports endpoint to discover all active sports.
+    """
+    if cli_args:
+        keys: list[str] = []
+        for arg in cli_args:
+            api_key = ODDS_API_SPORT_KEYS.get(arg.upper())
+            if api_key:
+                keys.append(api_key)
+            else:
+                # Treat as a raw API sport key (e.g. "tennis_atp_french_open").
+                keys.append(arg)
+        return keys
+
+    # Auto-discover all active sports from the API.
+    print("Discovering available sports from The Odds API...")
+    active_sports = fetch_sports()
+    keys = [s.key for s in active_sports]
+    print(f"Found {len(keys)} active sports: {', '.join(sport_display_name(k) for k in keys)}\n")
+    return keys
 
 
 # ---------------------------------------------------------------------------
@@ -320,42 +385,65 @@ def print_results(opportunities: list[EVOpportunity]) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Run the NBA odds pipeline."""
+    """Run the multi-sport odds pipeline."""
     # Load .env from project root.
     dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
     load_dotenv(dotenv_path)
 
-    print("Fetching NBA odds from The Odds API...")
-    games = fetch_odds("basketball_nba")
-    print(f"Found {len(games)} upcoming/live NBA games.")
+    # Determine which sports to scan.
+    cli_sports = sys.argv[1:]
+    sport_keys = resolve_sport_keys(cli_sports)
 
-    if not games:
-        print("No NBA games available right now.")
+    if not sport_keys:
+        print("No active sports found.")
         return
 
-    # --- Persist to Supabase ---
+    # --- Connect to Supabase ---
+    db = None
     try:
         from db import get_supabase
-
         db = get_supabase()
-        print("Storing games...")
-        store_games(db, games)
-        print("Storing odds snapshots...")
-        store_odds_snapshots(db, games)
-        print("Storing true lines...")
-        store_true_lines(db, games)
     except Exception as e:
-        print(f"Warning: DB write failed ({e}). Continuing with console output.")
-        db = None
+        print(f"Warning: Could not connect to Supabase ({e}). Will skip DB writes.")
 
-    # --- Scan for +EV ---
+    # --- Fetch & process each sport ---
+    all_games: list[Game] = []
     all_opportunities: list[EVOpportunity] = []
-    for game in games:
-        all_opportunities.extend(scan_game(game))
 
-    if db is not None:
+    for sport_key in sport_keys:
+        display = sport_display_name(sport_key)
+        print(f"Fetching {display} odds...")
+
         try:
-            print(f"Storing {len(all_opportunities)} EV opportunities...")
+            games = fetch_odds(sport_key)
+        except Exception as e:
+            print(f"  Skipping {display}: {e}")
+            continue
+
+        if not games:
+            print(f"  {display}: no games available right now.")
+            continue
+
+        print(f"  {display}: {len(games)} games found.")
+        all_games.extend(games)
+
+        # Persist game data.
+        if db is not None:
+            try:
+                store_games(db, games)
+                store_odds_snapshots(db, games)
+                store_true_lines(db, games)
+            except Exception as e:
+                print(f"  Warning: DB write failed for {display} ({e}).")
+
+        # Scan for +EV.
+        for game in games:
+            all_opportunities.extend(scan_game(game))
+
+    # --- Persist EV opportunities ---
+    if db is not None and all_opportunities:
+        try:
+            print(f"\nStoring {len(all_opportunities)} EV opportunities...")
             store_ev_opportunities(db, all_opportunities)
             print("All data persisted to Supabase.")
         except Exception as e:
