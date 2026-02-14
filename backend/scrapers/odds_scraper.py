@@ -27,7 +27,7 @@ from models.ev_calculator import (
     calculate_no_vig_probability,
 )
 from models.kelly import kelly_fraction
-from scrapers.odds.odds_api import Game, Market, fetch_odds, fetch_sports
+from scrapers.odds.odds_api import Game, Market, fetch_odds
 
 from config import ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES
 
@@ -359,8 +359,7 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
     """Determine which sport keys to fetch.
 
     If CLI args are provided (e.g. "NBA", "NFL"), map them to API keys.
-    Otherwise, call The Odds API /sports endpoint to discover all active sports.
-    Falls back to ODDS_API_SPORT_KEYS from config if discovery fails.
+    Otherwise, return all sport keys from ODDS_API_SPORT_KEYS in config.
     """
     if cli_args:
         keys: list[str] = []
@@ -373,21 +372,7 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
                 keys.append(arg)
         return keys
 
-    # Always start with every configured sport key.
     keys = list(ODDS_API_SPORT_KEYS.values())
-
-    # Try to discover additional sports from the API that aren't in our config.
-    print("Discovering available sports from The Odds API...")
-    try:
-        active_sports = fetch_sports()
-        configured_set = set(keys)
-        extra = [s.key for s in active_sports if s.key not in configured_set]
-        if extra:
-            print(f"Found {len(extra)} extra active sport(s) beyond config: {', '.join(extra)}")
-            keys.extend(extra)
-    except Exception as e:
-        print(f"Sport discovery failed ({e}). Continuing with configured sports.")
-
     print(f"Will fetch odds for {len(keys)} sports: {', '.join(sport_display_name(k) for k in keys)}\n")
     return keys
 
