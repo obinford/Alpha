@@ -183,6 +183,11 @@ function fmtPct(v) {
   return isNaN(n) ? "—" : n.toFixed(2) + "%";
 }
 
+function fmtDecimalAsPct(v) {
+  const n = Number(v);
+  return isNaN(n) ? "—" : (n * 100).toFixed(2) + "%";
+}
+
 function gameName(g) {
   if (!g) return "—";
   return (g.away_team || "Away") + " @ " + (g.home_team || "Home");
@@ -231,9 +236,9 @@ function renderTable(opps) {
       <td class="market">${o.market_type || "—"}</td>
       <td class="sportsbook">${o.sportsbook || "—"}</td>
       <td class="odds">${fmtOdds(o.book_odds)}</td>
-      <td class="prob">${fmtPct(o.true_prob)}</td>
+      <td class="prob">${fmtDecimalAsPct(o.true_prob)}</td>
       <td class="${evClass}">${fmtPct(o.ev_percentage)}</td>
-      <td class="kelly">${fmtPct(o.kelly_fraction)}</td>
+      <td class="kelly">${fmtDecimalAsPct(o.kelly_fraction)}</td>
     </tr>`;
   }).join("");
 }
