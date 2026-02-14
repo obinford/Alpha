@@ -236,26 +236,36 @@ def store_true_lines(db_client: object, games: list[Game]) -> None:
 def store_ev_opportunities(
     db_client: object, opportunities: list[EVOpportunity]
 ) -> None:
-    """Store +EV opportunities in the database."""
-    from db import insert_ev_opportunity
+    """Store +EV opportunities in the database via bulk insert.
 
+    All rows share a single timestamp so ``get_latest_ev_opportunities``
+    can retrieve the complete batch from one scan.
+    """
+    from db import bulk_insert_ev_opportunities
+
+    scan_ts = datetime.now(timezone.utc).isoformat()
+
+    rows = []
     for opp in opportunities:
         recommended_units = round(opp.kelly_pct * DEFAULT_BANKROLL_UNITS, 2)
-        insert_ev_opportunity(
-            db_client,
-            game_id=opp.game_id,
-            sportsbook=opp.book_key,
-            market_type=opp.market,
-            side=opp.selection + (
+        rows.append({
+            "game_id": opp.game_id,
+            "sportsbook": opp.book_key,
+            "market_type": opp.market,
+            "side": opp.selection + (
                 f" {opp.point}" if opp.point is not None else ""
             ),
-            book_odds=opp.book_odds,
-            book_implied_prob=round(opp.book_implied_prob, 6),
-            true_prob=round(opp.true_prob, 6),
-            ev_percentage=round(opp.ev_pct, 2),
-            kelly_frac=round(opp.kelly_pct, 6),
-            recommended_units=recommended_units,
-        )
+            "book_odds": opp.book_odds,
+            "book_implied_prob": round(opp.book_implied_prob, 6),
+            "true_prob": round(opp.true_prob, 6),
+            "ev_percentage": round(opp.ev_pct, 2),
+            "kelly_fraction": round(opp.kelly_pct, 6),
+            "recommended_units": recommended_units,
+            "status": "open",
+            "timestamp": scan_ts,
+        })
+
+    bulk_insert_ev_opportunities(db_client, rows)
 
 
 # ---------------------------------------------------------------------------
@@ -434,9 +444,35 @@ def run_scan(sport_keys: list[str]) -> int:
         try:
             print(f"\nStoring {len(all_opportunities)} EV opportunities...")
             store_ev_opportunities(db, all_opportunities)
-            print("All data persisted to Supabase.")
+            print(f"All {len(all_opportunities)} opportunities persisted to Supabase.")
         except Exception as e:
-            print(f"Warning: EV opportunity DB write failed ({e}).")
+            print(f"Warning: Bulk insert failed ({e}), falling back to row-by-row...")
+            from db import insert_ev_opportunity
+
+            saved = 0
+            scan_ts = datetime.now(timezone.utc).isoformat()
+            for opp in all_opportunities:
+                try:
+                    recommended_units = round(opp.kelly_pct * DEFAULT_BANKROLL_UNITS, 2)
+                    insert_ev_opportunity(
+                        db,
+                        game_id=opp.game_id,
+                        sportsbook=opp.book_key,
+                        market_type=opp.market,
+                        side=opp.selection + (
+                            f" {opp.point}" if opp.point is not None else ""
+                        ),
+                        book_odds=opp.book_odds,
+                        book_implied_prob=round(opp.book_implied_prob, 6),
+                        true_prob=round(opp.true_prob, 6),
+                        ev_percentage=round(opp.ev_pct, 2),
+                        kelly_frac=round(opp.kelly_pct, 6),
+                        recommended_units=recommended_units,
+                    )
+                    saved += 1
+                except Exception as row_err:
+                    print(f"  Skipped row ({opp.game_id}/{opp.book_key}): {row_err}")
+            print(f"Fallback complete: {saved}/{len(all_opportunities)} rows saved.")
 
     # --- Console output ---
     print_results(all_opportunities)

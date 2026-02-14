@@ -32,6 +32,19 @@ class SupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _post_many(self, table: str, rows: list[dict[str, Any]]) -> list[dict]:
+        """Bulk-insert multiple rows in a single POST request."""
+        if not rows:
+            return []
+        resp = httpx.post(
+            f"{self.base_url}/{table}",
+            headers=self.headers,
+            json=rows,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def _upsert(
         self, table: str, data: dict[str, Any], on_conflict: str
     ) -> dict:
@@ -204,6 +217,18 @@ def insert_ev_opportunity(
             "status": "open",
         },
     )
+
+
+def bulk_insert_ev_opportunities(
+    client: SupabaseClient,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Bulk-insert +EV opportunity rows in a single request.
+
+    All rows should share the same ``timestamp`` value so
+    ``get_latest_ev_opportunities`` can retrieve the full batch.
+    """
+    client._post_many("ev_opportunities", rows)
 
 
 def get_open_ev_opportunities(client: SupabaseClient) -> list[dict]:
