@@ -332,6 +332,112 @@ def store_ev_opportunities(
 
 
 # ---------------------------------------------------------------------------
+# Steam detection
+# ---------------------------------------------------------------------------
+
+# Minimum number of books moving same direction to trigger a steam alert.
+STEAM_MIN_BOOKS = 3
+# Only look at line movements from the last N minutes.
+STEAM_WINDOW_MINUTES = 30
+# Don't create duplicate alerts within this window (minutes).
+STEAM_DEDUP_MINUTES = 60
+
+
+def detect_steam_moves(db_client: object) -> int:
+    """Scan recent line movements for steam (3+ books moving same direction).
+
+    Returns the number of new steam alerts created.
+    """
+    from datetime import timedelta
+    from db import (
+        SupabaseClient,
+        bulk_insert_steam_alerts,
+        get_recent_steam_alert_keys,
+    )
+
+    client: SupabaseClient = db_client  # type: ignore[assignment]
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(minutes=STEAM_WINDOW_MINUTES)).isoformat()
+    dedup_start = (now - timedelta(minutes=STEAM_DEDUP_MINUTES)).isoformat()
+
+    # 1. Fetch recent line movements that have an actual change.
+    recent_moves = client._get(
+        "line_movements",
+        select="game_id,sport,market_type,side,bookmaker,odds_change,timestamp",
+        filters={
+            "timestamp": f"gte.{window_start}",
+            "odds_change": "not.is.null",
+        },
+        order="timestamp.asc",
+    )
+    if not recent_moves:
+        return 0
+
+    # 2. Group by (game_id, market_type, side, direction).
+    #    direction: "shortened" if odds went down (sharp money ON),
+    #               "lengthened" if odds went up (sharp money AGAINST).
+    groups: dict[tuple[str, str, str, str, str], list[dict]] = {}
+    for mv in recent_moves:
+        change = float(mv["odds_change"])
+        if change == 0:
+            continue
+        direction = "shortened" if change < 0 else "lengthened"
+        key = (mv["game_id"], mv["sport"], mv["market_type"], mv["side"], direction)
+        groups.setdefault(key, []).append(mv)
+
+    # 3. Filter to groups with 3+ distinct bookmakers.
+    candidates: list[tuple[tuple, list[dict]]] = []
+    for key, moves in groups.items():
+        unique_books = {m["bookmaker"] for m in moves}
+        if len(unique_books) >= STEAM_MIN_BOOKS:
+            candidates.append((key, moves))
+
+    if not candidates:
+        return 0
+
+    # 4. Dedup against existing alerts.
+    try:
+        existing_alerts = get_recent_steam_alert_keys(client, dedup_start)
+    except Exception:
+        existing_alerts = []
+
+    existing_set: set[tuple[str, str, str]] = set()
+    for a in existing_alerts:
+        existing_set.add((a["game_id"], a["market_type"], a["side"]))
+
+    # 5. Build new alert rows.
+    alert_rows: list[dict] = []
+    detected_at = now.isoformat()
+    for key, moves in candidates:
+        game_id, sport, market_type, side, direction = key
+        if (game_id, market_type, side) in existing_set:
+            continue
+
+        unique_books = sorted({m["bookmaker"] for m in moves})
+        changes = [abs(float(m["odds_change"])) for m in moves]
+        magnitude = round(sum(changes) / len(changes), 2)
+        first_move = min(m["timestamp"] for m in moves)
+
+        alert_rows.append({
+            "game_id": game_id,
+            "sport": sport,
+            "market_type": market_type,
+            "side": side,
+            "direction": direction,
+            "books_moved": unique_books,
+            "magnitude": magnitude,
+            "first_move_time": first_move,
+            "detected_at": detected_at,
+            "status": "active",
+        })
+
+    if alert_rows:
+        bulk_insert_steam_alerts(client, alert_rows)
+
+    return len(alert_rows)
+
+
+# ---------------------------------------------------------------------------
 # Console output
 # ---------------------------------------------------------------------------
 
@@ -542,6 +648,17 @@ def run_scan(sport_keys: list[str]) -> int:
                 except Exception as row_err:
                     print(f"  Skipped row ({opp.game_id}/{opp.book_key}): {row_err}")
             print(f"Fallback complete: {saved}/{len(all_opportunities)} rows saved.")
+
+    # --- Steam detection ---
+    if db is not None:
+        try:
+            new_alerts = detect_steam_moves(db)
+            if new_alerts:
+                print(f"\nSteam alerts: {new_alerts} new alert(s) detected!")
+            else:
+                print("\nSteam alerts: no new steam detected.")
+        except Exception as e:
+            print(f"Warning: Steam detection failed ({e}).")
 
     # --- Console output ---
     print_results(all_opportunities)
