@@ -373,18 +373,23 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
                 keys.append(arg)
         return keys
 
-    # Auto-discover all active sports from the API.
+    # Always start with every configured sport key.
+    keys = list(ODDS_API_SPORT_KEYS.values())
+
+    # Try to discover additional sports from the API that aren't in our config.
     print("Discovering available sports from The Odds API...")
     try:
         active_sports = fetch_sports()
-        keys = [s.key for s in active_sports]
-        print(f"Found {len(keys)} active sports: {', '.join(sport_display_name(k) for k in keys)}\n")
-        return keys
+        configured_set = set(keys)
+        extra = [s.key for s in active_sports if s.key not in configured_set]
+        if extra:
+            print(f"Found {len(extra)} extra active sport(s) beyond config: {', '.join(extra)}")
+            keys.extend(extra)
     except Exception as e:
-        print(f"Sport discovery failed ({e}). Falling back to configured sports.\n")
-        keys = list(ODDS_API_SPORT_KEYS.values())
-        print(f"Will attempt {len(keys)} sports: {', '.join(sport_display_name(k) for k in keys)}\n")
-        return keys
+        print(f"Sport discovery failed ({e}). Continuing with configured sports.")
+
+    print(f"Will fetch odds for {len(keys)} sports: {', '.join(sport_display_name(k) for k in keys)}\n")
+    return keys
 
 
 # ---------------------------------------------------------------------------
