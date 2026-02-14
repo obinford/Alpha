@@ -1,6 +1,15 @@
+import os
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+# Ensure the backend directory is on sys.path so sibling packages (db, models,
+# shared config) are importable regardless of the working directory.
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from api.routes import picks, odds, models as models_router, copilot, ev
 
