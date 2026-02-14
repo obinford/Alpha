@@ -379,23 +379,11 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Single scan run
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    """Run the multi-sport odds pipeline."""
-    # Load .env from project root.
-    dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
-    load_dotenv(dotenv_path)
-
-    # Determine which sports to scan.
-    cli_sports = sys.argv[1:]
-    sport_keys = resolve_sport_keys(cli_sports)
-
-    if not sport_keys:
-        print("No active sports found.")
-        return
-
+def run_scan(sport_keys: list[str]) -> int:
+    """Execute one full scan cycle. Returns the number of opportunities found."""
     # --- Connect to Supabase ---
     db = None
     try:
@@ -452,6 +440,65 @@ def main() -> None:
 
     # --- Console output ---
     print_results(all_opportunities)
+    return len(all_opportunities)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler
+# ---------------------------------------------------------------------------
+
+SCAN_INTERVAL_MINUTES = 10
+
+
+def main() -> None:
+    """Run the odds pipeline on a recurring schedule."""
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
+    # Load .env from project root.
+    dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+    load_dotenv(dotenv_path)
+
+    # Determine which sports to scan.
+    cli_sports = sys.argv[1:]
+    sport_keys = resolve_sport_keys(cli_sports)
+
+    if not sport_keys:
+        print("No active sports found.")
+        return
+
+    def scheduled_run() -> None:
+        print(f"\n{'#' * 80}")
+        print(f"# Scan starting at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        print(f"{'#' * 80}\n")
+
+        count = run_scan(sport_keys)
+
+        next_run = scheduler.get_job("odds_scan").next_run_time
+        print(
+            f"\nScan complete: {count} opportunities found. "
+            f"Next run at {next_run.strftime('%H:%M:%S UTC')}.\n"
+        )
+
+    scheduler = BlockingScheduler(timezone="UTC")
+    scheduler.add_job(
+        scheduled_run,
+        "interval",
+        minutes=SCAN_INTERVAL_MINUTES,
+        id="odds_scan",
+        next_run_time=datetime.now(timezone.utc),  # run immediately on start
+    )
+
+    print(
+        f"RTM +EV Scanner started. Running every {SCAN_INTERVAL_MINUTES} minutes. "
+        f"Press Ctrl+C to stop.\n"
+    )
+
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("\nShutting down scheduler...")
+        scheduler.shutdown(wait=False)
+        print("Scheduler stopped.")
 
 
 if __name__ == "__main__":
