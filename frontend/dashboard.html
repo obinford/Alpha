@@ -94,6 +94,15 @@
   }
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  /* Nav */
+  nav{
+    display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;
+  }
+  nav a{color:#5a6378;text-decoration:none;padding:4px 0;border-bottom:2px solid transparent}
+  nav a:hover{color:#c8cdd6}
+  nav a.active{color:#00e676;border-bottom-color:#00e676}
+
   /* Responsive */
   @media(max-width:768px){
     .container{padding:10px 12px}
@@ -118,6 +127,11 @@
       <span class="count" id="refresh-timer"></span>
     </div>
   </header>
+
+  <nav>
+    <a href="dashboard.html" class="active">+EV Dashboard</a>
+    <a href="sharp-tracker.html">Sharp Tracker</a>
+  </nav>
 
   <div class="stats" id="stats-row">
     <div class="stat-card"><div class="label">Opportunities</div><div class="value" id="stat-count">—</div></div>

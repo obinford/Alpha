@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTM Picks — Sharp Money Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#0a0e17;color:#c8cdd6;
+    font-family:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+    font-size:13px;line-height:1.5;
+  }
+  a{color:#42a5f5;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .container{max-width:1400px;margin:0 auto;padding:16px 24px}
+
+  /* Nav */
+  nav{
+    display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;
+  }
+  nav a{color:#5a6378;padding:4px 0;border-bottom:2px solid transparent}
+  nav a:hover{color:#c8cdd6;text-decoration:none}
+  nav a.active{color:#00e676;border-bottom-color:#00e676}
+
+  /* Header */
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+  }
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{font-size:20px;font-weight:700;color:#e1e5eb;letter-spacing:1px}
+  .brand h1 span{color:#00e676}
+  .brand .tagline{font-size:11px;color:#5a6378;text-transform:uppercase;letter-spacing:2px}
+  .status-bar{display:flex;align-items:center;gap:16px;font-size:11px;color:#5a6378}
+  .status-bar .dot{
+    width:7px;height:7px;border-radius:50%;display:inline-block;
+    background:#00e676;box-shadow:0 0 6px #00e67680;
+  }
+  .status-bar .dot.error{background:#ff5252;box-shadow:0 0 6px #ff525280}
+  .status-bar .count{color:#8892a4}
+
+  /* Summary stats */
+  .stats{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+  .stat-card{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;
+    padding:10px 18px;min-width:140px;
+  }
+  .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378;margin-bottom:2px}
+  .stat-card .value{font-size:22px;font-weight:700;color:#e1e5eb}
+  .stat-card .value.red{color:#ff5252}
+  .stat-card .value.blue{color:#42a5f5}
+  .stat-card .value.green{color:#00e676}
+
+  /* Section headers */
+  .section-title{
+    font-size:13px;font-weight:700;color:#e1e5eb;text-transform:uppercase;
+    letter-spacing:1.5px;margin:20px 0 10px;padding-bottom:6px;
+    border-bottom:1px solid #1a2035;
+  }
+
+  /* Steam alert cards */
+  .alerts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-bottom:20px}
+  .alert-card{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;
+    padding:14px 16px;cursor:pointer;transition:border-color .15s;
+  }
+  .alert-card:hover{border-color:#2a3555}
+  .alert-card.steam-on{border-left:3px solid #ff5252}
+  .alert-card.steam-against{border-left:3px solid #42a5f5}
+  .alert-card .alert-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .alert-card .alert-dir{
+    font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+    padding:2px 8px;border-radius:3px;
+  }
+  .alert-dir.on{background:#2a1515;color:#ff5252}
+  .alert-dir.against{background:#15202a;color:#42a5f5}
+  .alert-card .alert-time{font-size:10px;color:#5a6378}
+  .alert-card .alert-game{color:#e1e5eb;font-weight:600;font-size:14px;margin-bottom:4px}
+  .alert-card .alert-side{color:#c8cdd6;margin-bottom:6px}
+  .alert-card .alert-meta{display:flex;gap:16px;font-size:11px;color:#5a6378}
+  .alert-card .alert-meta strong{color:#8892a4}
+  .alert-card .books-list{font-size:11px;color:#ce93d8;margin-top:4px}
+
+  /* Sport badge */
+  .sport-badge{
+    display:inline-block;padding:2px 8px;border-radius:3px;
+    font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
+  }
+  .sport-mlb{background:#1a2a1a;color:#4caf50;border:1px solid #2e4a2e}
+  .sport-nba{background:#1a1a2e;color:#5c6bc0;border:1px solid #2e2e5c}
+  .sport-nfl{background:#2a1a1a;color:#a1887f;border:1px solid #4a2e2e}
+  .sport-nhl{background:#1a2a2a;color:#4dd0e1;border:1px solid #2e4a4a}
+  .sport-cfb{background:#2a2a1a;color:#ffb74d;border:1px solid #4a4a2e}
+  .sport-cbb{background:#2a1a2a;color:#ba68c8;border:1px solid #4a2e4a}
+  .sport-default{background:#1a1a1a;color:#8892a4;border:1px solid #2a2a2a}
+
+  /* Table */
+  .table-wrap{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;overflow:auto;
+    margin-bottom:20px;
+  }
+  table{width:100%;border-collapse:collapse;white-space:nowrap}
+  thead th{
+    background:#0d1220;color:#5a6378;font-size:10px;font-weight:600;
+    text-transform:uppercase;letter-spacing:1.5px;
+    padding:10px 14px;text-align:left;border-bottom:1px solid #1a2035;
+    position:sticky;top:0;
+  }
+  tbody td{padding:9px 14px;border-bottom:1px solid #131b2e}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:#151e30}
+  tbody tr:last-child td{border-bottom:none}
+  .change-pos{color:#ff5252;font-weight:700}
+  .change-neg{color:#00e676;font-weight:700}
+  .odds-val{color:#e1e5eb;font-weight:600}
+  .sportsbook{color:#ce93d8;font-weight:600;text-transform:uppercase;font-size:11px}
+
+  /* Chart */
+  .chart-section{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;
+    padding:16px;margin-bottom:20px;
+  }
+  .chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .chart-header h3{font-size:14px;color:#e1e5eb;font-weight:600}
+  .chart-close{
+    background:none;border:1px solid #2a3555;color:#5a6378;border-radius:4px;
+    padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px;
+  }
+  .chart-close:hover{color:#c8cdd6;border-color:#5a6378}
+  #chartCanvas{max-height:350px}
+  .chart-placeholder{text-align:center;padding:40px;color:#5a6378;font-size:12px}
+
+  /* Loading / error */
+  .message{text-align:center;padding:40px 20px;color:#5a6378}
+  .message.error{color:#ff5252}
+  .spinner{
+    width:28px;height:28px;border:3px solid #1a2035;border-top-color:#00e676;
+    border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media(max-width:768px){
+    .container{padding:10px 12px}
+    .alerts-grid{grid-template-columns:1fr}
+    table{font-size:12px}
+    thead th,tbody td{padding:7px 8px}
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="brand">
+      <h1>RTM <span>Picks</span></h1>
+      <span class="tagline">Sharp Money Tracker</span>
+    </div>
+    <div class="status-bar">
+      <span id="status-dot" class="dot"></span>
+      <span id="status-text">Connecting...</span>
+      <span class="count" id="refresh-timer"></span>
+    </div>
+  </header>
+
+  <nav>
+    <a href="dashboard.html">+EV Dashboard</a>
+    <a href="sharp-tracker.html" class="active">Sharp Tracker</a>
+  </nav>
+
+  <div class="stats">
+    <div class="stat-card"><div class="label">Alerts (24h)</div><div class="value red" id="stat-alerts">—</div></div>
+    <div class="stat-card"><div class="label">Most Active</div><div class="value" id="stat-active-sport">—</div></div>
+    <div class="stat-card"><div class="label">Biggest Move</div><div class="value blue" id="stat-biggest">—</div></div>
+  </div>
+
+  <!-- Steam Alerts -->
+  <div class="section-title">Steam Alerts</div>
+  <div class="alerts-grid" id="alerts-grid">
+    <div class="message"><div class="spinner"></div>Loading alerts...</div>
+  </div>
+
+  <!-- Biggest Movers -->
+  <div class="section-title">Biggest Line Movers (6h)</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Sport</th>
+          <th>Game</th>
+          <th>Side</th>
+          <th>Market</th>
+          <th>Book</th>
+          <th>Prev Odds</th>
+          <th>New Odds</th>
+          <th>Change</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="movers-body">
+        <tr><td colspan="9" class="message"><div class="spinner"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Line Chart -->
+  <div class="chart-section" id="chart-section" style="display:none">
+    <div class="chart-header">
+      <h3 id="chart-title">Line Movement Chart</h3>
+      <button class="chart-close" onclick="closeChart()">Close</button>
+    </div>
+    <canvas id="chartCanvas"></canvas>
+  </div>
+  <div class="chart-section" id="chart-placeholder">
+    <div class="chart-placeholder">Click any game above to view its line movement chart across all bookmakers</div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000/api";
+const REFRESH_INTERVAL = 60;
+let countdown = REFRESH_INTERVAL;
+let timerInterval = null;
+let chartInstance = null;
+
+// Bookmaker colors for consistent charting.
+const BOOK_COLORS = [
+  "#ff5252","#42a5f5","#00e676","#ffc107","#ce93d8",
+  "#ff7043","#4dd0e1","#aed581","#e57373","#64b5f6",
+  "#81c784","#ffb74d","#ba68c8","#4db6ac","#f06292",
+];
+
+function sportKey(raw) {
+  if (!raw) return "default";
+  const s = raw.toLowerCase();
+  if (s.includes("mlb") || s.includes("baseball")) return "mlb";
+  if (s.includes("nba") || s.includes("basketball_nba")) return "nba";
+  if (s.includes("nfl") || s.includes("football_nfl")) return "nfl";
+  if (s.includes("nhl") || s.includes("hockey")) return "nhl";
+  if (s.includes("ncaaf") || s.includes("football_ncaa")) return "cfb";
+  if (s.includes("ncaab") || s.includes("basketball_ncaa")) return "cbb";
+  return "default";
+}
+
+function sportLabel(raw) {
+  const map = {mlb:"MLB",nba:"NBA",nfl:"NFL",nhl:"NHL",cfb:"CFB",cbb:"CBB"};
+  return map[sportKey(raw)] || raw || "—";
+}
+
+function fmtOdds(v) {
+  const n = Number(v);
+  if (isNaN(n)) return String(v);
+  return n > 0 ? "+" + n : String(n);
+}
+
+function fmtChange(v) {
+  const n = Number(v);
+  if (isNaN(n)) return "—";
+  const prefix = n > 0 ? "+" : "";
+  return prefix + n;
+}
+
+function timeAgo(ts) {
+  if (!ts) return "—";
+  const diff = (Date.now() - new Date(ts).getTime()) / 60000;
+  if (diff < 1) return "just now";
+  if (diff < 60) return Math.round(diff) + "m ago";
+  if (diff < 1440) return Math.round(diff / 60) + "h ago";
+  return Math.round(diff / 1440) + "d ago";
+}
+
+function gameName(g) {
+  if (!g) return "—";
+  return (g.away_team || "Away") + " @ " + (g.home_team || "Home");
+}
+
+function setStatus(ok, text) {
+  document.getElementById("status-dot").className = ok ? "dot" : "dot error";
+  document.getElementById("status-text").textContent = text;
+}
+
+// --- Steam Alerts ---
+function renderAlerts(alerts) {
+  const grid = document.getElementById("alerts-grid");
+  if (!alerts.length) {
+    grid.innerHTML = '<div class="message">No steam alerts in the last 24 hours.</div>';
+    return;
+  }
+  grid.innerHTML = alerts.map(a => {
+    const g = a.games || {};
+    const isOn = a.direction === "shortened";
+    const dirClass = isOn ? "on" : "against";
+    const cardClass = isOn ? "steam-on" : "steam-against";
+    const dirLabel = isOn ? "Steam ON" : "Steam AGAINST";
+    const sk = sportKey(a.sport);
+    const books = Array.isArray(a.books_moved) ? a.books_moved.join(", ") : (a.books_moved || "");
+    return `<div class="alert-card ${cardClass}" onclick="loadChart('${a.game_id}','${gameName(g).replace(/'/g,"\\'")} — ${a.side}')">
+      <div class="alert-header">
+        <span class="sport-badge sport-${sk}">${sportLabel(a.sport)}</span>
+        <span class="alert-dir ${dirClass}">${dirLabel}</span>
+      </div>
+      <div class="alert-game">${gameName(g)}</div>
+      <div class="alert-side">${a.side || "—"} (${a.market_type || ""})</div>
+      <div class="alert-meta">
+        <span>Magnitude: <strong>${fmtChange(a.magnitude)}</strong></span>
+        <span>Books: <strong>${(Array.isArray(a.books_moved) ? a.books_moved : []).length}</strong></span>
+        <span class="alert-time">${timeAgo(a.detected_at)}</span>
+      </div>
+      <div class="books-list">${books}</div>
+    </div>`;
+  }).join("");
+}
+
+// --- Biggest Movers ---
+function renderMovers(moves) {
+  const tbody = document.getElementById("movers-body");
+  if (!moves.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="message">No line movements in the last 6 hours.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = moves.map(m => {
+    const g = m.games || {};
+    const sk = sportKey(g.sport || m.sport);
+    const change = Number(m.odds_change) || 0;
+    const changeClass = change > 0 ? "change-pos" : "change-neg";
+    const gameId = m.game_id || "";
+    const label = gameName(g) || gameId;
+    return `<tr onclick="loadChart('${gameId}','${label.replace(/'/g,"\\'")} — ${m.side || ""}')">
+      <td><span class="sport-badge sport-${sk}">${sportLabel(g.sport || m.sport)}</span></td>
+      <td>${gameName(g)}</td>
+      <td>${m.side || "—"}</td>
+      <td>${m.market_type || "—"}</td>
+      <td class="sportsbook">${m.bookmaker || "—"}</td>
+      <td class="odds-val">${m.previous_odds != null ? fmtOdds(m.previous_odds) : "—"}</td>
+      <td class="odds-val">${fmtOdds(m.odds)}</td>
+      <td class="${changeClass}">${fmtChange(m.odds_change)}</td>
+      <td>${timeAgo(m.timestamp)}</td>
+    </tr>`;
+  }).join("");
+}
+
+// --- Chart ---
+function closeChart() {
+  document.getElementById("chart-section").style.display = "none";
+  document.getElementById("chart-placeholder").style.display = "";
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+}
+
+async function loadChart(gameId, title) {
+  document.getElementById("chart-section").style.display = "";
+  document.getElementById("chart-placeholder").style.display = "none";
+  document.getElementById("chart-title").textContent = title || ("Game: " + gameId);
+
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  try {
+    const res = await fetch(API_BASE + "/line-movements/" + encodeURIComponent(gameId));
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const movements = data.movements || [];
+
+    if (!movements.length) {
+      document.getElementById("chart-title").textContent = title + " (no data)";
+      return;
+    }
+
+    // Group by bookmaker.
+    const byBook = {};
+    for (const m of movements) {
+      const key = m.bookmaker + " | " + m.side;
+      if (!byBook[key]) byBook[key] = [];
+      byBook[key].push({ x: new Date(m.timestamp), y: Number(m.odds) });
+    }
+
+    const bookNames = Object.keys(byBook).sort();
+    const datasets = bookNames.map((name, i) => ({
+      label: name,
+      data: byBook[name],
+      borderColor: BOOK_COLORS[i % BOOK_COLORS.length],
+      backgroundColor: BOOK_COLORS[i % BOOK_COLORS.length] + "33",
+      borderWidth: 2,
+      pointRadius: 3,
+      tension: 0.2,
+    }));
+
+    const ctx = document.getElementById("chartCanvas").getContext("2d");
+    chartInstance = new Chart(ctx, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "nearest", intersect: false },
+        plugins: {
+          legend: {
+            labels: { color: "#8892a4", font: { family: "monospace", size: 11 } },
+          },
+          tooltip: {
+            backgroundColor: "#111827",
+            borderColor: "#2a3555",
+            borderWidth: 1,
+            titleColor: "#e1e5eb",
+            bodyColor: "#c8cdd6",
+            bodyFont: { family: "monospace" },
+          },
+        },
+        scales: {
+          x: {
+            type: "time" in Chart.registry.scales ? "time" : "linear",
+            ticks: { color: "#5a6378", font: { family: "monospace", size: 10 } },
+            grid: { color: "#131b2e" },
+          },
+          y: {
+            ticks: {
+              color: "#5a6378",
+              font: { family: "monospace", size: 10 },
+              callback: v => (v > 0 ? "+" : "") + v,
+            },
+            grid: { color: "#131b2e" },
+          },
+        },
+      },
+    });
+  } catch (e) {
+    document.getElementById("chart-title").textContent = "Error loading chart: " + e.message;
+  }
+}
+
+// --- Data fetch ---
+async function fetchData() {
+  try {
+    const [dashRes, movesRes] = await Promise.all([
+      fetch(API_BASE + "/sharp-dashboard/"),
+      fetch(API_BASE + "/line-movements/?hours=6&limit=20"),
+    ]);
+
+    if (!dashRes.ok) throw new Error("Dashboard HTTP " + dashRes.status);
+    if (!movesRes.ok) throw new Error("Moves HTTP " + movesRes.status);
+
+    const dash = await dashRes.json();
+    const movesData = await movesRes.json();
+
+    // Summary stats.
+    const summary = dash.summary || {};
+    document.getElementById("stat-alerts").textContent = summary.total_alerts_today || 0;
+    document.getElementById("stat-active-sport").textContent =
+      summary.most_active_sport ? sportLabel(summary.most_active_sport) : "—";
+    const bigMove = summary.most_moved_game;
+    document.getElementById("stat-biggest").textContent =
+      bigMove ? fmtChange(bigMove.odds_change) : "—";
+
+    // Render sections.
+    renderAlerts(dash.latest_alerts || []);
+    renderMovers(movesData.movements || []);
+
+    const now = new Date().toLocaleTimeString();
+    setStatus(true, "Live \u00b7 updated " + now);
+  } catch (e) {
+    setStatus(false, "Error: " + e.message);
+  }
+  countdown = REFRESH_INTERVAL;
+}
+
+function startTimer() {
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    countdown--;
+    document.getElementById("refresh-timer").textContent = "refresh in " + countdown + "s";
+    if (countdown <= 0) fetchData();
+  }, 1000);
+}
+
+fetchData();
+startTimer();
+</script>
+</body>
+</html>
