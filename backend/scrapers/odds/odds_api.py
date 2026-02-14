@@ -85,14 +85,15 @@ def fetch_sports() -> list[SportInfo]:
 def fetch_odds(
     sport: str,
     markets: list[str] | None = None,
-    regions: str = "us",
+    regions: str = "us,us2,eu",
 ) -> list[Game]:
     """Fetch current odds for a given sport from The Odds API.
 
     Args:
         sport: Sport key (e.g. 'basketball_nba').
         markets: Market types to fetch (default: h2h, spreads, totals).
-        regions: Comma-separated regions (default: 'us').
+        regions: Comma-separated regions (default: 'us,us2,eu').
+            Includes us2 for BetOnline/Bovada and eu for Pinnacle.
 
     Returns:
         List of Game objects with bookmaker odds attached.
