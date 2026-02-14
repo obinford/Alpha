@@ -281,3 +281,110 @@ def get_latest_ev_opportunities(
         results = [r for r in results if r.get("games", {}).get("sport") == sport]
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# line_movements
+# ---------------------------------------------------------------------------
+
+def get_latest_odds_for_game(
+    client: SupabaseClient,
+    game_id: str,
+) -> list[dict]:
+    """Fetch the most recent odds row for each bookmaker/market/side combo."""
+    return client._get(
+        "line_movements",
+        select="bookmaker,market_type,side,odds,timestamp",
+        filters={"game_id": f"eq.{game_id}"},
+        order="timestamp.desc",
+    )
+
+
+def bulk_insert_line_movements(
+    client: SupabaseClient,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Bulk-insert line movement rows in a single request."""
+    if rows:
+        client._post_many("line_movements", rows)
+
+
+def get_line_movements_for_game(
+    client: SupabaseClient,
+    game_id: str,
+    market_type: str | None = None,
+) -> list[dict]:
+    """Full odds history for a game, all bookmakers, sorted by timestamp."""
+    filters: dict[str, str] = {"game_id": f"eq.{game_id}"}
+    if market_type is not None:
+        filters["market_type"] = f"eq.{market_type}"
+    return client._get(
+        "line_movements",
+        select="*",
+        filters=filters,
+        order="timestamp.asc",
+    )
+
+
+def get_biggest_recent_moves(
+    client: SupabaseClient,
+    since: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Top line movements by absolute odds_change since a given timestamp."""
+    return client._get(
+        "line_movements",
+        select="*,games(game_id,sport,home_team,away_team,start_time)",
+        filters={
+            "timestamp": f"gte.{since}",
+            "odds_change": "not.is.null",
+        },
+        order="odds_change.desc",
+        limit=limit,
+    )
+
+
+# ---------------------------------------------------------------------------
+# steam_alerts
+# ---------------------------------------------------------------------------
+
+def bulk_insert_steam_alerts(
+    client: SupabaseClient,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Bulk-insert steam alert rows."""
+    if rows:
+        client._post_many("steam_alerts", rows)
+
+
+def get_recent_steam_alerts(
+    client: SupabaseClient,
+    since: str,
+    sport: str | None = None,
+) -> list[dict]:
+    """Active steam alerts since a timestamp, sorted by detected_at desc."""
+    filters: dict[str, str] = {
+        "detected_at": f"gte.{since}",
+        "status": "eq.active",
+    }
+    if sport is not None:
+        filters["sport"] = f"eq.{sport}"
+    return client._get(
+        "steam_alerts",
+        select="*,games(game_id,sport,home_team,away_team,start_time)",
+        filters=filters,
+        order="detected_at.desc",
+    )
+
+
+def get_recent_steam_alert_keys(
+    client: SupabaseClient,
+    since: str,
+) -> list[dict]:
+    """Fetch recent alert identifiers to avoid duplicates."""
+    return client._get(
+        "steam_alerts",
+        select="game_id,market_type,side,detected_at",
+        filters={"detected_at": f"gte.{since}"},
+        order="detected_at.desc",
+    )

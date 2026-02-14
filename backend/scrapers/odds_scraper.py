@@ -180,6 +180,69 @@ def store_games(db_client: object, games: list[Game]) -> None:
         )
 
 
+def store_line_movements(db_client: object, games: list[Game]) -> None:
+    """Record line movements for ALL bookmaker/game/market/side combos.
+
+    Compares current odds to the most recent row for each combo.  If odds
+    changed, insert with ``previous_odds`` / ``odds_change``.  If odds are
+    the same, skip the insert to save space.
+    """
+    from db import get_latest_odds_for_game, bulk_insert_line_movements
+
+    scan_ts = datetime.now(timezone.utc).isoformat()
+    rows: list[dict] = []
+
+    for game in games:
+        # Fetch existing latest odds for this game (all combos).
+        try:
+            existing = get_latest_odds_for_game(db_client, game.id)
+        except Exception:
+            existing = []
+
+        # Build lookup: (bookmaker, market_type, side) -> latest odds
+        latest_map: dict[tuple[str, str, str], float] = {}
+        seen: set[tuple[str, str, str]] = set()
+        for row in existing:
+            key = (row["bookmaker"], row["market_type"], row["side"])
+            if key not in seen:
+                latest_map[key] = float(row["odds"])
+                seen.add(key)
+
+        for bk in game.bookmakers:
+            for mkt in bk.markets:
+                for outcome in mkt.outcomes:
+                    side = outcome.name + (
+                        f" {outcome.point}" if outcome.point is not None else ""
+                    )
+                    key = (bk.key, mkt.key, side)
+                    current_odds = float(outcome.price)
+                    prev = latest_map.get(key)
+
+                    # Skip if odds unchanged.
+                    if prev is not None and prev == current_odds:
+                        continue
+
+                    row: dict = {
+                        "game_id": game.id,
+                        "sport": game.sport_key,
+                        "bookmaker": bk.key,
+                        "market_type": mkt.key,
+                        "side": side,
+                        "odds": current_odds,
+                        "timestamp": scan_ts,
+                    }
+                    if prev is not None:
+                        row["previous_odds"] = prev
+                        row["odds_change"] = current_odds - prev
+                    rows.append(row)
+
+    if rows:
+        bulk_insert_line_movements(db_client, rows)
+        print(f"  Line movements: {len(rows)} changes recorded.")
+    else:
+        print("  Line movements: no changes detected.")
+
+
 def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
     """Store raw odds from every sportsbook/market combination."""
     from db import insert_odds_snapshot
@@ -434,6 +497,12 @@ def run_scan(sport_keys: list[str]) -> int:
                 store_true_lines(db, games)
             except Exception as e:
                 print(f"  Warning: DB write failed for {display} ({e}).")
+
+            # Line movements (separate try so a failure doesn't block EV).
+            try:
+                store_line_movements(db, games)
+            except Exception as e:
+                print(f"  Warning: Line movement write failed for {display} ({e}).")
 
         # Scan for +EV.
         for game in games:
