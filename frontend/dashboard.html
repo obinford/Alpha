@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTM Picks — +EV Dashboard</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#0a0e17;
+    color:#c8cdd6;
+    font-family:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+    font-size:13px;
+    line-height:1.5;
+  }
+  .container{max-width:1400px;margin:0 auto;padding:16px 24px}
+
+  /* Header */
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+  }
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{
+    font-size:20px;font-weight:700;color:#e1e5eb;letter-spacing:1px;
+  }
+  .brand h1 span{color:#00e676}
+  .brand .tagline{font-size:11px;color:#5a6378;text-transform:uppercase;letter-spacing:2px}
+  .status-bar{display:flex;align-items:center;gap:16px;font-size:11px;color:#5a6378}
+  .status-bar .dot{
+    width:7px;height:7px;border-radius:50%;display:inline-block;
+    background:#00e676;box-shadow:0 0 6px #00e67680;
+  }
+  .status-bar .dot.error{background:#ff5252;box-shadow:0 0 6px #ff525280}
+  .status-bar .count{color:#8892a4}
+
+  /* Stats row */
+  .stats{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .stat-card{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;
+    padding:10px 18px;min-width:140px;
+  }
+  .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378;margin-bottom:2px}
+  .stat-card .value{font-size:22px;font-weight:700;color:#e1e5eb}
+  .stat-card .value.green{color:#00e676}
+  .stat-card .value.yellow{color:#ffc107}
+
+  /* Table */
+  .table-wrap{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;overflow:auto;
+  }
+  table{width:100%;border-collapse:collapse;white-space:nowrap}
+  thead th{
+    background:#0d1220;color:#5a6378;font-size:10px;font-weight:600;
+    text-transform:uppercase;letter-spacing:1.5px;
+    padding:10px 14px;text-align:left;border-bottom:1px solid #1a2035;
+    position:sticky;top:0;
+  }
+  tbody td{padding:9px 14px;border-bottom:1px solid #131b2e}
+  tbody tr:hover{background:#151e30}
+  tbody tr:last-child td{border-bottom:none}
+
+  /* Sport badge */
+  .sport-badge{
+    display:inline-block;padding:2px 8px;border-radius:3px;
+    font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
+  }
+  .sport-mlb{background:#1a2a1a;color:#4caf50;border:1px solid #2e4a2e}
+  .sport-nba{background:#1a1a2e;color:#5c6bc0;border:1px solid #2e2e5c}
+  .sport-nfl{background:#2a1a1a;color:#a1887f;border:1px solid #4a2e2e}
+  .sport-nhl{background:#1a2a2a;color:#4dd0e1;border:1px solid #2e4a4a}
+  .sport-cfb{background:#2a2a1a;color:#ffb74d;border:1px solid #4a4a2e}
+  .sport-cbb{background:#2a1a2a;color:#ba68c8;border:1px solid #4a2e4a}
+  .sport-default{background:#1a1a1a;color:#8892a4;border:1px solid #2a2a2a}
+
+  /* EV cells */
+  .ev-green{color:#00e676;font-weight:700}
+  .ev-yellow{color:#ffc107;font-weight:700}
+  .kelly{color:#42a5f5}
+  .odds{color:#e1e5eb;font-weight:600}
+  .prob{color:#8892a4}
+  .sportsbook{color:#ce93d8;font-weight:600;text-transform:uppercase;font-size:11px}
+  .side{color:#e1e5eb}
+  .market{color:#5a6378;font-size:11px}
+
+  /* Loading / error */
+  .message{
+    text-align:center;padding:60px 20px;color:#5a6378;
+  }
+  .message.error{color:#ff5252}
+  .spinner{
+    width:28px;height:28px;border:3px solid #1a2035;border-top-color:#00e676;
+    border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Responsive */
+  @media(max-width:768px){
+    .container{padding:10px 12px}
+    table{font-size:12px}
+    thead th,tbody td{padding:7px 8px}
+    .stats{gap:8px}
+    .stat-card{min-width:100px;padding:8px 12px}
+    .stat-card .value{font-size:18px}
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="brand">
+      <h1>RTM <span>Picks</span></h1>
+      <span class="tagline">+EV Intelligence</span>
+    </div>
+    <div class="status-bar">
+      <span id="status-dot" class="dot"></span>
+      <span id="status-text">Connecting...</span>
+      <span class="count" id="refresh-timer"></span>
+    </div>
+  </header>
+
+  <div class="stats" id="stats-row">
+    <div class="stat-card"><div class="label">Opportunities</div><div class="value" id="stat-count">—</div></div>
+    <div class="stat-card"><div class="label">Best EV%</div><div class="value green" id="stat-best-ev">—</div></div>
+    <div class="stat-card"><div class="label">Avg EV%</div><div class="value yellow" id="stat-avg-ev">—</div></div>
+    <div class="stat-card"><div class="label">Sports</div><div class="value" id="stat-sports">—</div></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Sport</th>
+          <th>Game</th>
+          <th>Selection</th>
+          <th>Market</th>
+          <th>Sportsbook</th>
+          <th>Odds</th>
+          <th>True Prob</th>
+          <th>EV%</th>
+          <th>Kelly %</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="9" class="message"><div class="spinner"></div>Loading opportunities...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API_URL = "http://localhost:8000/api/ev-opportunities/?min_ev=1.0";
+const REFRESH_INTERVAL = 60;
+
+let countdown = REFRESH_INTERVAL;
+let timerInterval = null;
+
+function sportKey(raw) {
+  if (!raw) return "default";
+  const s = raw.toLowerCase();
+  if (s.includes("mlb") || s.includes("baseball")) return "mlb";
+  if (s.includes("nba") || s.includes("basketball_nba")) return "nba";
+  if (s.includes("nfl") || s.includes("football_nfl")) return "nfl";
+  if (s.includes("nhl") || s.includes("hockey")) return "nhl";
+  if (s.includes("ncaaf") || s.includes("football_ncaa")) return "cfb";
+  if (s.includes("ncaab") || s.includes("basketball_ncaa")) return "cbb";
+  return "default";
+}
+
+function sportLabel(raw) {
+  const map = { mlb: "MLB", nba: "NBA", nfl: "NFL", nhl: "NHL", cfb: "CFB", cbb: "CBB" };
+  return map[sportKey(raw)] || raw || "—";
+}
+
+function fmtOdds(american) {
+  const n = Number(american);
+  if (isNaN(n)) return String(american);
+  return n > 0 ? "+" + n : String(n);
+}
+
+function fmtPct(v) {
+  const n = Number(v);
+  return isNaN(n) ? "—" : n.toFixed(2) + "%";
+}
+
+function gameName(g) {
+  if (!g) return "—";
+  return (g.away_team || "Away") + " @ " + (g.home_team || "Home");
+}
+
+function setStatus(ok, text) {
+  const dot = document.getElementById("status-dot");
+  const txt = document.getElementById("status-text");
+  dot.className = ok ? "dot" : "dot error";
+  txt.textContent = text;
+}
+
+function updateStats(opps) {
+  document.getElementById("stat-count").textContent = opps.length;
+  if (opps.length === 0) {
+    document.getElementById("stat-best-ev").textContent = "—";
+    document.getElementById("stat-avg-ev").textContent = "—";
+    document.getElementById("stat-sports").textContent = "0";
+    return;
+  }
+  const evs = opps.map(o => Number(o.ev_percentage) || 0);
+  const best = Math.max(...evs);
+  const avg = evs.reduce((a, b) => a + b, 0) / evs.length;
+  const sports = new Set(opps.map(o => (o.games && o.games.sport) || ""));
+  document.getElementById("stat-best-ev").textContent = best.toFixed(2) + "%";
+  document.getElementById("stat-avg-ev").textContent = avg.toFixed(2) + "%";
+  document.getElementById("stat-sports").textContent = sports.size;
+}
+
+function renderTable(opps) {
+  const tbody = document.getElementById("table-body");
+  if (!opps.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="message">No +EV opportunities above 1.0% right now. Waiting for next scan...</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = opps.map(o => {
+    const g = o.games || {};
+    const sk = sportKey(g.sport);
+    const ev = Number(o.ev_percentage) || 0;
+    const evClass = ev >= 5 ? "ev-green" : "ev-yellow";
+    return `<tr>
+      <td><span class="sport-badge sport-${sk}">${sportLabel(g.sport)}</span></td>
+      <td>${gameName(g)}</td>
+      <td class="side">${o.side || "—"}</td>
+      <td class="market">${o.market_type || "—"}</td>
+      <td class="sportsbook">${o.sportsbook || "—"}</td>
+      <td class="odds">${fmtOdds(o.book_odds)}</td>
+      <td class="prob">${fmtPct(o.true_prob)}</td>
+      <td class="${evClass}">${fmtPct(o.ev_percentage)}</td>
+      <td class="kelly">${fmtPct(o.kelly_fraction)}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function fetchData() {
+  try {
+    const res = await fetch(API_URL);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const opps = data.opportunities || [];
+    opps.sort((a, b) => (Number(b.ev_percentage) || 0) - (Number(a.ev_percentage) || 0));
+    renderTable(opps);
+    updateStats(opps);
+    const now = new Date().toLocaleTimeString();
+    setStatus(true, "Live \u00b7 updated " + now);
+  } catch (e) {
+    setStatus(false, "Error: " + e.message);
+    const tbody = document.getElementById("table-body");
+    tbody.innerHTML = '<tr><td colspan="9" class="message error">Failed to fetch data. Is the API running at localhost:8000?</td></tr>';
+  }
+  countdown = REFRESH_INTERVAL;
+}
+
+function startTimer() {
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    countdown--;
+    document.getElementById("refresh-timer").textContent = "refresh in " + countdown + "s";
+    if (countdown <= 0) fetchData();
+  }, 1000);
+}
+
+fetchData();
+startTimer();
+</script>
+</body>
+</html>
