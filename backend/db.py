@@ -54,6 +54,7 @@ class SupabaseClient:
         select: str = "*",
         filters: dict[str, str] | None = None,
         order: str | None = None,
+        limit: int | None = None,
     ) -> list[dict]:
         params: dict[str, str] = {"select": select}
         if filters:
@@ -61,9 +62,12 @@ class SupabaseClient:
                 params[col] = val
         if order:
             params["order"] = order
+        headers = {**self.headers}
+        if limit is not None:
+            headers["Range"] = f"0-{limit - 1}"
         resp = httpx.get(
             f"{self.base_url}/{table}",
-            headers=self.headers,
+            headers=headers,
             params=params,
             timeout=15,
         )
@@ -210,3 +214,45 @@ def get_open_ev_opportunities(client: SupabaseClient) -> list[dict]:
         filters={"status": "eq.open"},
         order="ev_percentage.desc",
     )
+
+
+def get_latest_ev_opportunities(
+    client: SupabaseClient,
+    sport: str | None = None,
+    min_ev: float | None = None,
+    sportsbook: str | None = None,
+) -> list[dict]:
+    """Fetch EV opportunities from the most recent scan, with optional filters.
+
+    Finds the latest scan timestamp, then returns all rows from that scan
+    joined with game info, sorted by ev_percentage descending.
+    """
+    # Find the most recent scan timestamp.
+    latest = client._get(
+        "ev_opportunities",
+        select="timestamp",
+        order="timestamp.desc",
+        limit=1,
+    )
+    if not latest:
+        return []
+
+    latest_ts = latest[0]["timestamp"]
+
+    filters: dict[str, str] = {"timestamp": f"eq.{latest_ts}"}
+    if min_ev is not None:
+        filters["ev_percentage"] = f"gte.{min_ev}"
+    if sportsbook is not None:
+        filters["sportsbook"] = f"eq.{sportsbook}"
+
+    results = client._get(
+        "ev_opportunities",
+        select="*,games(game_id,sport,home_team,away_team,start_time)",
+        filters=filters,
+        order="ev_percentage.desc",
+    )
+
+    if sport is not None:
+        results = [r for r in results if r.get("games", {}).get("sport") == sport]
+
+    return results
