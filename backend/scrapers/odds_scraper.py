@@ -360,6 +360,7 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
 
     If CLI args are provided (e.g. "NBA", "NFL"), map them to API keys.
     Otherwise, call The Odds API /sports endpoint to discover all active sports.
+    Falls back to ODDS_API_SPORT_KEYS from config if discovery fails.
     """
     if cli_args:
         keys: list[str] = []
@@ -374,10 +375,16 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
 
     # Auto-discover all active sports from the API.
     print("Discovering available sports from The Odds API...")
-    active_sports = fetch_sports()
-    keys = [s.key for s in active_sports]
-    print(f"Found {len(keys)} active sports: {', '.join(sport_display_name(k) for k in keys)}\n")
-    return keys
+    try:
+        active_sports = fetch_sports()
+        keys = [s.key for s in active_sports]
+        print(f"Found {len(keys)} active sports: {', '.join(sport_display_name(k) for k in keys)}\n")
+        return keys
+    except Exception as e:
+        print(f"Sport discovery failed ({e}). Falling back to configured sports.\n")
+        keys = list(ODDS_API_SPORT_KEYS.values())
+        print(f"Will attempt {len(keys)} sports: {', '.join(sport_display_name(k) for k in keys)}\n")
+        return keys
 
 
 # ---------------------------------------------------------------------------
