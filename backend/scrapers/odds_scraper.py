@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Multi-sport odds pipeline - fetches odds, calculates no-vig lines, finds +EV bets.
 
-Discovers all in-season sports via The Odds API, fetches odds for each,
+Iterates configured sports from ODDS_API_SPORT_KEYS, fetches odds for each,
 stores every pull (games, odds_snapshots, true_lines, ev_opportunities) in
 Supabase, and prints results to the console.
 
 Usage:
-    python backend/scrapers/odds_scraper.py              # all available sports
+    python backend/scrapers/odds_scraper.py              # all configured sports
     python backend/scrapers/odds_scraper.py NBA NFL       # specific sports only
 """
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -352,7 +353,7 @@ def print_results(all_opportunities: list[EVOpportunity]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sport discovery
+# Sport resolution
 # ---------------------------------------------------------------------------
 
 def resolve_sport_keys(cli_args: list[str]) -> list[str]:
@@ -407,7 +408,10 @@ def main() -> None:
     all_games: list[Game] = []
     all_opportunities: list[EVOpportunity] = []
 
-    for sport_key in sport_keys:
+    for i, sport_key in enumerate(sport_keys):
+        if i > 0:
+            time.sleep(1)
+
         display = sport_display_name(sport_key)
         print(f"Fetching {display} odds...")
 
