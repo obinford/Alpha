@@ -231,3 +231,16 @@ def performance_by_book() -> dict:
         })
 
     return {"breakdown": breakdown}
+
+
+@router.post("/recalculate")
+def recalculate_results() -> dict:
+    """Recalculate all existing bet_results with kelly-based unit sizing.
+
+    Fixes historical results that used flat 1-unit sizing.
+    Also removes results below the MIN_GRADE_EV_THRESHOLD.
+    """
+    from scrapers.grader import recalculate_all_results
+
+    db = get_supabase()
+    return recalculate_all_results(db)

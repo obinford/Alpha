@@ -67,6 +67,9 @@ DEFAULT_KELLY_FRACTION = 0.25
 # Minimum EV threshold to surface a pick (percentage)
 MIN_EV_THRESHOLD = 1.0
 
+# Minimum EV% to grade/track a bet as a "play" — anything below is noise
+MIN_GRADE_EV_THRESHOLD = 3.0
+
 # Discord notifications
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 DISCORD_ENABLED = bool(DISCORD_WEBHOOK_URL)
