@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase, SupabaseClient
 
@@ -76,35 +76,38 @@ def performance_summary(
     range: str | None = Query(None),
 ) -> dict:
     """Overall performance summary: record, ROI, units."""
-    db = get_supabase()
-    date_from, date_to = _range_to_dates(range)
-    results = _get_graded_results(db, sport=sport, sportsbook=sportsbook, date_from=date_from, date_to=date_to)
+    try:
+        db = get_supabase()
+        date_from, date_to = _range_to_dates(range)
+        results = _get_graded_results(db, sport=sport, sportsbook=sportsbook, date_from=date_from, date_to=date_to)
 
-    wins = sum(1 for r in results if r["result"] == "win")
-    losses = sum(1 for r in results if r["result"] == "loss")
-    pushes = sum(1 for r in results if r["result"] == "push")
-    total = len(results)
-    units = sum(float(r.get("profit_loss", 0)) for r in results)
-    decided = wins + losses
+        wins = sum(1 for r in results if r["result"] == "win")
+        losses = sum(1 for r in results if r["result"] == "loss")
+        pushes = sum(1 for r in results if r["result"] == "push")
+        total = len(results)
+        units = sum(float(r.get("profit_loss", 0)) for r in results)
+        decided = wins + losses
 
-    evs = []
-    for r in results:
-        opp = r.get("ev_opportunities", {}) or {}
-        ev = opp.get("ev_percentage")
-        if ev is not None:
-            evs.append(float(ev))
+        evs = []
+        for r in results:
+            opp = r.get("ev_opportunities", {}) or {}
+            ev = opp.get("ev_percentage")
+            if ev is not None:
+                evs.append(float(ev))
 
-    return {
-        "total_bets": total,
-        "wins": wins,
-        "losses": losses,
-        "pushes": pushes,
-        "record": f"{wins}-{losses}" + (f"-{pushes}" if pushes else ""),
-        "win_rate": round(wins / decided * 100, 1) if decided else 0,
-        "units_profit": round(units, 2),
-        "roi": round(units / total * 100, 1) if total else 0,
-        "avg_ev": round(sum(evs) / len(evs), 2) if evs else 0,
-    }
+        return {
+            "total_bets": total,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "record": f"{wins}-{losses}" + (f"-{pushes}" if pushes else ""),
+            "win_rate": round(wins / decided * 100, 1) if decided else 0,
+            "units_profit": round(units, 2),
+            "roi": round(units / total * 100, 1) if total else 0,
+            "avg_ev": round(sum(evs) / len(evs), 2) if evs else 0,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/results")
@@ -118,41 +121,44 @@ def performance_results(
     range: str | None = Query(None),
 ) -> dict:
     """Detailed graded results with filters."""
-    db = get_supabase()
-    # Support both explicit date_from/date_to and shorthand range param.
-    if range and not date_from:
-        date_from, date_to = _range_to_dates(range)
-    raw = _get_graded_results(
-        db, sport=sport, sportsbook=sportsbook,
-        market_type=market_type, date_from=date_from,
-        date_to=date_to, result=result,
-    )
+    try:
+        db = get_supabase()
+        # Support both explicit date_from/date_to and shorthand range param.
+        if range and not date_from:
+            date_from, date_to = _range_to_dates(range)
+        raw = _get_graded_results(
+            db, sport=sport, sportsbook=sportsbook,
+            market_type=market_type, date_from=date_from,
+            date_to=date_to, result=result,
+        )
 
-    # Flatten nested ev_opportunities / games for the frontend.
-    results = []
-    for r in raw:
-        opp = r.get("ev_opportunities", {}) or {}
-        game = opp.get("games", {}) or {}
-        results.append({
-            "id": r.get("id"),
-            "result": r.get("result"),
-            "pnl": float(r.get("profit_loss", 0)),
-            "date": r.get("graded_at") or opp.get("timestamp"),
-            "timestamp": opp.get("timestamp"),
-            "sport": game.get("sport", ""),
-            "sportsbook": opp.get("sportsbook", ""),
-            "home_team": game.get("home_team", ""),
-            "away_team": game.get("away_team", ""),
-            "game": f"{game.get('away_team', 'Away')} @ {game.get('home_team', 'Home')}",
-            "pick": opp.get("side", ""),
-            "side": opp.get("side", ""),
-            "odds": opp.get("book_odds"),
-            "ev_pct": opp.get("ev_percentage"),
-            "kelly": opp.get("kelly_fraction"),
-            "market_type": opp.get("market_type", ""),
-        })
+        # Flatten nested ev_opportunities / games for the frontend.
+        results = []
+        for r in raw:
+            opp = r.get("ev_opportunities", {}) or {}
+            game = opp.get("games", {}) or {}
+            results.append({
+                "id": r.get("id"),
+                "result": r.get("result"),
+                "pnl": float(r.get("profit_loss", 0)),
+                "date": r.get("graded_at") or opp.get("timestamp"),
+                "timestamp": opp.get("timestamp"),
+                "sport": game.get("sport", ""),
+                "sportsbook": opp.get("sportsbook", ""),
+                "home_team": game.get("home_team", ""),
+                "away_team": game.get("away_team", ""),
+                "game": f"{game.get('away_team', 'Away')} @ {game.get('home_team', 'Home')}",
+                "pick": opp.get("side", ""),
+                "side": opp.get("side", ""),
+                "odds": opp.get("book_odds"),
+                "ev_pct": opp.get("ev_percentage"),
+                "kelly": opp.get("kelly_fraction"),
+                "market_type": opp.get("market_type", ""),
+            })
 
-    return {"count": len(results), "results": results}
+        return {"count": len(results), "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/by-sport")
@@ -161,6 +167,13 @@ def performance_by_sport(
     range: str | None = Query(None),
 ) -> dict:
     """Performance breakdown by sport."""
+    try:
+        return _by_sport_impl(sportsbook, range)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _by_sport_impl(sportsbook: str | None, range: str | None) -> dict:
     db = get_supabase()
     date_from, date_to = _range_to_dates(range)
     results = _get_graded_results(db, sportsbook=sportsbook, date_from=date_from, date_to=date_to)
@@ -201,6 +214,13 @@ def performance_by_sport(
 @router.get("/by-book")
 def performance_by_book() -> dict:
     """Performance breakdown by sportsbook."""
+    try:
+        return _by_book_impl()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _by_book_impl() -> dict:
     db = get_supabase()
     results = _get_graded_results(db)
 
@@ -244,7 +264,10 @@ def recalculate_results() -> dict:
     Fixes historical results that used flat 1-unit sizing.
     Also removes results below the MIN_GRADE_EV_THRESHOLD.
     """
-    from scrapers.grader import recalculate_all_results
+    try:
+        from scrapers.grader import recalculate_all_results
 
-    db = get_supabase()
-    return recalculate_all_results(db)
+        db = get_supabase()
+        return recalculate_all_results(db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

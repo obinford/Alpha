@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase
 
@@ -15,22 +15,25 @@ def active_signals(
     min_stars: int = Query(3, ge=1, le=5),
 ) -> dict:
     """Current active signals sorted by strength."""
-    db = get_supabase()
-    filters: dict[str, str] = {"status": "eq.active"}
-    if min_stars > 1:
-        filters["star_rating"] = f"gte.{min_stars}"
+    try:
+        db = get_supabase()
+        filters: dict[str, str] = {"status": "eq.active"}
+        if min_stars > 1:
+            filters["star_rating"] = f"gte.{min_stars}"
 
-    rows = db._get(
-        "rtm_signals",
-        select="*",
-        filters=filters,
-        order="signal_strength.desc",
-    )
+        rows = db._get(
+            "rtm_signals",
+            select="*",
+            filters=filters,
+            order="signal_strength.desc",
+        )
 
-    if sport:
-        rows = [r for r in rows if r.get("sport") == sport]
+        if sport:
+            rows = [r for r in rows if r.get("sport") == sport]
 
-    return {"count": len(rows), "signals": rows}
+        return {"count": len(rows), "signals": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history")
@@ -41,31 +44,41 @@ def signal_history(
     days: int = Query(30, ge=1, le=365),
 ) -> dict:
     """Graded signal history with filters."""
-    db = get_supabase()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        db = get_supabase()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-    filters: dict[str, str] = {"created_at": f"gte.{cutoff}"}
-    if min_stars > 1:
-        filters["star_rating"] = f"gte.{min_stars}"
-    if status:
-        filters["status"] = f"eq.{status}"
+        filters: dict[str, str] = {"created_at": f"gte.{cutoff}"}
+        if min_stars > 1:
+            filters["star_rating"] = f"gte.{min_stars}"
+        if status:
+            filters["status"] = f"eq.{status}"
 
-    rows = db._get(
-        "rtm_signals",
-        select="*",
-        filters=filters,
-        order="created_at.desc",
-    )
+        rows = db._get(
+            "rtm_signals",
+            select="*",
+            filters=filters,
+            order="created_at.desc",
+        )
 
-    if sport:
-        rows = [r for r in rows if r.get("sport") == sport]
+        if sport:
+            rows = [r for r in rows if r.get("sport") == sport]
 
-    return {"count": len(rows), "signals": rows}
+        return {"count": len(rows), "signals": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/performance")
 def signal_performance(days: int = Query(30, ge=1, le=365)) -> dict:
     """Signal system performance stats."""
+    try:
+        return _signal_performance_impl(days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _signal_performance_impl(days: int) -> dict:
     db = get_supabase()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 

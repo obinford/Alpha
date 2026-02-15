@@ -2,7 +2,7 @@
 
 import re
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase
 
@@ -87,6 +87,13 @@ def list_props(
     min_ev: float | None = Query(None, ge=0, description="Minimum EV%"),
 ) -> dict:
     """Return player prop EV opportunities from the latest scan."""
+    try:
+        return _list_props_impl(sport, prop_type, player, sportsbook, min_ev)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _list_props_impl(sport, prop_type, player, sportsbook, min_ev) -> dict:
     db = get_supabase()
 
     # Find latest scan timestamp.
