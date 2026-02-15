@@ -183,6 +183,31 @@
   .tier-box .tier-wr{font-size:12px;color:#8892a4;margin-top:2px}
   .tier-box .tier-units{font-size:14px;font-weight:700;margin-top:4px}
 
+  .time-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;margin-left:6px}
+  .badge-early{background:#00e67615;color:#00e676;border:1px solid #00e67640}
+  .badge-urgent{background:#ff525220;color:#ff5252;border:1px solid #ff525240;animation:pulse-urgent 1.5s ease-in-out infinite}
+  .badge-game-time{color:#8892a4;font-size:11px;font-weight:600}
+
+  @keyframes pulse-urgent{0%,100%{opacity:1}50%{opacity:0.6}}
+
+  /* Top Signal Hero */
+  .hero-signal{
+    background:linear-gradient(135deg,#111827 0%,#1a1a10 100%);
+    border:2px solid #ffd700;border-radius:10px;padding:20px 24px;margin-bottom:20px;
+    box-shadow:0 0 30px rgba(255,215,0,0.12);position:relative;overflow:hidden;
+  }
+  .hero-signal::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:3px;
+    background:linear-gradient(90deg,#ffd700,#00e676,#42a5f5,#ce93d8);
+  }
+  .hero-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#ffd700;margin-bottom:8px;font-weight:700}
+  .hero-play{font-size:24px;font-weight:700;color:#e1e5eb;margin-bottom:6px}
+  .hero-detail{display:flex;gap:20px;font-size:13px;color:#8892a4;flex-wrap:wrap;align-items:center}
+  .hero-detail .hero-stars{font-size:20px}
+  .hero-detail .hero-strength{font-size:16px;font-weight:700;color:#ffd700}
+  .hero-detail .hero-edge{color:#00e676;font-weight:700}
+  .hero-detail .hero-book{color:#ce93d8;font-weight:600;text-transform:uppercase}
+
   .message{text-align:center;padding:60px 20px;color:#5a6378}
   .message.error{color:#ff5252}
   .spinner{width:28px;height:28px;border:3px solid #1a2035;border-top-color:#00e676;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
@@ -285,8 +310,20 @@
         <option value="365">All Time</option>
       </select>
     </div>
+    <div class="filter-group">
+      <label>Sort</label>
+      <select id="filter-sort">
+        <option value="strength">By Strength</option>
+        <option value="time">By Game Time</option>
+        <option value="ev">By EV%</option>
+        <option value="posted">By Time Posted</option>
+      </select>
+    </div>
     <button class="btn-refresh" onclick="loadData()">Refresh</button>
   </div>
+
+  <!-- Top Signal Hero -->
+  <div id="hero-section" style="display:none"></div>
 
   <!-- Active signals -->
   <div id="active-section">
@@ -361,6 +398,37 @@ function strengthClass(v) {
   return 'low';
 }
 
+// --- Time helpers ---
+function getCommenceTime(sig) {
+  return sig.commence_time || null;
+}
+function getHoursUntil(sig) {
+  const ct = getCommenceTime(sig);
+  if (!ct) return null;
+  const start = new Date(ct);
+  if (isNaN(start)) return null;
+  return (start - Date.now()) / 3600000;
+}
+function fmtGameTime(sig) {
+  const ct = getCommenceTime(sig);
+  if (!ct) return '';
+  const d = new Date(ct);
+  if (isNaN(d)) return '';
+  const h = getHoursUntil(sig);
+  if (h !== null && h < 0) return 'LIVE';
+  if (h !== null && h < 1) return Math.round(h*60) + 'm';
+  if (h !== null && h < 6) return h.toFixed(1) + 'h';
+  return d.toLocaleDateString('en-US',{weekday:'short',hour:'numeric',minute:'2-digit'});
+}
+function timeBadgeHTML(sig) {
+  const h = getHoursUntil(sig);
+  if (h === null) return '';
+  if (h < 0) return '<span class="time-badge badge-urgent">LIVE</span>';
+  if (h <= 2) return `<span class="time-badge badge-urgent">URGENT — ${h < 1 ? Math.round(h*60)+'m' : h.toFixed(1)+'h'}</span>`;
+  if (h >= 24) return `<span class="time-badge badge-early">EARLY SIGNAL — ${Math.round(h)}h out</span>`;
+  return `<span class="badge-game-time">${fmtGameTime(sig)}</span>`;
+}
+
 function renderSignalCard(sig) {
   const stars = sig.star_rating || 3;
   const strength = sig.signal_strength || 0;
@@ -386,6 +454,8 @@ function renderSignalCard(sig) {
   const playDisplay = player ? `${player} — ${side}` : side;
   const lineDisplay = propLine ? ` (${propLine})` : '';
 
+  const tBadge = timeBadgeHTML(sig);
+
   return `
     <div class="signal-card stars-${stars}">
       <div class="card-header">
@@ -396,6 +466,7 @@ function renderSignalCard(sig) {
             <span class="strength-num">${Math.round(strength)}</span>
           </div>
           <span class="sport-badge ${sportClass(sport)}">${sportLabel(sport)}</span>
+          ${tBadge}
         </div>
         <span style="font-size:11px;color:#5a6378">${fmtDate(created)}</span>
       </div>
@@ -408,7 +479,7 @@ function renderSignalCard(sig) {
             <span class="edge pos">+${edge.toFixed(1)}% edge</span>
           </div>
         </div>
-        <div class="game-info">${game}${player ? ' — <span class="player">'+player+'</span>' : ''}</div>
+        <div class="game-info">${game}${player ? ' — <span class="player">'+player+'</span>' : ''}${getHoursUntil(sig) !== null ? ' — Game in '+fmtGameTime(sig) : ''}</div>
         <div class="scores-grid">
           <div class="score-item">
             <span class="score-label">EV Score</span>
@@ -468,9 +539,78 @@ function renderHistoryRow(sig) {
   </tr>`;
 }
 
+function renderHero(sig) {
+  const heroDiv = document.getElementById('hero-section');
+  if (!sig) { heroDiv.style.display='none'; return; }
+  const stars = sig.star_rating || 3;
+  const strength = sig.signal_strength || 0;
+  const side = sig.side || '—';
+  const player = sig.player_name;
+  const book = sig.sportsbook || '';
+  const odds = sig.book_odds || 0;
+  const edge = sig.edge_percentage || 0;
+  const game = sig.game || '';
+  const sport = sig.sport || '';
+  const h = getHoursUntil(sig);
+  let timeStr = '';
+  if (h !== null) {
+    if (h < 0) timeStr = '<span class="time-badge badge-urgent" style="font-size:12px">LIVE NOW</span>';
+    else if (h <= 2) timeStr = `<span class="time-badge badge-urgent" style="font-size:12px">URGENT — ${h < 1 ? Math.round(h*60)+'m' : h.toFixed(1)+'h'}</span>`;
+    else if (h >= 24) timeStr = `<span class="time-badge badge-early" style="font-size:12px">EARLY SIGNAL — ${Math.round(h)}h out</span>`;
+    else timeStr = `<span class="badge-game-time" style="font-size:12px">Game in ${h.toFixed(1)}h</span>`;
+  }
+  const playDisplay = player ? `${player} — ${side}` : side;
+  heroDiv.style.display = '';
+  heroDiv.innerHTML = `
+    <div class="hero-signal">
+      <div class="hero-label">⚡ TOP SIGNAL — If you only bet one play today ${timeStr}</div>
+      <div class="hero-play">${playDisplay}</div>
+      <div class="hero-detail">
+        <span class="hero-stars">${starStr(stars)}</span>
+        <span class="hero-strength">${Math.round(strength)} strength</span>
+        <span class="hero-book">${book}</span>
+        <span style="color:#e1e5eb;font-weight:600">${fmtOdds(odds)}</span>
+        <span class="hero-edge">+${edge.toFixed(1)}% edge</span>
+        <span class="sport-badge ${sportClass(sport)}">${sportLabel(sport)}</span>
+        ${game ? '<span style="color:#8892a4">'+game+'</span>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function sortSignals(signals, sortBy) {
+  const copy = [...signals];
+  switch (sortBy) {
+    case 'time':
+      copy.sort((a, b) => {
+        const ha = getHoursUntil(a), hb = getHoursUntil(b);
+        if (ha === null && hb === null) return 0;
+        if (ha === null) return 1;
+        if (hb === null) return -1;
+        return ha - hb;
+      });
+      break;
+    case 'ev':
+      copy.sort((a, b) => (b.edge_percentage || 0) - (a.edge_percentage || 0));
+      break;
+    case 'posted':
+      copy.sort((a, b) => {
+        const da = a.created_at ? new Date(a.created_at) : 0;
+        const db = b.created_at ? new Date(b.created_at) : 0;
+        return db - da;
+      });
+      break;
+    default: // strength
+      copy.sort((a, b) => (b.signal_strength || 0) - (a.signal_strength || 0));
+      break;
+  }
+  return copy;
+}
+
 async function loadActiveSignals() {
   const sport = document.getElementById('filter-sport').value;
   const stars = document.getElementById('filter-stars').value;
+  const sortBy = document.getElementById('filter-sort').value;
   try {
     const params = new URLSearchParams({min_stars: stars});
     if (sport) params.set('sport', sport);
@@ -482,13 +622,21 @@ async function loadActiveSignals() {
     const grid = document.getElementById('signal-grid');
     if (!data.signals || data.signals.length === 0) {
       grid.innerHTML = '<div class="message">No active signals matching filters.<br>Signals fire when 2+ systems agree on a play.</div>';
+      renderHero(null);
       return;
     }
 
-    grid.innerHTML = data.signals.map(renderSignalCard).join('');
+    // Render hero with strongest signal
+    const strongest = [...data.signals].sort((a, b) => (b.signal_strength||0) - (a.signal_strength||0))[0];
+    renderHero(strongest);
+
+    // Sort remaining signals
+    const sorted = sortSignals(data.signals, sortBy);
+    grid.innerHTML = sorted.map(renderSignalCard).join('');
     setStatus(true);
   } catch (e) {
     document.getElementById('signal-grid').innerHTML = `<div class="message error">Error loading signals: ${e.message}</div>`;
+    renderHero(null);
     setStatus(false);
   }
 }
@@ -612,6 +760,7 @@ function showView(view) {
   document.getElementById('active-section').style.display = view === 'active' ? '' : 'none';
   document.getElementById('history-section').style.display = view === 'history' ? '' : 'none';
   document.getElementById('perf-section').style.display = view === 'performance' ? '' : 'none';
+  if (view !== 'active') document.getElementById('hero-section').style.display = 'none';
 }
 
 async function loadData() {
@@ -649,6 +798,7 @@ document.getElementById('filter-sport').addEventListener('change', loadData);
 document.getElementById('filter-stars').addEventListener('change', loadData);
 document.getElementById('filter-view').addEventListener('change', loadData);
 document.getElementById('filter-days').addEventListener('change', loadData);
+document.getElementById('filter-sort').addEventListener('change', loadData);
 
 // Initial load
 loadData();
