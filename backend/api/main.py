@@ -21,7 +21,7 @@ if _project_root not in sys.path:
 from api.routes import (
     picks, odds, models as models_router, copilot, ev,
     line_movements, steam_alerts, sharp_dashboard, usage, clv,
-    performance, props, recap, bankroll, odds_screen,
+    performance, props, recap, bankroll, odds_screen, signal,
 )
 
 load_dotenv()
@@ -55,6 +55,7 @@ app.include_router(props.router, prefix="/api/props", tags=["props"])
 app.include_router(recap.router, prefix="/api/recap", tags=["recap"])
 app.include_router(bankroll.router, prefix="/api/bankroll", tags=["bankroll"])
 app.include_router(odds_screen.router, prefix="/api/odds-screen", tags=["odds-screen"])
+app.include_router(signal.router, prefix="/api/signals", tags=["signals"])
 
 
 @app.get("/health")
