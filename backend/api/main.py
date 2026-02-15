@@ -13,6 +13,11 @@ _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+# Also add the project root so that `shared.config` is importable.
+_project_root = os.path.dirname(_backend_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from api.routes import (
     picks, odds, models as models_router, copilot, ev,
     line_movements, steam_alerts, sharp_dashboard, usage, clv,
