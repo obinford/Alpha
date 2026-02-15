@@ -846,6 +846,22 @@ def run_scan(sport_keys: list[str]) -> int:
         except Exception as e:
             print(f"Warning: Steam detection failed ({e}).")
 
+    # --- Score fetching & auto-grading ---
+    if db is not None:
+        try:
+            from scrapers.scores.score_fetcher import fetch_and_update_scores
+            score_count = fetch_and_update_scores(db, sport_keys)
+            if score_count:
+                print(f"Scores: {score_count} game(s) finalized.")
+        except Exception as e:
+            print(f"Warning: Score fetch failed ({e}).")
+
+        try:
+            from scrapers.grader import grade_opportunities
+            grade_result = grade_opportunities(db)
+        except Exception as e:
+            print(f"Warning: Auto-grading failed ({e}).")
+
     # --- Discord alerts ---
     try:
         from notifications.alerts import alert_manager
