@@ -1049,7 +1049,9 @@ def run_scan(sport_keys: list[str]) -> int:
                     "game_id": o.game_id,
                     "sport": o.sport_key,
                     "market_type": o.market,
-                    "side": o.selection,
+                    "side": o.selection + (
+                        f" {o.point}" if o.point is not None and not _is_prop_market(o.market) else ""
+                    ),
                     "ev_percentage": o.ev_pct,
                     "book_odds": o.book_odds,
                     "sportsbook": o.book_key,
