@@ -1,39 +1,53 @@
 """RTM Signal — confluence model for high-confidence betting signals.
 
-Combines four independent systems:
+Combines up to four independent systems:
   1. +EV from devigged sharp books (top-down)
   2. Steam detection / line movement confirmation
-  3. In-house player projections + simulation (bottom-up)
-  4. Market consensus / outlier detection
+  3. In-house player projections + simulation (bottom-up, NBA only)
+  4. Market consensus — how many books show +EV on the same side
 
-When 2+ systems agree → interesting. 3+ → RTM Signal. All 4 → max confidence.
+Sport-adaptive weights:
+  NBA (4 components): ev=0.30, steam=0.25, projection=0.25, consensus=0.20
+  Other sports (3 components): ev=0.45, steam=0.30, consensus=0.25
 
 Signal tiers:
-  75+ → STRONG SIGNAL (5 stars)
-  60+ → SIGNAL (4 stars)
-  45+ → LEAN (3 stars)
-  <45 → no signal
+  70+ → STRONG SIGNAL (5 stars)
+  55+ → SIGNAL (4 stars)
+  40+ → LEAN (3 stars)
+  <40 → no signal
 """
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from projections.simulator import PropSimulator, _prop_type_to_key
 from projections.math_utils import american_to_decimal, american_to_implied_prob
 
-# Configurable weights (can be tuned via shared/config.py later).
-# Game line weights.
-GAME_LINE_WEIGHTS = {
-    "ev": 0.40,
-    "steam": 0.30,
-    "projection": 0.00,  # No projections for game lines
-    "consensus": 0.30,
+# ---------------------------------------------------------------------------
+# Sport-adaptive weights
+# ---------------------------------------------------------------------------
+
+# NBA uses all 4 components including projections.
+NBA_WEIGHTS = {
+    "ev": 0.30,
+    "steam": 0.25,
+    "projection": 0.25,
+    "consensus": 0.20,
 }
 
-# Player prop weights.
-PROP_WEIGHTS = {
+# All other sports use 3 components (no projection data available).
+DEFAULT_WEIGHTS = {
+    "ev": 0.45,
+    "steam": 0.30,
+    "projection": 0.00,
+    "consensus": 0.25,
+}
+
+# NBA prop weights (projection is more important for props).
+NBA_PROP_WEIGHTS = {
     "ev": 0.25,
     "steam": 0.20,
     "projection": 0.35,
@@ -41,12 +55,49 @@ PROP_WEIGHTS = {
 }
 
 # Signal tier thresholds.
-TIER_STRONG = 75
-TIER_SIGNAL = 60
-TIER_LEAN = 45
+TIER_STRONG = 70
+TIER_SIGNAL = 55
+TIER_LEAN = 40
 
 # Star ratings.
 STAR_RATINGS = {5: TIER_STRONG, 4: TIER_SIGNAL, 3: TIER_LEAN}
+
+# Sports that have projection support.
+_PROJECTION_SPORTS = {"basketball_nba"}
+
+
+def _get_weights(sport: str, is_prop: bool) -> dict[str, float]:
+    """Return the appropriate weight set for a sport and market type.
+
+    Only NBA props use 4-component weights (with projections).
+    All game lines and non-NBA props use 3-component weights
+    so that the full 100% of weight is distributed across active components.
+    """
+    if is_prop and sport in _PROJECTION_SPORTS:
+        return NBA_PROP_WEIGHTS
+    return DEFAULT_WEIGHTS
+
+
+# ---------------------------------------------------------------------------
+# Linear interpolation helper
+# ---------------------------------------------------------------------------
+
+def _lerp(value: float, tiers: list[tuple[float, float, int, int]]) -> int:
+    """Linearly interpolate a score from tier breakpoints.
+
+    Each tier is (low, high, score_low, score_high).
+    Value below first tier returns 0. Value above last returns score_high of last.
+    """
+    for low, high, s_low, s_high in tiers:
+        if value < low:
+            return 0
+        if value <= high:
+            if high == low:
+                return s_low
+            frac = (value - low) / (high - low)
+            return round(s_low + frac * (s_high - s_low))
+    # Above all tiers — return max.
+    return tiers[-1][3] if tiers else 0
 
 
 class RTMSignal:
@@ -55,9 +106,11 @@ class RTMSignal:
     def __init__(self, db_client=None, simulator: PropSimulator | None = None):
         self._db = db_client
         self._sim = simulator or PropSimulator(num_simulations=10_000)
-        # Cache for steam alerts and line movements.
+        # Caches for steam alerts and line movements.
         self._steam_cache: dict[str, list[dict]] | None = None
         self._movements_cache: dict[str, list[dict]] | None = None
+        # EV consensus: (game_id, market_type, normalized_side) -> set of sportsbooks
+        self._consensus_map: dict[tuple[str, str, str], set[str]] | None = None
 
     # ------------------------------------------------------------------
     # Individual scoring components
@@ -66,19 +119,24 @@ class RTMSignal:
     def ev_score(self, ev_percentage: float) -> int:
         """Score based on +EV from devigged sharp books.
 
-        Returns 0-100 score.
+        Returns 0-100 with linear interpolation within tiers:
+          1-2%  → 15-30
+          2-3%  → 30-50
+          3-5%  → 50-70
+          5-8%  → 70-85
+          8-12% → 85-100
+          12%+  → 100
         """
-        if ev_percentage >= 12:
-            return 100
-        elif ev_percentage >= 8:
-            return 80
-        elif ev_percentage >= 5:
-            return 60
-        elif ev_percentage >= 3:
-            return 40
-        elif ev_percentage >= 1:
-            return 20
-        return 0
+        if ev_percentage < 1.0:
+            return 0
+        return _lerp(ev_percentage, [
+            (1.0, 2.0, 15, 30),
+            (2.0, 3.0, 30, 50),
+            (3.0, 5.0, 50, 70),
+            (5.0, 8.0, 70, 85),
+            (8.0, 12.0, 85, 100),
+            (12.0, 100.0, 100, 100),
+        ])
 
     def steam_score(
         self,
@@ -89,6 +147,7 @@ class RTMSignal:
         """Score based on steam alert confirmation.
 
         Checks if a steam alert exists that confirms this bet direction.
+        3 books → 40, 4 books → 70, 5+ books AND magnitude ≥ 3 → 100.
         """
         steam_alerts = self._get_steam_alerts(game_id)
         if not steam_alerts:
@@ -108,15 +167,15 @@ class RTMSignal:
             if alert_direction != "shortened":
                 continue
 
-            # Match side.
-            if side.lower() not in alert_side.lower() and alert_side.lower() not in side.lower():
+            # Match side — flexible substring matching.
+            if not _sides_match(side, alert_side):
                 continue
 
             books_moved = alert.get("books_moved", [])
             if isinstance(books_moved, str):
                 books_moved = books_moved.split(",")
             num_books = len(books_moved) if isinstance(books_moved, list) else 1
-            magnitude = int(alert.get("magnitude", 0))
+            magnitude = float(alert.get("magnitude", 0))
 
             if num_books >= 5 and magnitude >= 3:
                 best_score = max(best_score, 100)
@@ -138,7 +197,7 @@ class RTMSignal:
     ) -> int:
         """Score based on our proprietary projection vs sportsbook line.
 
-        Only applicable to player props.
+        Only applicable to player props with projection support (NBA).
         """
         if player_projection is None:
             return 0
@@ -190,47 +249,45 @@ class RTMSignal:
         side: str,
         market_type: str,
     ) -> int:
-        """Score based on how many books agree on this side having value.
+        """Score based on how many sportsbooks show +EV on the same side.
 
-        Checks line_movements: if multiple books moved in the same direction,
-        it's a market consensus.
+        Counts distinct sportsbooks from the current EV opportunities.
+        1 book → 15, 2 → 35, 3 → 55, 4+ → 75.
+        +15 bonus if a steam alert confirms this side.
         """
-        movements = self._get_line_movements(game_id)
-        if not movements:
-            return 30  # Default moderate score when no data available.
+        num_books = 0
+        if self._consensus_map is not None:
+            key = (game_id, market_type, _normalize_side(side))
+            books = self._consensus_map.get(key, set())
+            num_books = len(books)
 
-        # Count books that moved odds shorter on this side (confirming value).
-        confirming_books = set()
-        for mv in movements:
-            mv_market = mv.get("market_type", "")
-            mv_side = mv.get("side", "")
-            change = float(mv.get("odds_change", 0))
+        if num_books >= 4:
+            base = 75
+        elif num_books >= 3:
+            base = 55
+        elif num_books >= 2:
+            base = 35
+        elif num_books >= 1:
+            base = 15
+        else:
+            base = 10
 
-            if mv_market != market_type:
+        # Bonus if steam confirms this side.
+        steam = self._get_steam_alerts(game_id)
+        has_steam_confirm = False
+        for alert in steam:
+            if alert.get("market_type") != market_type:
                 continue
-
-            # Check if this movement confirms our side.
-            side_match = (
-                side.lower() in mv_side.lower()
-                or mv_side.lower() in side.lower()
-            )
-            if not side_match:
+            if alert.get("direction") != "shortened":
                 continue
+            if _sides_match(side, alert.get("side", "")):
+                has_steam_confirm = True
+                break
 
-            # Odds shortening (negative change for favorites = shorter).
-            if change < 0:
-                confirming_books.add(mv.get("bookmaker", ""))
+        if has_steam_confirm:
+            base = min(100, base + 15)
 
-        num_confirming = len(confirming_books)
-        if num_confirming >= 4:
-            return 80
-        elif num_confirming >= 3:
-            return 60
-        elif num_confirming >= 2:
-            return 50
-        elif num_confirming >= 1:
-            return 30
-        return 20
+        return base
 
     # ------------------------------------------------------------------
     # Signal generation
@@ -252,18 +309,20 @@ class RTMSignal:
         book_odds = opportunity.get("book_odds", -110)
         sportsbook = opportunity.get("sportsbook", "")
 
+        # Determine sport.
+        game_info = opportunity.get("games", {}) or {}
+        sport = game_info.get("sport", opportunity.get("sport", ""))
+
+        is_prop = market_type.startswith("player_")
+
         # Calculate individual scores.
         ev = self.ev_score(ev_pct)
         steam = self.steam_score(game_id, side, market_type)
 
-        is_prop = market_type.startswith("player_")
-
-        # Projection score (props only).
+        # Projection score (NBA props only).
         proj = 0
         proj_data = None
-        if is_prop and player_projection:
-            # Parse line from side string (e.g., "LeBron James Over 28.5").
-            import re
+        if is_prop and player_projection and sport in _PROJECTION_SPORTS:
             m = re.search(r"(over|under)\s+([\d.]+)", side, re.IGNORECASE)
             if m:
                 direction = m.group(1)
@@ -281,8 +340,8 @@ class RTMSignal:
 
         consensus = self.market_consensus_score(game_id, side, market_type)
 
-        # Select weights.
-        weights = PROP_WEIGHTS if is_prop else GAME_LINE_WEIGHTS
+        # Select sport-adaptive weights.
+        weights = _get_weights(sport, is_prop)
 
         # Calculate signal strength.
         signal_strength = (
@@ -303,9 +362,6 @@ class RTMSignal:
         else:
             return None  # Below threshold.
 
-        # Parse game info.
-        game_info = opportunity.get("games", {}) or {}
-        sport = game_info.get("sport", opportunity.get("sport", ""))
         home_team = game_info.get("home_team", "")
         away_team = game_info.get("away_team", "")
 
@@ -313,7 +369,6 @@ class RTMSignal:
         player_name = None
         prop_line = None
         if is_prop:
-            import re
             m = re.match(r"^(.+?)\s+(over|under)\s+([\d.]+)$", side, re.IGNORECASE)
             if m:
                 player_name = m.group(1).strip()
@@ -360,22 +415,32 @@ class RTMSignal:
     ) -> list[dict]:
         """Score all opportunities and return those meeting signal threshold.
 
+        Builds a consensus map from all opportunities first, then scores each.
+        Deduplicates by (game_id, market_type, side) keeping highest strength.
+
         Args:
             opportunities: List of EV opportunity dicts.
-            player_projections: Dict of player_id -> projection dict from
-                ProjectionEngine.
+            player_projections: Dict of player_id -> projection dict.
 
         Returns list of signal dicts sorted by strength descending.
         """
-        signals = []
+        # Build consensus map: count distinct sportsbooks per (game, market, side).
+        self._consensus_map = {}
+        for opp in opportunities:
+            gid = opp.get("game_id", "")
+            mkt = opp.get("market_type", "")
+            side_raw = opp.get("side", "")
+            book = opp.get("sportsbook", "")
+            key = (gid, mkt, _normalize_side(side_raw))
+            self._consensus_map.setdefault(key, set()).add(book)
+
         projections = player_projections or {}
+        all_signals: list[dict] = []
 
         for opp in opportunities:
             # Find matching projection for props.
             proj = None
             if opp.get("market_type", "").startswith("player_"):
-                # Try to match by parsing player name.
-                import re
                 m = re.match(
                     r"^(.+?)\s+(over|under)\s+",
                     opp.get("side", ""),
@@ -390,7 +455,17 @@ class RTMSignal:
 
             signal = self.score_opportunity(opp, proj)
             if signal:
-                signals.append(signal)
+                all_signals.append(signal)
+
+        # Deduplicate: keep the strongest signal per (game_id, market_type, side).
+        dedup: dict[tuple[str, str, str], dict] = {}
+        for sig in all_signals:
+            key = (sig["game_id"], sig["market_type"], _normalize_side(sig["side"]))
+            existing = dedup.get(key)
+            if existing is None or sig["signal_strength"] > existing["signal_strength"]:
+                dedup[key] = sig
+
+        signals = list(dedup.values())
 
         # Sort by signal strength descending.
         signals.sort(key=lambda s: s["signal_strength"], reverse=True)
@@ -410,7 +485,7 @@ class RTMSignal:
 
         try:
             rows = self._db._get(
-                "steam_moves",
+                "steam_alerts",
                 filters={"game_id": f"eq.{game_id}"},
                 order="detected_at.desc",
             )
@@ -449,7 +524,7 @@ class RTMSignal:
         for gid in game_ids:
             try:
                 steam = self._db._get(
-                    "steam_moves",
+                    "steam_alerts",
                     filters={"game_id": f"eq.{gid}"},
                 )
                 self._steam_cache[gid] = steam
@@ -465,6 +540,33 @@ class RTMSignal:
             except Exception:
                 self._movements_cache[gid] = []
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_side(side: str) -> str:
+    """Normalize a side string for dedup/consensus grouping.
+
+    Strips sportsbook-specific variations so the same logical bet
+    (e.g. "Team A -3.5" from different books) groups together.
+    """
+    return side.strip().lower()
+
+
+def _sides_match(bet_side: str, alert_side: str) -> bool:
+    """Check if a bet side matches a steam alert side.
+
+    Uses flexible substring matching in both directions.
+    """
+    a = bet_side.strip().lower()
+    b = alert_side.strip().lower()
+    return a in b or b in a
+
+
+# ---------------------------------------------------------------------------
+# Storage & formatting
+# ---------------------------------------------------------------------------
 
 def store_signals(db_client, signals: list[dict]) -> int:
     """Store signals in the rtm_signals Supabase table.
