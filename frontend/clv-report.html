@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTM Picks — CLV Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+nav{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;display:flex;gap:24px;align-items:center}
+nav .brand{font-weight:700;font-size:1.1rem;color:#58a6ff}
+nav a{color:#8b949e;text-decoration:none;font-size:.9rem;padding:6px 12px;border-radius:6px;transition:all .15s}
+nav a:hover,nav a.active{color:#c9d1d9;background:#21262d}
+.container{max-width:1400px;margin:0 auto;padding:24px}
+h1{font-size:1.5rem;margin-bottom:8px}
+.subtitle{color:#8b949e;margin-bottom:24px;font-size:.9rem}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;text-align:center}
+.stat-card .label{color:#8b949e;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+.stat-card .value{font-size:1.8rem;font-weight:700}
+.stat-card .value.positive{color:#3fb950}
+.stat-card .value.negative{color:#f85149}
+.stat-card .value.neutral{color:#58a6ff}
+.chart-container{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:24px}
+.chart-container h2{font-size:1.1rem;margin-bottom:16px;color:#c9d1d9}
+.chart-wrap{height:300px;position:relative}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{text-align:left;padding:10px 12px;background:#21262d;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;position:sticky;top:0}
+td{padding:10px 12px;border-bottom:1px solid #21262d}
+tr:hover td{background:#161b22}
+.clv-pos{color:#3fb950;font-weight:600}
+.clv-neg{color:#f85149;font-weight:600}
+.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600}
+.status-open{background:#1f3a2e;color:#3fb950}
+.status-closed{background:#1f2937;color:#58a6ff}
+.status-expired{background:#2d1f1f;color:#f85149}
+.sport-row{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+.sport-stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-width:180px;flex:1}
+.sport-stat .sport-name{font-weight:600;margin-bottom:8px;color:#58a6ff}
+.sport-stat .sport-detail{color:#8b949e;font-size:.85rem;line-height:1.6}
+.empty-state{text-align:center;padding:60px;color:#8b949e}
+.filters{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.filters select,.filters input{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:8px 12px;border-radius:6px;font-size:.85rem}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">RTM Picks</span>
+  <a href="dashboard.html">+EV Dashboard</a>
+  <a href="sharp-tracker.html">Sharp Tracker</a>
+  <a href="clv-report.html" class="active">CLV Report</a>
+</nav>
+
+<div class="container">
+  <h1>Closing Line Value Report</h1>
+  <p class="subtitle">CLV measures whether our picks consistently beat the closing line — the gold standard of betting edge.</p>
+
+  <div class="stats-row" id="stats-row">
+    <div class="stat-card"><div class="label">Total Records</div><div class="value neutral" id="stat-total">—</div></div>
+    <div class="stat-card"><div class="label">Average CLV</div><div class="value" id="stat-avg-clv">—</div></div>
+    <div class="stat-card"><div class="label">Positive CLV %</div><div class="value" id="stat-pos-pct">—</div></div>
+    <div class="stat-card"><div class="label">Avg EV at Bet</div><div class="value" id="stat-avg-ev">—</div></div>
+  </div>
+
+  <div id="sport-section" class="sport-row"></div>
+
+  <div class="chart-container">
+    <h2>CLV Distribution</h2>
+    <div class="chart-wrap"><canvas id="clvChart"></canvas></div>
+  </div>
+
+  <div class="chart-container">
+    <h2>CLV Over Time</h2>
+    <div class="chart-wrap"><canvas id="clvTimeChart"></canvas></div>
+  </div>
+
+  <div class="filters">
+    <select id="filter-status">
+      <option value="">All Statuses</option>
+      <option value="closed">Closed</option>
+      <option value="open">Open</option>
+      <option value="expired">Expired</option>
+    </select>
+    <select id="filter-sport">
+      <option value="">All Sports</option>
+    </select>
+    <select id="filter-hours">
+      <option value="24">Last 24h</option>
+      <option value="72" selected>Last 72h</option>
+      <option value="168">Last 7 days</option>
+      <option value="720">Last 30 days</option>
+    </select>
+  </div>
+
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:auto;max-height:500px">
+    <table>
+      <thead>
+        <tr>
+          <th>Sport</th>
+          <th>Game</th>
+          <th>Side</th>
+          <th>Market</th>
+          <th>Book</th>
+          <th>Bet Odds</th>
+          <th>Close Odds</th>
+          <th>CLV%</th>
+          <th>EV@Bet</th>
+          <th>Status</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="clv-body"></tbody>
+    </table>
+  </div>
+  <div id="empty-state" class="empty-state" style="display:none">
+    <p>No CLV records yet. CLV tracking starts automatically when +EV opportunities are found.</p>
+    <p style="margin-top:8px">Run a few scan cycles and wait for games to start to see CLV data.</p>
+  </div>
+</div>
+
+<script>
+const API = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+  ? 'http://localhost:8000'
+  : '';
+
+let allRecords = [];
+let clvChart = null;
+let clvTimeChart = null;
+
+function fmtOdds(n) {
+  if (n == null) return '—';
+  n = Number(n);
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function fmtClv(n) {
+  if (n == null) return '—';
+  n = Number(n);
+  const cls = n > 0 ? 'clv-pos' : n < 0 ? 'clv-neg' : '';
+  return `<span class="${cls}">${n > 0 ? '+' : ''}${n.toFixed(2)}%</span>`;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-US', {month:'short',day:'numeric'}) + ' ' +
+         d.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'});
+}
+
+function statusBadge(s) {
+  return `<span class="status-badge status-${s}">${s}</span>`;
+}
+
+async function loadSummary() {
+  try {
+    const r = await fetch(`${API}/api/clv/summary?days=30`);
+    const d = await r.json();
+
+    document.getElementById('stat-total').textContent = d.total_records;
+
+    const avgEl = document.getElementById('stat-avg-clv');
+    avgEl.textContent = d.total_records > 0 ? `${d.avg_clv > 0 ? '+' : ''}${d.avg_clv.toFixed(2)}%` : '—';
+    avgEl.className = `value ${d.avg_clv > 0 ? 'positive' : d.avg_clv < 0 ? 'negative' : 'neutral'}`;
+
+    const posEl = document.getElementById('stat-pos-pct');
+    posEl.textContent = d.total_records > 0 ? `${d.positive_clv_pct.toFixed(1)}%` : '—';
+    posEl.className = `value ${d.positive_clv_pct >= 50 ? 'positive' : 'neutral'}`;
+
+    const evEl = document.getElementById('stat-avg-ev');
+    evEl.textContent = d.total_records > 0 ? `+${d.avg_ev_at_bet.toFixed(2)}%` : '—';
+    evEl.className = 'value positive';
+
+    // Sport breakdown.
+    const sportDiv = document.getElementById('sport-section');
+    sportDiv.innerHTML = '';
+    if (d.by_sport && Object.keys(d.by_sport).length > 0) {
+      for (const [sport, stats] of Object.entries(d.by_sport)) {
+        sportDiv.innerHTML += `
+          <div class="sport-stat">
+            <div class="sport-name">${sport}</div>
+            <div class="sport-detail">
+              Records: ${stats.count}<br>
+              Avg CLV: <span class="${stats.avg_clv > 0 ? 'clv-pos' : 'clv-neg'}">${stats.avg_clv > 0 ? '+' : ''}${stats.avg_clv.toFixed(2)}%</span><br>
+              +CLV Rate: ${stats.positive_pct.toFixed(1)}%
+            </div>
+          </div>`;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load CLV summary:', e);
+  }
+}
+
+async function loadRecords() {
+  const status = document.getElementById('filter-status').value;
+  const sport = document.getElementById('filter-sport').value;
+  const hours = document.getElementById('filter-hours').value;
+
+  let url = `${API}/api/clv/?hours=${hours}`;
+  if (status) url += `&status=${status}`;
+  if (sport) url += `&sport=${sport}`;
+
+  try {
+    const r = await fetch(url);
+    allRecords = await r.json();
+    renderTable();
+    renderCharts();
+
+    // Populate sport filter.
+    const sports = [...new Set(allRecords.map(r => r.sport).filter(Boolean))];
+    const sportSel = document.getElementById('filter-sport');
+    const current = sportSel.value;
+    sportSel.innerHTML = '<option value="">All Sports</option>';
+    sports.forEach(s => {
+      sportSel.innerHTML += `<option value="${s}" ${s === current ? 'selected' : ''}>${s}</option>`;
+    });
+  } catch (e) {
+    console.error('Failed to load CLV records:', e);
+  }
+}
+
+function renderTable() {
+  const body = document.getElementById('clv-body');
+  const empty = document.getElementById('empty-state');
+
+  if (!allRecords.length) {
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  body.innerHTML = allRecords.map(r => {
+    const game = r.games || {};
+    const gameName = game.home_team ? `${game.away_team} @ ${game.home_team}` : r.game_id;
+    return `<tr>
+      <td>${r.sport || '—'}</td>
+      <td>${gameName}</td>
+      <td>${r.side || '—'}</td>
+      <td>${r.market_type || '—'}</td>
+      <td>${r.sportsbook || '—'}</td>
+      <td>${fmtOdds(r.bet_odds)}</td>
+      <td>${fmtOdds(r.closing_odds)}</td>
+      <td>${fmtClv(r.clv_percentage)}</td>
+      <td>${r.ev_at_bet != null ? '+' + Number(r.ev_at_bet).toFixed(1) + '%' : '—'}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td>${fmtTime(r.bet_timestamp)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCharts() {
+  const closed = allRecords.filter(r => r.status === 'closed' && r.clv_percentage != null);
+
+  // CLV Distribution histogram.
+  if (clvChart) clvChart.destroy();
+  const ctx1 = document.getElementById('clvChart').getContext('2d');
+
+  if (closed.length > 0) {
+    const bins = {};
+    const step = 1;
+    closed.forEach(r => {
+      const clv = Number(r.clv_percentage);
+      const bin = Math.floor(clv / step) * step;
+      const label = `${bin}`;
+      bins[label] = (bins[label] || 0) + 1;
+    });
+
+    const sortedBins = Object.keys(bins).sort((a, b) => Number(a) - Number(b));
+    const colors = sortedBins.map(b => Number(b) >= 0 ? '#3fb950' : '#f85149');
+
+    clvChart = new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels: sortedBins.map(b => `${b}%`),
+        datasets: [{
+          data: sortedBins.map(b => bins[b]),
+          backgroundColor: colors,
+          borderColor: colors,
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+        }
+      }
+    });
+  }
+
+  // CLV over time scatter.
+  if (clvTimeChart) clvTimeChart.destroy();
+  const ctx2 = document.getElementById('clvTimeChart').getContext('2d');
+
+  if (closed.length > 0) {
+    const data = closed.map(r => ({
+      x: new Date(r.bet_timestamp),
+      y: Number(r.clv_percentage),
+    })).sort((a, b) => a.x - b.x);
+
+    // Running average.
+    let runSum = 0;
+    const avgData = data.map((d, i) => {
+      runSum += d.y;
+      return { x: d.x, y: runSum / (i + 1) };
+    });
+
+    clvTimeChart = new Chart(ctx2, {
+      type: 'scatter',
+      data: {
+        datasets: [
+          {
+            label: 'Individual CLV',
+            data: data,
+            backgroundColor: data.map(d => d.y >= 0 ? '#3fb95080' : '#f8514980'),
+            pointRadius: 4,
+          },
+          {
+            label: 'Running Avg',
+            data: avgData,
+            type: 'line',
+            borderColor: '#58a6ff',
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#c9d1d9' } } },
+        scales: {
+          x: {
+            type: 'linear',
+            ticks: {
+              color: '#8b949e',
+              callback: v => new Date(v).toLocaleDateString('en-US', {month:'short',day:'numeric'}),
+            },
+            grid: { color: '#21262d' },
+          },
+          y: { ticks: { color: '#8b949e', callback: v => v + '%' }, grid: { color: '#21262d' } },
+        }
+      }
+    });
+  }
+}
+
+// Filter change listeners.
+document.getElementById('filter-status').addEventListener('change', loadRecords);
+document.getElementById('filter-sport').addEventListener('change', loadRecords);
+document.getElementById('filter-hours').addEventListener('change', loadRecords);
+
+// Initial load.
+loadSummary();
+loadRecords();
+
+// Auto-refresh every 2 minutes.
+setInterval(() => { loadSummary(); loadRecords(); }, 120000);
+</script>
+</body>
+</html>

@@ -13,7 +13,7 @@ if _backend_dir not in sys.path:
 
 from api.routes import (
     picks, odds, models as models_router, copilot, ev,
-    line_movements, steam_alerts, sharp_dashboard, usage,
+    line_movements, steam_alerts, sharp_dashboard, usage, clv,
 )
 
 load_dotenv()
@@ -41,6 +41,7 @@ app.include_router(line_movements.router, prefix="/api/line-movements", tags=["l
 app.include_router(steam_alerts.router, prefix="/api/steam-alerts", tags=["steam-alerts"])
 app.include_router(sharp_dashboard.router, prefix="/api/sharp-dashboard", tags=["sharp-dashboard"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
+app.include_router(clv.router, prefix="/api/clv", tags=["clv"])
 
 
 @app.get("/health")

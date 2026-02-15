@@ -815,6 +815,26 @@ def run_scan(sport_keys: list[str]) -> int:
                     print(f"  Skipped row ({opp.game_id}/{opp.book_key}): {row_err}")
             print(f"Fallback complete: {saved}/{len(all_opportunities)} rows saved.")
 
+    # --- CLV record creation ---
+    if db is not None and all_opportunities:
+        try:
+            from scrapers.clv_tracker import create_clv_from_ev_opportunities
+            clv_count = create_clv_from_ev_opportunities(db)
+            if clv_count:
+                print(f"CLV tracking: {clv_count} new record(s) created.")
+        except Exception as e:
+            print(f"Warning: CLV record creation failed ({e}).")
+
+    # --- CLV processing (close records for started games) ---
+    if db is not None:
+        try:
+            from scrapers.clv_tracker import process_open_records
+            clv_processed, clv_expired = process_open_records(db)
+            if clv_processed or clv_expired:
+                print(f"CLV processing: {clv_processed} closed, {clv_expired} expired.")
+        except Exception as e:
+            print(f"Warning: CLV processing failed ({e}).")
+
     # --- Steam detection ---
     if db is not None:
         try:
