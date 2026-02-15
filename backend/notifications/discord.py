@@ -264,3 +264,64 @@ def build_ev_payload(opportunities: list[dict]) -> dict:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }]
     }
+
+
+def send_signal_alert(signal: dict) -> bool:
+    """Send a Discord embed for an RTM Signal alert.
+
+    Signal dict should have: star_rating, signal_strength, side, sportsbook,
+    book_odds, edge_percentage, ev_score, steam_score, projection_score,
+    consensus_score, kelly_size, sport, game, player_name.
+    """
+    if not _is_enabled():
+        return False
+
+    stars = signal.get("star_rating", 3)
+    strength = signal.get("signal_strength", 0)
+
+    if stars >= 5:
+        title = "\u26a1 RTM SIGNAL \u2014 STRONG"
+        color = 0x00FF88
+    elif stars >= 4:
+        title = "\U0001f525 RTM SIGNAL"
+        color = 0xFFD700
+    else:
+        title = "\U0001f4ca RTM LEAN"
+        color = 0x42A5F5
+
+    star_str = "\u2b50" * stars
+    sport = _sport_label(signal.get("sport", ""))
+    game = signal.get("game", "")
+    side = signal.get("side", "")
+    odds_str = _format_odds(signal.get("book_odds", 0))
+    book = signal.get("sportsbook", "")
+    edge = signal.get("edge_percentage", 0)
+    kelly = signal.get("kelly_size", 0)
+
+    fields = [
+        {"name": "Play", "value": f"**{side}**", "inline": False},
+        {"name": "Rating", "value": f"{star_str} ({strength:.0f}/100)", "inline": True},
+        {"name": "Sport", "value": sport, "inline": True},
+        {"name": "Game", "value": game or "\u2014", "inline": True},
+        {"name": "Book", "value": book, "inline": True},
+        {"name": "Odds", "value": odds_str, "inline": True},
+        {"name": "Edge", "value": f"{edge:+.1f}%", "inline": True},
+        {"name": "\u200b", "value": "**Signal Components**", "inline": False},
+        {"name": "EV Score", "value": str(signal.get("ev_score", 0)), "inline": True},
+        {"name": "Steam Score", "value": str(signal.get("steam_score", 0)), "inline": True},
+        {"name": "Proj Score", "value": str(signal.get("projection_score", 0)), "inline": True},
+        {"name": "Consensus", "value": str(signal.get("consensus_score", 0)), "inline": True},
+    ]
+
+    if kelly > 0:
+        fields.append({"name": "Kelly Size", "value": f"{kelly:.1f}%", "inline": True})
+
+    embed = {
+        "title": title,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "RTM Signal | Systems Over Opinions"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return _send_webhook({"embeds": [embed]})
