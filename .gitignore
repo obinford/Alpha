@@ -41,3 +41,4 @@ npm-debug.log*
 htmlcov/
 .coverage
 coverage/
+projections/cache/

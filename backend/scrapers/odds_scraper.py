@@ -862,6 +862,85 @@ def run_scan(sport_keys: list[str]) -> int:
         except Exception as e:
             print(f"Warning: Auto-grading failed ({e}).")
 
+    # --- RTM Signal generation ---
+    if db is not None and all_opportunities:
+        try:
+            from rtm_signal_engine.rtm_signal import RTMSignal, store_signals, format_signal_for_console
+            from notifications.discord import send_signal_alert
+
+            # Build EV opportunity dicts for signal scoring.
+            opp_dicts_for_signal = []
+            for o in all_opportunities:
+                game_parts = o.game.split(" @ ") if " @ " in o.game else ["", ""]
+                opp_dicts_for_signal.append({
+                    "game_id": o.game_id,
+                    "sport": o.sport_key,
+                    "market_type": o.market,
+                    "side": o.selection,
+                    "ev_percentage": o.ev_pct,
+                    "book_odds": o.book_odds,
+                    "sportsbook": o.book_key,
+                    "true_prob": o.true_prob,
+                    "games": {
+                        "sport": o.sport_key,
+                        "home_team": game_parts[-1],
+                        "away_team": game_parts[0],
+                    },
+                })
+
+            # Build player projections for NBA props.
+            player_projections: dict[int, dict] = {}
+            nba_keys = {"basketball_nba"}
+            has_nba = any(o.sport_key in nba_keys for o in all_opportunities)
+            if has_nba:
+                try:
+                    from projections.projection_engine import ProjectionEngine
+                    engine = ProjectionEngine(use_mock=True)
+                    from projections.mock_data import MOCK_PLAYERS
+                    for pid in MOCK_PLAYERS:
+                        try:
+                            proj = engine.project_player(pid, "BOS", "home")
+                            if proj:
+                                player_projections[pid] = proj
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            signal_engine = RTMSignal(db_client=db)
+            game_ids = list({o.game_id for o in all_opportunities})
+            signal_engine.load_cache(game_ids)
+
+            signals = signal_engine.generate_signals(
+                opp_dicts_for_signal, player_projections
+            )
+
+            if signals:
+                stored = store_signals(db, signals)
+                print(f"\nRTM Signals: {len(signals)} signals fired ({stored} stored)")
+                for sig in signals[:5]:
+                    print(f"  {format_signal_for_console(sig)}")
+                for sig in signals:
+                    if sig["star_rating"] >= 4:
+                        try:
+                            send_signal_alert(sig)
+                        except Exception:
+                            pass
+            else:
+                print("\nRTM Signals: no signals met threshold.")
+        except Exception as e:
+            print(f"Warning: RTM Signal generation failed ({e}).")
+
+    # --- Signal grading ---
+    if db is not None:
+        try:
+            from rtm_signal_engine.signal_grader import grade_signals
+            sig_grade_result = grade_signals(db)
+            if sig_grade_result["graded"] > 0:
+                print(f"Signal grading: {sig_grade_result['graded']} signals graded.")
+        except Exception as e:
+            print(f"Warning: Signal grading failed ({e}).")
+
     # --- Discord alerts ---
     try:
         from notifications.alerts import alert_manager

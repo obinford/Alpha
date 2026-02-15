@@ -311,8 +311,34 @@ function renderRecap(recap) {
         <div class="stat-label">Steam Alerts</div>
         <div class="stat-value">${recap.steam_alerts || 0}</div>
       </div>
-    </div>
+    </div>`;
 
+  // Signal stats section.
+  const sigStats = recap.signal_stats || {};
+  if (sigStats.fired > 0) {
+    const sigUnits = Number(sigStats.units) || 0;
+    html += `
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+      <div class="stat-item" style="border-left:3px solid #ffd700">
+        <div class="stat-label">Signals Fired</div>
+        <div class="stat-value" style="color:#ffd700">${sigStats.fired}</div>
+      </div>
+      <div class="stat-item" style="border-left:3px solid #42a5f5">
+        <div class="stat-label">Signals Graded</div>
+        <div class="stat-value">${sigStats.graded || 0}</div>
+      </div>
+      <div class="stat-item" style="border-left:3px solid #00e676">
+        <div class="stat-label">Signal Record</div>
+        <div class="stat-value">${sigStats.record || "\u2014"}</div>
+      </div>
+      <div class="stat-item" style="border-left:3px solid ${sigUnits >= 0 ? '#00e676' : '#ff5252'}">
+        <div class="stat-label">Signal Units</div>
+        <div class="stat-value ${sigUnits >= 0 ? 'green' : 'red'}">${fmtUnits(sigUnits)}</div>
+      </div>
+    </div>`;
+  }
+
+  html += `
     <div class="stats-grid" style="grid-template-columns:1fr 1fr">
       <div class="stat-item">
         <div class="stat-label">Best Bet</div>
