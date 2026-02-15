@@ -348,6 +348,8 @@ class RTMSignal:
             "away_team": away_team,
             "game": f"{away_team} @ {home_team}" if home_team else "",
             "projection_data": proj_data,
+            "commence_time": opportunity.get("commence_time"),
+            "hours_until_start": opportunity.get("hours_until_start"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -509,10 +511,20 @@ def format_signal_for_console(signal: dict) -> str:
     tier = "STRONG SIGNAL" if signal["star_rating"] == 5 else (
         "SIGNAL" if signal["star_rating"] == 4 else "LEAN"
     )
+    h = signal.get("hours_until_start")
+    if h is not None and h > 24:
+        time_tag = f" | EARLY ({h:.0f}h out)"
+    elif h is not None and h > 0:
+        time_tag = f" | {h:.0f}h out"
+    elif h is not None:
+        time_tag = " | LIVE"
+    else:
+        time_tag = ""
     return (
         f"\u26a1 RTM {tier} {stars} | "
         f"{signal['side']} at {signal['sportsbook']} {signal['book_odds']:+d} | "
         f"Strength: {signal['signal_strength']:.0f} | "
         f"EV:{signal['ev_score']} Steam:{signal['steam_score']} "
         f"Proj:{signal['projection_score']} Cons:{signal['consensus_score']}"
+        f"{time_tag}"
     )

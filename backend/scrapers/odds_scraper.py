@@ -14,7 +14,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Allow running as a standalone script from the repo root.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -32,7 +32,7 @@ from scrapers.odds.odds_api import Game, Market, fetch_odds
 
 from config import (
     ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES,
-    ALL_MARKETS, PROP_MARKETS,
+    ALL_MARKETS, PROP_MARKETS, MARKETS,
 )
 
 # Only surface bets with EV above this threshold.
@@ -43,6 +43,9 @@ DEFAULT_KELLY_FRACTION = 0.25
 
 # Default bankroll units for recommended-units sizing.
 DEFAULT_BANKROLL_UNITS = 100.0
+
+# Props are only available for games within this many hours.
+PROP_WINDOW_HOURS = 18.0
 
 
 @dataclass
@@ -61,6 +64,67 @@ class EVOpportunity:
     true_prob: float
     ev_pct: float
     kelly_pct: float
+
+
+def parse_commence_time(ct: str) -> datetime:
+    """Parse an ISO-8601 commence_time string to a timezone-aware datetime."""
+    ct = ct.replace("Z", "+00:00")
+    return datetime.fromisoformat(ct)
+
+
+def hours_until_start(game: Game) -> float:
+    """Return the number of hours until a game starts. Negative = already started."""
+    try:
+        start = parse_commence_time(game.commence_time)
+        delta = start - datetime.now(timezone.utc)
+        return delta.total_seconds() / 3600
+    except Exception:
+        return 0.0
+
+
+def game_date_label(game: Game) -> str:
+    """Return a human-readable date label for grouping (TODAY, TOMORROW, day name)."""
+    try:
+        start = parse_commence_time(game.commence_time)
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        game_date = start.date()
+        if game_date == today:
+            return "TODAY"
+        elif game_date == today + timedelta(days=1):
+            return "TOMORROW"
+        else:
+            return start.strftime("%A %b %d").upper()
+    except Exception:
+        return "UNKNOWN"
+
+
+def has_games_within(games: list[Game], hours: float) -> bool:
+    """Return True if any game starts within the given number of hours."""
+    for g in games:
+        h = hours_until_start(g)
+        if h <= hours and h > -3:  # include games that started up to 3h ago
+            return True
+    return False
+
+
+def merge_prop_data(mainline_games: list[Game], prop_games: list[Game]) -> None:
+    """Merge prop market data from a second API call into existing game objects."""
+    prop_map = {g.id: g for g in prop_games}
+    for game in mainline_games:
+        prop_game = prop_map.get(game.id)
+        if not prop_game:
+            continue
+        existing_keys = {m.key for bk in game.bookmakers for m in bk.markets}
+        bk_map = {bk.key: bk for bk in game.bookmakers}
+        for prop_bk in prop_game.bookmakers:
+            target_bk = bk_map.get(prop_bk.key)
+            if target_bk is None:
+                game.bookmakers.append(prop_bk)
+            else:
+                for mkt in prop_bk.markets:
+                    if mkt.key not in existing_keys:
+                        target_bk.markets.append(mkt)
 
 
 def find_sharp_book(game: Game) -> str | None:
@@ -416,7 +480,7 @@ def store_ev_opportunities(
     rows = []
     for opp in opportunities:
         recommended_units = round(opp.kelly_pct * DEFAULT_BANKROLL_UNITS, 2)
-        rows.append({
+        row_data: dict = {
             "game_id": opp.game_id,
             "sportsbook": opp.book_key,
             "market_type": opp.market,
@@ -431,7 +495,13 @@ def store_ev_opportunities(
             "recommended_units": recommended_units,
             "status": "open",
             "timestamp": scan_ts,
-        })
+        }
+        # Include commence_time and sport for time-based filtering.
+        if opp.commence_time:
+            row_data["commence_time"] = opp.commence_time
+        if opp.sport_key:
+            row_data["sport"] = opp.sport_key
+        rows.append(row_data)
 
     bulk_insert_ev_opportunities(db_client, rows)
 
@@ -651,18 +721,48 @@ def print_prop_results(opportunities: list[EVOpportunity]) -> None:
         print(divider)
 
 
-def print_results(all_opportunities: list[EVOpportunity]) -> None:
-    """Print +EV opportunities grouped by sport with a combined summary."""
-    # Split game lines from props.
+def _opp_date_label(opp: EVOpportunity) -> str:
+    """Get the date label for an opportunity based on its commence_time."""
+    try:
+        start = parse_commence_time(opp.commence_time)
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        game_date = start.date()
+        if game_date == today:
+            return f"TODAY ({start.strftime('%a %b %d')})"
+        elif game_date == today + timedelta(days=1):
+            return f"TOMORROW ({start.strftime('%a %b %d')})"
+        else:
+            return start.strftime("%A %b %d").upper()
+    except Exception:
+        return "UNKNOWN"
+
+
+def _opp_date_sort_key(opp: EVOpportunity) -> str:
+    """Sort key to order opportunities by commence_time."""
+    try:
+        return parse_commence_time(opp.commence_time).isoformat()
+    except Exception:
+        return ""
+
+
+def print_results(all_opportunities: list[EVOpportunity], all_games: list[Game] | None = None) -> None:
+    """Print +EV opportunities grouped by date with mainline/prop breakdown."""
     game_opps = [o for o in all_opportunities if not _is_prop_market(o.market)]
     prop_opps = [o for o in all_opportunities if _is_prop_market(o.market)]
+
+    # Count unique games tracked.
+    unique_games = len({o.game_id for o in all_opportunities})
+    total_games = len(all_games) if all_games else unique_games
+    unique_sports = len({o.sport_key for o in all_opportunities})
 
     banner_width = 120
     print(f"\n{'=' * banner_width}")
     print(
         f"  RTM +EV Scanner  |  "
         f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  |  "
-        f"{len(all_opportunities)} total ({len(game_opps)} lines, {len(prop_opps)} props)"
+        f"Tracking {total_games} games across {unique_sports} sports  |  "
+        f"{len(all_opportunities)} opps ({len(game_opps)} lines, {len(prop_opps)} props)"
     )
     print(f"{'=' * banner_width}")
 
@@ -670,29 +770,63 @@ def print_results(all_opportunities: list[EVOpportunity]) -> None:
         print("\nNo +EV opportunities found across any sport right now.\n")
         return
 
-    # Group game lines by sport.
-    if game_opps:
-        sports_seen: list[str] = []
-        by_sport: dict[str, list[EVOpportunity]] = {}
-        for opp in game_opps:
-            if opp.sport_key not in by_sport:
-                by_sport[opp.sport_key] = []
-                sports_seen.append(opp.sport_key)
-            by_sport[opp.sport_key].append(opp)
+    # Group ALL opportunities by date.
+    by_date: dict[str, list[EVOpportunity]] = {}
+    date_order: list[str] = []
+    for opp in sorted(all_opportunities, key=_opp_date_sort_key):
+        label = _opp_date_label(opp)
+        if label not in by_date:
+            by_date[label] = []
+            date_order.append(label)
+        by_date[label].append(opp)
 
-        for sport_key in sports_seen:
-            print_sport_results(sport_key, by_sport[sport_key])
+    for date_label in date_order:
+        opps = by_date[date_label]
+        d_game_opps = [o for o in opps if not _is_prop_market(o.market)]
+        d_prop_opps = [o for o in opps if _is_prop_market(o.market)]
+        d_games = len({o.game_id for o in opps})
 
-    # Print props.
-    if prop_opps:
-        print_prop_results(prop_opps)
+        print(f"\n{'─' * banner_width}")
+        print(
+            f"  === {date_label} — "
+            f"{d_games} game{'s' if d_games != 1 else ''}, "
+            f"{len(d_game_opps)} mainline opp{'s' if len(d_game_opps) != 1 else ''}, "
+            f"{len(d_prop_opps)} prop opp{'s' if len(d_prop_opps) != 1 else ''} ==="
+        )
+        print(f"{'─' * banner_width}")
+
+        # Group game lines by sport within this date.
+        if d_game_opps:
+            sports_seen: list[str] = []
+            by_sport: dict[str, list[EVOpportunity]] = {}
+            for opp in d_game_opps:
+                if opp.sport_key not in by_sport:
+                    by_sport[opp.sport_key] = []
+                    sports_seen.append(opp.sport_key)
+                by_sport[opp.sport_key].append(opp)
+            for sport_key in sports_seen:
+                print_sport_results(sport_key, by_sport[sport_key])
+
+        if d_prop_opps:
+            print_prop_results(d_prop_opps)
 
     # Best overall.
     best = max(all_opportunities, key=lambda o: o.ev_pct)
+    best_hours = 0.0
+    try:
+        best_start = parse_commence_time(best.commence_time)
+        best_hours = (best_start - datetime.now(timezone.utc)).total_seconds() / 3600
+    except Exception:
+        pass
+    time_label = (
+        f"in {best_hours:.0f}h" if best_hours > 1
+        else "starting soon" if best_hours > 0
+        else "live"
+    )
     print(
         f"\nBest opportunity: {best.selection} "
         f"({best.game}, {sport_display_name(best.sport_key)}) at {best.book} "
-        f"[{format_american(best.book_odds)}] -> {best.ev_pct:+.1f}% EV\n"
+        f"[{format_american(best.book_odds)}] -> {best.ev_pct:+.1f}% EV | {time_label}\n"
     )
 
 
@@ -745,10 +879,11 @@ def run_scan(sport_keys: list[str]) -> int:
             time.sleep(1)
 
         display = sport_display_name(sport_key)
-        print(f"Fetching {display} odds...")
+        print(f"Fetching {display} mainlines...")
 
+        # Step 1: Fetch mainlines (h2h, spreads, totals) for ALL upcoming games.
         try:
-            games = fetch_odds(sport_key, markets=ALL_MARKETS)
+            games = fetch_odds(sport_key, markets=MARKETS)
         except Exception as e:
             print(f"  Skipping {display}: {e}")
             continue
@@ -757,7 +892,29 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"  {display}: no games available right now.")
             continue
 
-        print(f"  {display}: {len(games)} games found.")
+        # Categorize games by date.
+        near_games = [g for g in games if -3 < hours_until_start(g) <= PROP_WINDOW_HOURS]
+        far_games = [g for g in games if hours_until_start(g) > PROP_WINDOW_HOURS]
+        print(
+            f"  {display}: {len(games)} games found "
+            f"({len(near_games)} within {PROP_WINDOW_HOURS:.0f}h, "
+            f"{len(far_games)} further out)."
+        )
+
+        # Step 2: Fetch props ONLY if there are games within the prop window.
+        if near_games:
+            print(f"  Fetching {display} props for {len(near_games)} near-term game(s)...")
+            time.sleep(1)
+            try:
+                prop_games = fetch_odds(sport_key, markets=PROP_MARKETS)
+                if prop_games:
+                    merge_prop_data(games, prop_games)
+                    print(f"  Props merged for {display}.")
+            except Exception as e:
+                print(f"  Warning: Prop fetch failed for {display} ({e}).")
+        else:
+            print(f"  Skipping props for {display} — no games within {PROP_WINDOW_HOURS:.0f}h.")
+
         all_games.extend(games)
 
         # Persist game data.
@@ -769,16 +926,18 @@ def run_scan(sport_keys: list[str]) -> int:
             except Exception as e:
                 print(f"  Warning: DB write failed for {display} ({e}).")
 
-            # Line movements (separate try so a failure doesn't block EV).
+            # Line movements for ALL games (early lines are most valuable).
             try:
                 store_line_movements(db, games)
             except Exception as e:
                 print(f"  Warning: Line movement write failed for {display} ({e}).")
 
-        # Scan for +EV (game lines + props).
+        # Scan for +EV: mainlines for ALL games, props for near-term only.
         for game in games:
             all_opportunities.extend(scan_game(game))
-            all_opportunities.extend(scan_game_props(game))
+            h = hours_until_start(game)
+            if -3 < h <= PROP_WINDOW_HOURS:
+                all_opportunities.extend(scan_game_props(game))
 
     # --- Persist EV opportunities ---
     if db is not None and all_opportunities:
@@ -872,6 +1031,12 @@ def run_scan(sport_keys: list[str]) -> int:
             opp_dicts_for_signal = []
             for o in all_opportunities:
                 game_parts = o.game.split(" @ ") if " @ " in o.game else ["", ""]
+                h_until = 0.0
+                try:
+                    s = parse_commence_time(o.commence_time)
+                    h_until = (s - datetime.now(timezone.utc)).total_seconds() / 3600
+                except Exception:
+                    pass
                 opp_dicts_for_signal.append({
                     "game_id": o.game_id,
                     "sport": o.sport_key,
@@ -881,6 +1046,8 @@ def run_scan(sport_keys: list[str]) -> int:
                     "book_odds": o.book_odds,
                     "sportsbook": o.book_key,
                     "true_prob": o.true_prob,
+                    "commence_time": o.commence_time,
+                    "hours_until_start": round(h_until, 1),
                     "games": {
                         "sport": o.sport_key,
                         "home_team": game_parts[-1],
@@ -964,7 +1131,7 @@ def run_scan(sport_keys: list[str]) -> int:
         print(f"Warning: Discord alerts failed ({e}).")
 
     # --- Console output ---
-    print_results(all_opportunities)
+    print_results(all_opportunities, all_games)
     return len(all_opportunities)
 
 
