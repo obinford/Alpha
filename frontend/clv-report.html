@@ -158,6 +158,15 @@ function statusBadge(s) {
   return `<span class="status-badge status-${s}">${s}</span>`;
 }
 
+function sportLabel(raw) {
+  const map = {
+    baseball_mlb:'MLB', basketball_nba:'NBA', americanfootball_nfl:'NFL',
+    icehockey_nhl:'NHL', americanfootball_ncaaf:'CFB', basketball_ncaab:'CBB',
+    basketball_wnba:'WNBA'
+  };
+  return map[raw] || raw || '\u2014';
+}
+
 async function loadSummary() {
   try {
     const r = await fetch(`${API}/api/clv/summary?days=30`);
@@ -184,7 +193,7 @@ async function loadSummary() {
       for (const [sport, stats] of Object.entries(d.by_sport)) {
         sportDiv.innerHTML += `
           <div class="sport-stat">
-            <div class="sport-name">${sport}</div>
+            <div class="sport-name">${sportLabel(sport)}</div>
             <div class="sport-detail">
               Records: ${stats.count}<br>
               Avg CLV: <span class="${stats.avg_clv > 0 ? 'clv-pos' : 'clv-neg'}">${stats.avg_clv > 0 ? '+' : ''}${stats.avg_clv.toFixed(2)}%</span><br>
@@ -219,7 +228,7 @@ async function loadRecords() {
     const current = sportSel.value;
     sportSel.innerHTML = '<option value="">All Sports</option>';
     sports.forEach(s => {
-      sportSel.innerHTML += `<option value="${s}" ${s === current ? 'selected' : ''}>${s}</option>`;
+      sportSel.innerHTML += `<option value="${s}" ${s === current ? 'selected' : ''}>${sportLabel(s)}</option>`;
     });
   } catch (e) {
     console.error('Failed to load CLV records:', e);
@@ -241,7 +250,7 @@ function renderTable() {
     const game = r.games || {};
     const gameName = game.home_team ? `${game.away_team} @ ${game.home_team}` : r.game_id;
     return `<tr>
-      <td>${r.sport || '—'}</td>
+      <td>${sportLabel(r.sport)}</td>
       <td>${gameName}</td>
       <td>${r.side || '—'}</td>
       <td>${r.market_type || '—'}</td>

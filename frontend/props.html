@@ -286,7 +286,7 @@ let allProps = [];
 function sportKey(s) {
   s = (s || "").toLowerCase();
   if (s.includes("mlb") || s.includes("baseball")) return "mlb";
-  if (s.includes("nba") || s.includes("basketball_n")) return "nba";
+  if (s.includes("basketball_nba") || (s.includes("nba") && !s.includes("ncaa"))) return "nba";
   if (s.includes("nfl") || s.includes("football_nfl")) return "nfl";
   if (s.includes("nhl") || s.includes("hockey")) return "nhl";
   if (s.includes("ncaaf") || s.includes("football_ncaa")) return "cfb";
