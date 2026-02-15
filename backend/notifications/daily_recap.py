@@ -133,6 +133,28 @@ def generate_recap(
     except Exception:
         pass
 
+    # --- RTM Signal stats for the day ---
+    signal_stats = {"fired": 0, "graded": 0, "record": "—", "units": 0.0}
+    try:
+        day_signals = db._get(
+            "rtm_signals",
+            select="star_rating,result,profit_loss,signal_strength,created_at",
+            filters={"created_at": f"gte.{date_str}"},
+        )
+        day_signals = [s for s in day_signals if s.get("created_at", "") < next_day]
+        signal_stats["fired"] = len(day_signals)
+        graded_sigs = [s for s in day_signals if s.get("result") in ("win", "loss", "push")]
+        if graded_sigs:
+            sig_wins = sum(1 for s in graded_sigs if s["result"] == "win")
+            sig_losses = sum(1 for s in graded_sigs if s["result"] == "loss")
+            sig_pushes = sum(1 for s in graded_sigs if s["result"] == "push")
+            sig_units = sum(float(s.get("profit_loss", 0)) for s in graded_sigs)
+            signal_stats["graded"] = len(graded_sigs)
+            signal_stats["record"] = f"{sig_wins}-{sig_losses}" + (f"-{sig_pushes}" if sig_pushes else "")
+            signal_stats["units"] = round(sig_units, 2)
+    except Exception:
+        pass
+
     return {
         "date": date_str,
         "record": f"{wins}-{losses}" + (f"-{pushes}" if pushes else ""),
@@ -150,6 +172,7 @@ def generate_recap(
         "alltime_record": f"{all_wins}-{all_losses}" + (f"-{all_pushes}" if all_pushes else ""),
         "alltime_units": round(all_units, 2),
         "alltime_roi": round(all_units / all_total * 100, 1) if all_total else 0,
+        "signal_stats": signal_stats,
         "results": flat_results,
     }
 
