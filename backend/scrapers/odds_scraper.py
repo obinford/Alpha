@@ -846,6 +846,28 @@ def run_scan(sport_keys: list[str]) -> int:
         except Exception as e:
             print(f"Warning: Steam detection failed ({e}).")
 
+    # --- Discord alerts ---
+    try:
+        from notifications.alerts import alert_manager
+
+        opp_dicts = [
+            {
+                "game_id": o.game_id, "sport_key": o.sport_key, "game": o.game,
+                "selection": o.selection, "book": o.book, "book_key": o.book_key,
+                "book_odds": o.book_odds, "ev_pct": o.ev_pct,
+                "true_prob": o.true_prob, "kelly_pct": o.kelly_pct,
+                "market": o.market, "point": o.point,
+            }
+            for o in all_opportunities
+        ]
+        ev_sent = alert_manager.check_and_alert(opp_dicts)
+        if ev_sent:
+            print(f"Discord: sent {ev_sent} EV alert(s).")
+        else:
+            print("Discord: no new alerts to send.")
+    except Exception as e:
+        print(f"Warning: Discord alerts failed ({e}).")
+
     # --- Console output ---
     print_results(all_opportunities)
     return len(all_opportunities)

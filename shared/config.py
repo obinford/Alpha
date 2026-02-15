@@ -1,5 +1,7 @@
 """Shared configuration constants for the RTM Picks Platform."""
 
+import os
+
 # All sports we track, mapped to The Odds API sport keys.
 # The Odds API uses specific string keys for each league/sport.
 ODDS_API_SPORT_KEYS: dict[str, str] = {
@@ -64,3 +66,8 @@ DEFAULT_KELLY_FRACTION = 0.25
 
 # Minimum EV threshold to surface a pick (percentage)
 MIN_EV_THRESHOLD = 1.0
+
+# Discord notifications
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+DISCORD_ENABLED = bool(DISCORD_WEBHOOK_URL)
+MIN_ALERT_EV_THRESHOLD = 5.0
