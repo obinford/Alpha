@@ -126,42 +126,32 @@ The scanner runs every **10 minutes** via APScheduler. Each cycle:
 
 ---
 
-## 4. Signal Engine Analysis (CRITICAL)
+## 4. Signal Engine (REBUILT — Session 6, Milestone 2)
 
 ### Current Implementation (`rtm_signal_engine/rtm_signal.py`)
 
-**4 scoring components** (0-100 each):
-- `ev_score`: Based on EV% tiers (1%→20, 3%→40, 5%→60, 8%→80, 12%→100)
-- `steam_score`: Based on steam alert confirmation for matching game/side/market
-- `projection_score`: Monte Carlo simulation vs line (props only)
-- `consensus_score`: Count of books with confirming line movements
+**4 scoring components** (0-100 each, continuous curves):
+- `ev_score`: Continuous — `min(100, (ev/12)*100)`, smooth progression from 0-12% EV
+- `steam_score`: Continuous — `min(100, books*20 + magnitude*15)`, from `steam_alerts` table
+- `projection_score`: Continuous — `min(100, delta*12)`, Monte Carlo vs line (props only)
+- `consensus_score`: Counts confirming line movements relative to bet side direction
 
-**Weights:**
+**Weights (sport-adaptive):**
 - Game lines: ev=0.40, steam=0.30, projection=0.00, consensus=0.30
-- Player props: ev=0.25, steam=0.20, projection=0.35, consensus=0.20
+- NBA props: ev=0.25, steam=0.20, projection=0.35, consensus=0.20
+- Other props: ev=0.35, steam=0.25, projection=0.00, consensus=0.40
 
-**Thresholds:**
-- 75+ → 5 stars (STRONG SIGNAL)
-- 60+ → 4 stars (SIGNAL)
-- 45+ → 3 stars (LEAN)
-- <45 → no signal
+**Thresholds (calibrated for 2-3 component reality):**
+- 70+ → 5 stars (STRONG SIGNAL)
+- 55+ → 4 stars (SIGNAL)
+- 40+ → 3 stars (LEAN)
+- <40 → no signal
 
-### BUG #1 — Wrong Table Name (CRITICAL)
+### Previous Bugs (ALL FIXED)
 
-`_get_steam_alerts()` (line 413) and `load_cache()` (line 451) query table `"steam_moves"` — but the actual table is `"steam_alerts"`. This causes a silent 404/exception → steam_score is **always 0**.
-
-### BUG #2 — Scoring Too Aggressive for Game Lines
-
-With steam always 0 (BUG #1) and projection always 0 (game lines don't use projections):
-- Max possible signal_strength = ev_score * 0.40 + consensus * 0.30
-- Even best case: 100 * 0.40 + 80 * 0.30 = 40 + 24 = **64** (barely 4 stars)
-- Typical case: 40 * 0.40 + 30 * 0.30 = 16 + 9 = **25** (well below 45 threshold)
-
-**Result: 0 signals generated.** The combination of wrong table name + high thresholds + stepwise scoring gaps means almost nothing passes.
-
-### BUG #3 — Consensus Checks Wrong Direction
-
-`market_consensus_score()` counts books where `odds_change < 0` (odds shortened). But "shortened" can mean different things depending on which side you're on. The logic doesn't properly map "confirming" vs "contrary" movements relative to the bet side.
+1. ~~Wrong table name `steam_moves`~~ → Fixed to `steam_alerts`
+2. ~~Stepwise scoring with unreachable thresholds~~ → Continuous curves + calibrated thresholds
+3. ~~Consensus direction check~~ → Now confirms movements relative to bet side
 
 ---
 
@@ -227,37 +217,46 @@ All 9 pages have identical nav bars. All frontend fetch URLs match backend route
 | `MIN_GRADE_EV_THRESHOLD` | 3.0% | Minimum to grade/track a bet |
 | `MIN_ALERT_EV_THRESHOLD` | 5.0% | Minimum for Discord alert |
 
-### Missing from config (hardcoded in various files):
-- Signal thresholds (hardcoded in rtm_signal.py: 75/60/45)
-- Signal weights (hardcoded in rtm_signal.py)
-- Scan interval (hardcoded in odds_scraper.py: 10 min)
-- Prop window hours (hardcoded: 18h)
-- Steam detection parameters (min books: 3, window: 30min, dedup: 60min)
-- Bankroll units (hardcoded: 100)
-- Unit clamp range (hardcoded: 0.1 to 5.0)
+### Added in Session 6 (Milestone 5 — centralization):
+| `DEFAULT_BANKROLL_UNITS` | 100.0 | Was hardcoded in odds_scraper.py |
+| `MIN_UNIT_SIZE` / `MAX_UNIT_SIZE` | 0.1 / 5.0 | Was hardcoded in grader.py, signal_grader.py |
+| `SCAN_INTERVAL_MINUTES` | 10 | Was hardcoded in odds_scraper.py |
+| `PROP_WINDOW_HOURS` | 18.0 | Was hardcoded in odds_scraper.py |
+| `STEAM_MIN_BOOKS` / `STEAM_WINDOW_MINUTES` / `STEAM_DEDUP_MINUTES` | 3 / 30 / 60 | Was hardcoded |
+| `CLV_EXPIRATION_HOURS` | 48 | Was hardcoded in clv_tracker.py |
+| `ODDS_API_BASE_URL` | `https://api.the-odds-api.com/v4/sports` | Was hardcoded in 2 files |
+
+### Still hardcoded (by design — signal model internals):
+- Signal thresholds (70/55/40) — in rtm_signal.py
+- Signal weights — in rtm_signal.py
 
 ---
 
 ## 8. Known Issues & Bugs
 
-### Critical
+### Fixed in Session 6
+- ~~Signal Engine produces 0 signals~~ → **FIXED** (Milestone 2: table name, scoring, thresholds)
+- ~~Spreads/totals signals ungradeable~~ → **FIXED** (Milestone 4: side field includes point)
+- ~~Signal profit flat 1-unit~~ → **FIXED** (Milestone 4: kelly-based sizing)
+- ~~CLV report sport filter broken~~ → **FIXED** (Milestone 3)
+- ~~Props sport undefined~~ → **FIXED** (Milestone 3)
+- ~~Daily recap wrong timezone~~ → **FIXED** (Milestone 3)
+- ~~Config naming mismatch~~ → **FIXED** (Milestone 5)
+- ~~Constants scattered across files~~ → **FIXED** (Milestone 5: centralized)
 
-1. **Signal Engine produces 0 signals** — Wrong table name (`steam_moves` vs `steam_alerts`), scoring thresholds too high, consensus scoring direction ambiguous
-2. **Egress proxy blocks Supabase** — Container environment proxy returns 403 for all outbound HTTPS to Supabase. Scanner works in Terminal 1 (different network path).
+### Remaining — Moderate
 
-### Moderate
+1. **Egress proxy blocks Supabase** — Container environment proxy returns 403. Scanner works in Terminal 1 (different network path).
+2. **In-memory alert dedup** — Alert dedup sets (`alerts.py`) lost on restart. No persistence. Unbounded growth.
+3. **Projection engine NBA-only** — Only uses mock data or NBA.com stats. CBB/NHL/NFL/CFB have no real projections.
+4. **CLV `get_closing_sharp_line` returns None** — Dead code, never called. Needs game context to map side → probability.
 
-3. **In-memory alert dedup** — Alert dedup sets (`alerts.py`) lost on restart. No persistence. Unbounded growth.
-4. **Projection engine NBA-only** — Only uses mock data or NBA.com stats. CBB/NHL/NFL/CFB have no real projections.
-5. **CLV `get_closing_sharp_line` returns None** — Line 262 explicitly `return None` with comment "Needs game context to map side -> prob". Function never used but exists.
-6. **No input validation** — EV calculator, Kelly, and odds functions don't validate inputs.
+### Remaining — Minor
 
-### Minor
-
-7. **4 stub routers** — picks, odds, models, copilot — registered but non-functional
-8. **Client-side date_to filtering** — Performance results filter `date_to` in Python, not in PostgREST query
-9. **Hardcoded signal projection defaults** — opponent="BOS", home_away="home"
-10. **Discord embed size** — No validation against Discord's 6000-char embed limit
+5. **4 stub routers** — picks, odds, models, copilot — registered but non-functional
+6. **Client-side date_to filtering** — Performance results filter in Python, not in PostgREST query
+7. **Hardcoded signal projection defaults** — opponent="BOS", home_away="home"
+8. **Discord embed size** — No validation against Discord's 6000-char embed limit
 
 ---
 
@@ -277,7 +276,7 @@ odds_scraper.py (every 10 min)
      │        │
      │        ├─► clv_records table
      │        ├─► bet_results table (after game final)
-     │        └─► rtm_signals table (BROKEN — 0 signals)
+     │        └─► rtm_signals table (FIXED — calibrated 3-5 star signals)
      │
      ├─► steam_alerts table
      ├─► score_fetcher → games table (scores)
@@ -307,12 +306,20 @@ FastAPI (api/main.py)
 
 ---
 
-## 11. Priority Action Items
+## 11. Action Items Status
 
-1. **FIX SIGNAL ENGINE** — Fix table name, recalibrate scoring, lower thresholds (Milestone 2)
-2. **Frontend testing** — Verify all 9 pages with live data (Milestone 3)
-3. **Data integrity verification** — Manual EV math check, line movement quality (Milestone 4)
-4. **Centralize configuration** — Move all hardcoded values to shared/config.py (Milestone 5)
-5. **Signal page premium redesign** — Make it worth $200/month (Milestone 6)
-6. **Odds screen research tool** — Game comparison grid with vig calculator (Milestone 7)
-7. **Documentation** — BUILD_REPORT_6.md, README update (Milestone 8)
+| # | Item | Status |
+|---|------|--------|
+| 1 | Fix Signal Engine | **DONE** (Milestone 2) |
+| 2 | Frontend testing | **DONE** (Milestone 3) |
+| 3 | Data integrity verification | **DONE** (Milestone 4) |
+| 4 | Centralize configuration | **DONE** (Milestone 5) |
+| 5 | Signal page premium redesign | **DONE** (Milestone 6) |
+| 6 | Odds screen research tool | **DONE** (Milestone 7) |
+| 7 | Documentation | **DONE** (Milestone 8) |
+
+### Next priorities:
+1. Deploy and monitor signal generation over several scan cycles
+2. Expand projection engine beyond NBA
+3. Implement AI co-pilot (Claude API)
+4. Whop authentication integration
