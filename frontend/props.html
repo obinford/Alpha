@@ -127,6 +127,34 @@
   .view-toggle button:last-child{border-radius:0 4px 4px 0}
   .view-toggle button.active{background:#1a2035;color:#00e676;border-color:#00e676}
 
+  /* Time & new-line badges */
+  .badge-new{
+    display:inline-block;padding:2px 6px;border-radius:3px;font-size:9px;
+    font-weight:700;letter-spacing:0.5px;text-transform:uppercase;
+    background:#00e67618;color:#00e676;border:1px solid #00e67640;
+    animation:pulse-new 2s ease-in-out infinite;margin-left:6px;
+  }
+  @keyframes pulse-new{0%,100%{opacity:1}50%{opacity:0.65}}
+  .badge-time{
+    display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;
+    font-weight:600;color:#8892a4;
+  }
+  .badge-live{background:#ff525220;color:#ff5252;border:1px solid #ff525240}
+  .badge-soon{background:#ffc10720;color:#ffc107;border:1px solid #ffc10740}
+
+  .time-group-header{
+    padding:8px 16px;font-size:11px;font-weight:700;letter-spacing:1.5px;
+    text-transform:uppercase;color:#5a6378;background:#0a0e17;
+    border-bottom:1px solid #1a2035;margin-top:12px;
+  }
+  .time-group-header:first-child{margin-top:0}
+
+  .new-lines-stat{
+    display:flex;align-items:center;gap:6px;padding:4px 14px;
+    background:#00e67610;border:1px solid #00e67630;border-radius:16px;
+    font-size:12px;color:#00e676;font-weight:700;
+  }
+
   /* Loading */
   .message{text-align:center;padding:40px 20px;color:#5a6378}
   .message.error{color:#ff5252}
@@ -139,7 +167,7 @@
   @media(max-width:900px){
     .container{padding:10px 12px}
     .filters{flex-direction:column}
-    th:nth-child(n+7),td:nth-child(n+7){display:none}
+    th:nth-child(n+8),td:nth-child(n+8){display:none}
   }
 </style>
 </head>
@@ -223,6 +251,15 @@
         <option value="10">10%+</option>
       </select>
     </div>
+    <div>
+      <label>Time Window</label><br>
+      <select id="filter-time">
+        <option value="">All Games</option>
+        <option value="soon">Starting Soon (&lt;3h)</option>
+        <option value="today">Today</option>
+        <option value="new">New Lines Only</option>
+      </select>
+    </div>
     <div class="view-toggle">
       <button id="view-grouped" class="active" onclick="setView('grouped')">Grouped</button>
       <button id="view-flat" onclick="setView('flat')">Flat</button>
@@ -286,6 +323,35 @@ function fmtProb(v) {
   return isNaN(n) ? "\u2014" : (n * 100).toFixed(1) + "%";
 }
 
+// --- Time helpers ---
+function getHoursUntil(p) {
+  const ct = p.commence_time || p.start_time;
+  if (!ct) return null;
+  const d = new Date(ct);
+  if (isNaN(d)) return null;
+  return (d - Date.now()) / 3600000;
+}
+function fmtStarts(p) {
+  const h = getHoursUntil(p);
+  if (h === null) return '';
+  if (h < 0) return '<span class="badge-time badge-live">LIVE</span>';
+  if (h < 1) return `<span class="badge-time badge-soon">${Math.round(h*60)}m</span>`;
+  if (h < 6) return `<span class="badge-time badge-soon">${h.toFixed(1)}h</span>`;
+  const d = new Date(p.commence_time || p.start_time);
+  return `<span class="badge-time">${d.toLocaleDateString('en-US',{weekday:'short',hour:'numeric',minute:'2-digit'})}</span>`;
+}
+function newBadge(p) {
+  return p.is_new_line ? '<span class="badge-new">NEW</span>' : '';
+}
+function timeGroup(p) {
+  const h = getHoursUntil(p);
+  if (h === null) return 'UNKNOWN';
+  if (h < 0) return 'LIVE NOW';
+  if (h < 3) return 'STARTING SOON';
+  if (h < 12) return 'TODAY';
+  return 'LATER';
+}
+
 function setStatus(ok, text) {
   document.getElementById("status-dot").className = ok ? "dot" : "dot error";
   document.getElementById("status-text").textContent = text;
@@ -316,8 +382,9 @@ function renderPropRow(p) {
   const dirClass = dir === "over" ? "over" : dir === "under" ? "under" : "";
 
   return `<tr>
+    <td>${fmtStarts(p)}</td>
     <td><span class="sport-badge sport-${sk}">${sportLabel(p.sport)}</span></td>
-    <td style="color:#e1e5eb;font-weight:600">${p.player || "\u2014"}</td>
+    <td style="color:#e1e5eb;font-weight:600">${p.player || "\u2014"}${newBadge(p)}</td>
     <td>${p.prop_label || p.prop_type || "\u2014"}</td>
     <td class="${dirClass}">${p.direction || "\u2014"} ${p.line != null ? p.line : ""}</td>
     <td>${p.sportsbook || "\u2014"}</td>
@@ -349,13 +416,15 @@ function renderGroupedView(props) {
   return sorted.map(([name, data]) => {
     const sk = sportKey(data.sport);
     const bestEv = Math.max(...data.props.map(p => Number(p.ev_pct) || 0));
+    const hasNew = data.props.some(p => p.is_new_line);
+    const gameTime = fmtStarts(data.props[0]);
     return `
     <div class="player-group">
       <div class="player-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <div>
           <span class="sport-badge sport-${sk}">${sportLabel(data.sport)}</span>
-          <span class="player-name" style="margin-left:10px">${name}</span>
-          <span class="player-game">${data.game || ""}</span>
+          <span class="player-name" style="margin-left:10px">${name}</span>${hasNew ? '<span class="badge-new">NEW</span>' : ''}
+          <span class="player-game">${data.game || ""}${gameTime ? ' — '+gameTime : ''}</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <span class="ev-val ${evClass(bestEv)}">${fmtEv(bestEv)} best</span>
@@ -365,7 +434,7 @@ function renderGroupedView(props) {
       <div class="player-props">
         <table>
           <thead><tr>
-            <th>Sport</th><th>Player</th><th>Prop</th><th>Line</th>
+            <th>Starts</th><th>Sport</th><th>Player</th><th>Prop</th><th>Line</th>
             <th>Book</th><th>Odds</th><th>EV%</th><th>True Prob</th>
             <th>Kelly</th><th>Game</th>
           </tr></thead>
@@ -433,6 +502,18 @@ function getQueryParams() {
   return qs ? "?" + qs : "";
 }
 
+function applyTimeFilter(props) {
+  const tw = document.getElementById("filter-time").value;
+  if (!tw) return props;
+  return props.filter(p => {
+    const h = getHoursUntil(p);
+    if (tw === "new") return p.is_new_line;
+    if (tw === "soon") return h !== null && h >= -1 && h < 3;
+    if (tw === "today") return h !== null && h >= -1 && h < 18;
+    return true;
+  });
+}
+
 let playerTimeout;
 async function fetchData() {
   const qp = getQueryParams();
@@ -441,10 +522,20 @@ async function fetchData() {
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
 
-    allProps = data.props || [];
+    const rawProps = data.props || [];
+    allProps = applyTimeFilter(rawProps);
+    const newCount = rawProps.filter(p => p.is_new_line).length;
+
     document.getElementById("prop-count").textContent = allProps.length + " props";
 
-    renderChips(data.by_type || {});
+    // Render chips with new-lines stat
+    const chipsData = data.by_type || {};
+    renderChips(chipsData);
+    const chipsEl = document.getElementById("chips");
+    if (newCount > 0) {
+      chipsEl.innerHTML = `<div class="new-lines-stat">⚡ ${newCount} NEW LINE${newCount > 1 ? 'S' : ''}</div>` + chipsEl.innerHTML;
+    }
+
     populateBookFilter(allProps);
     renderProps(allProps);
 
@@ -459,7 +550,7 @@ async function fetchData() {
 }
 
 // Filter change handlers.
-["filter-sport", "filter-type", "filter-book", "filter-ev"].forEach(id => {
+["filter-sport", "filter-type", "filter-book", "filter-ev", "filter-time"].forEach(id => {
   document.getElementById(id).addEventListener("change", fetchData);
 });
 

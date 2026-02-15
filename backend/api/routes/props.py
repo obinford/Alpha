@@ -40,20 +40,26 @@ def _parse_prop_side(side: str) -> dict:
     return {"player": side or "", "direction": "", "line": None}
 
 
-def _normalize_prop(row: dict) -> dict:
+def _normalize_prop(row: dict, new_keys: set[str] | None = None) -> dict:
     """Flatten an ev_opportunities row into a prop-friendly dict."""
     game = row.get("games", {}) or {}
     parsed = _parse_prop_side(row.get("side", ""))
     market = row.get("market_type", "")
+    commence = row.get("commence_time") or game.get("start_time")
+
+    # Unique key for new-line detection.
+    key = f"{parsed['player']}|{market}|{parsed['direction']}|{parsed['line']}"
+    is_new = key in new_keys if new_keys else False
 
     return {
         "id": row.get("id"),
         "game_id": row.get("game_id"),
-        "sport": game.get("sport", ""),
+        "sport": game.get("sport", row.get("sport", "")),
         "home_team": game.get("home_team", ""),
         "away_team": game.get("away_team", ""),
         "game": f"{game.get('away_team', '')} @ {game.get('home_team', '')}",
         "start_time": game.get("start_time"),
+        "commence_time": commence,
         "player": parsed["player"],
         "prop_type": market,
         "prop_label": PROP_MARKET_LABELS.get(market, market),
@@ -68,6 +74,7 @@ def _normalize_prop(row: dict) -> dict:
         "units": row.get("recommended_units"),
         "timestamp": row.get("timestamp"),
         "selection": row.get("side", ""),
+        "is_new_line": is_new,
     }
 
 
@@ -94,6 +101,31 @@ def list_props(
 
     latest_ts = latest[0]["timestamp"]
 
+    # Find previous scan timestamp to detect new lines.
+    prev_scans = db._get(
+        "ev_opportunities",
+        select="timestamp",
+        filters={"timestamp": f"lt.{latest_ts}", "market_type": "like.player_*"},
+        order="timestamp.desc",
+        limit=1,
+    )
+    prev_keys: set[str] = set()
+    if prev_scans:
+        prev_ts = prev_scans[0]["timestamp"]
+        prev_rows = db._get(
+            "ev_opportunities",
+            select="side,market_type",
+            filters={"timestamp": f"eq.{prev_ts}", "market_type": "like.player_*"},
+        )
+        for r in prev_rows:
+            m = _SIDE_RE.match(r.get("side", ""))
+            if m:
+                prev_keys.add(
+                    f"{m.group(1).strip()}|{r['market_type']}|"
+                    f"{m.group(2).capitalize()}|{float(m.group(3))}"
+                )
+
+    # Keys in current scan but NOT in prev scan = new lines.
     filters: dict[str, str] = {
         "timestamp": f"eq.{latest_ts}",
         "market_type": f"like.player_*",
@@ -112,15 +144,29 @@ def list_props(
         order="ev_percentage.desc",
     )
 
+    # Build set of current keys, then find new ones.
+    current_keys: set[str] = set()
+    for row in rows:
+        parsed = _parse_prop_side(row.get("side", ""))
+        key = (
+            f"{parsed['player']}|{row.get('market_type', '')}|"
+            f"{parsed['direction']}|{parsed['line']}"
+        )
+        current_keys.add(key)
+    new_keys = current_keys - prev_keys
+
     # Client-side filtering for sport and player.
     props = []
+    new_line_count = 0
     for row in rows:
-        p = _normalize_prop(row)
+        p = _normalize_prop(row, new_keys)
         if sport and p["sport"] != sport:
             continue
         if player and player.lower() not in p["player"].lower():
             continue
         props.append(p)
+        if p["is_new_line"]:
+            new_line_count += 1
 
     # Group by player.
     by_player: dict[str, list[dict]] = {}
@@ -136,6 +182,7 @@ def list_props(
 
     return {
         "count": len(props),
+        "new_line_count": new_line_count,
         "props": props,
         "by_player": {k: len(v) for k, v in by_player.items()},
         "by_type": by_type,
