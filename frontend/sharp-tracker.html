@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RTM Picks — Sharp Money Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -165,9 +166,13 @@
   </header>
 
   <nav>
-    <a href="dashboard.html">+EV Dashboard</a>
+    <a href="dashboard.html">Dashboard</a>
     <a href="sharp-tracker.html" class="active">Sharp Tracker</a>
+    <a href="props.html">Props</a>
+    <a href="odds-screen.html">Odds Screen</a>
+    <a href="performance.html">Performance</a>
     <a href="clv-report.html">CLV Report</a>
+    <a href="daily-recap.html">Recap</a>
   </nav>
 
   <div class="stats">
@@ -286,7 +291,7 @@ function setStatus(ok, text) {
 function renderAlerts(alerts) {
   const grid = document.getElementById("alerts-grid");
   if (!alerts.length) {
-    grid.innerHTML = '<div class="message">No steam alerts in the last 24 hours.</div>';
+    grid.innerHTML = '<div class="message">No steam alerts in the last 24 hours. Steam alerts fire when 3+ books move the same direction within 30 minutes.</div>';
     return;
   }
   grid.innerHTML = alerts.map(a => {
@@ -367,24 +372,31 @@ async function loadChart(gameId, title) {
       return;
     }
 
-    // Group by bookmaker.
+    // Group by bookmaker + side.
+    const SHARP = ["pinnacle","circa","betonlineag","bovada"];
     const byBook = {};
     for (const m of movements) {
       const key = m.bookmaker + " | " + m.side;
-      if (!byBook[key]) byBook[key] = [];
-      byBook[key].push({ x: new Date(m.timestamp), y: Number(m.odds) });
+      if (!byBook[key]) byBook[key] = { data: [], book: m.bookmaker };
+      byBook[key].data.push({ x: new Date(m.timestamp), y: Number(m.odds) });
     }
 
     const bookNames = Object.keys(byBook).sort();
-    const datasets = bookNames.map((name, i) => ({
-      label: name,
-      data: byBook[name],
-      borderColor: BOOK_COLORS[i % BOOK_COLORS.length],
-      backgroundColor: BOOK_COLORS[i % BOOK_COLORS.length] + "33",
-      borderWidth: 2,
-      pointRadius: 3,
-      tension: 0.2,
-    }));
+    let colorIdx = 0;
+    const datasets = bookNames.map(name => {
+      const info = byBook[name];
+      const isSharp = SHARP.includes(info.book);
+      const color = isSharp ? "#ffd700" : BOOK_COLORS[colorIdx++ % BOOK_COLORS.length];
+      return {
+        label: name + (isSharp ? " (sharp)" : ""),
+        data: info.data,
+        borderColor: color,
+        backgroundColor: color + "33",
+        borderWidth: isSharp ? 3 : 1.5,
+        pointRadius: isSharp ? 4 : 2,
+        tension: 0.2,
+      };
+    });
 
     const ctx = document.getElementById("chartCanvas").getContext("2d");
     chartInstance = new Chart(ctx, {
@@ -405,11 +417,18 @@ async function loadChart(gameId, title) {
             titleColor: "#e1e5eb",
             bodyColor: "#c8cdd6",
             bodyFont: { family: "monospace" },
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                return ctx.dataset.label + ": " + (v > 0 ? "+" : "") + v;
+              }
+            },
           },
         },
         scales: {
           x: {
-            type: "time" in Chart.registry.scales ? "time" : "linear",
+            type: "time",
+            time: { tooltipFormat: "MMM d, h:mm a" },
             ticks: { color: "#5a6378", font: { family: "monospace", size: 10 } },
             grid: { color: "#131b2e" },
           },
