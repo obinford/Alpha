@@ -56,11 +56,29 @@ def _get_graded_results(
     return filtered
 
 
+def _range_to_dates(range_str: str | None) -> tuple[str | None, str | None]:
+    """Convert a range string like '7d', '30d', 'today' to date_from/date_to."""
+    if not range_str or range_str == "all":
+        return None, None
+    now = datetime.now(timezone.utc)
+    if range_str == "today":
+        return now.date().isoformat(), None
+    if range_str.endswith("d"):
+        days = int(range_str[:-1])
+        return (now - timedelta(days=days)).date().isoformat(), None
+    return None, None
+
+
 @router.get("/summary")
-def performance_summary() -> dict:
+def performance_summary(
+    sport: str | None = Query(None),
+    sportsbook: str | None = Query(None),
+    range: str | None = Query(None),
+) -> dict:
     """Overall performance summary: record, ROI, units."""
     db = get_supabase()
-    results = _get_graded_results(db)
+    date_from, date_to = _range_to_dates(range)
+    results = _get_graded_results(db, sport=sport, sportsbook=sportsbook, date_from=date_from, date_to=date_to)
 
     wins = sum(1 for r in results if r["result"] == "win")
     losses = sum(1 for r in results if r["result"] == "loss")
@@ -134,10 +152,14 @@ def performance_results(
 
 
 @router.get("/by-sport")
-def performance_by_sport() -> dict:
+def performance_by_sport(
+    sportsbook: str | None = Query(None),
+    range: str | None = Query(None),
+) -> dict:
     """Performance breakdown by sport."""
     db = get_supabase()
-    results = _get_graded_results(db)
+    date_from, date_to = _range_to_dates(range)
+    results = _get_graded_results(db, sportsbook=sportsbook, date_from=date_from, date_to=date_to)
 
     by_sport: dict[str, dict] = {}
     for r in results:

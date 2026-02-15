@@ -136,6 +136,22 @@ def signal_performance(days: int = Query(30, ge=1, le=365)) -> dict:
     winner_strengths = [float(r.get("signal_strength", 0)) for r in graded if r["result"] == "win"]
     loser_strengths = [float(r.get("signal_strength", 0)) for r in graded if r["result"] == "loss"]
 
+    # Signal lead time: average hours between signal creation and game start.
+    lead_times = []
+    for r in rows:
+        created = r.get("created_at")
+        commence = r.get("commence_time")
+        if created and commence:
+            try:
+                c_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                g_dt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
+                hours = (g_dt - c_dt).total_seconds() / 3600
+                if hours > 0:
+                    lead_times.append(hours)
+            except Exception:
+                pass
+    avg_lead = round(sum(lead_times) / len(lead_times), 1) if lead_times else None
+
     return {
         "total_signals": len(rows),
         "graded_signals": total,
@@ -146,6 +162,7 @@ def signal_performance(days: int = Query(30, ge=1, le=365)) -> dict:
         "roi": round(units / total * 100, 1) if total else 0,
         "avg_winner_strength": round(sum(winner_strengths) / len(winner_strengths), 1) if winner_strengths else 0,
         "avg_loser_strength": round(sum(loser_strengths) / len(loser_strengths), 1) if loser_strengths else 0,
+        "avg_lead_time_hours": avg_lead,
         "by_tier": tier_breakdown,
         "by_sport": sport_breakdown,
     }

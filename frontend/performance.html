@@ -175,6 +175,7 @@
     <div class="stat-card"><div class="label">Units Profit</div><div class="value green" id="stat-units">&mdash;</div></div>
     <div class="stat-card"><div class="label">Avg EV%</div><div class="value yellow" id="stat-avg-ev">&mdash;</div></div>
     <div class="stat-card"><div class="label">Total Bets</div><div class="value blue" id="stat-total">&mdash;</div></div>
+    <div class="stat-card"><div class="label">Avg Signal Lead</div><div class="value green" id="stat-lead-time">&mdash;</div></div>
   </div>
 
   <!-- Filters -->
@@ -560,10 +561,11 @@ async function fetchData() {
   const queryParams = getQueryParams();
 
   try {
-    const [summaryRes, resultsRes, bySportRes] = await Promise.all([
+    const [summaryRes, resultsRes, bySportRes, signalRes] = await Promise.all([
       fetch(API + "/performance/summary" + queryParams),
       fetch(API + "/performance/results" + queryParams),
       fetch(API + "/performance/by-sport" + queryParams),
+      fetch(API + "/signals/performance?days=30").catch(() => null),
     ]);
 
     if (!summaryRes.ok) throw new Error("Summary HTTP " + summaryRes.status);
@@ -582,6 +584,16 @@ async function fetchData() {
     renderProfitChart(results);
     renderSportRoiChart(bySport);
     populateFilters(results, bySport);
+
+    // Signal lead time
+    const leadEl = document.getElementById("stat-lead-time");
+    if (signalRes && signalRes.ok) {
+      try {
+        const sigData = await signalRes.json();
+        const avgLead = sigData.avg_lead_time_hours;
+        leadEl.textContent = avgLead != null ? avgLead.toFixed(1) + 'h' : '\u2014';
+      } catch { leadEl.textContent = '\u2014'; }
+    } else { leadEl.textContent = '\u2014'; }
 
     const now = new Date().toLocaleTimeString();
     setStatus(true, "Live \u00b7 updated " + now);
