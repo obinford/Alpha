@@ -134,6 +134,16 @@
   #chartCanvas{max-height:350px}
   .chart-placeholder{text-align:center;padding:40px;color:#5a6378;font-size:12px}
 
+  /* Early steam badge */
+  .badge-early-steam{
+    display:inline-block;padding:2px 6px;border-radius:3px;font-size:9px;
+    font-weight:700;letter-spacing:0.5px;text-transform:uppercase;
+    background:#00e67615;color:#00e676;border:1px solid #00e67640;margin-left:6px;
+  }
+  .badge-game-time{
+    display:inline-block;font-size:10px;color:#8892a4;font-weight:600;margin-left:6px;
+  }
+
   /* Loading / error */
   .message{text-align:center;padding:40px 20px;color:#5a6378}
   .message.error{color:#ff5252}
@@ -178,9 +188,21 @@
   </nav>
 
   <div class="stats">
-    <div class="stat-card"><div class="label">Alerts (24h)</div><div class="value red" id="stat-alerts">—</div></div>
+    <div class="stat-card"><div class="label">Alerts (48h)</div><div class="value red" id="stat-alerts">—</div></div>
     <div class="stat-card"><div class="label">Most Active</div><div class="value" id="stat-active-sport">—</div></div>
     <div class="stat-card"><div class="label">Biggest Move</div><div class="value blue" id="stat-biggest">—</div></div>
+    <div class="stat-card"><div class="label">Early Steam</div><div class="value green" id="stat-early-steam">—</div></div>
+  </div>
+
+  <!-- Time Window Filter -->
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+    <label style="font-size:11px;color:#5a6378;text-transform:uppercase;letter-spacing:1px">Time Window</label>
+    <select id="filter-hours" style="background:#111827;border:1px solid #1a2035;border-radius:4px;color:#c8cdd6;padding:6px 10px;font-family:inherit;font-size:12px">
+      <option value="6">Last 6 Hours</option>
+      <option value="12">Last 12 Hours</option>
+      <option value="24">Last 24 Hours</option>
+      <option value="48" selected>Last 48 Hours</option>
+    </select>
   </div>
 
   <!-- Steam Alerts -->
@@ -190,7 +212,7 @@
   </div>
 
   <!-- Biggest Movers -->
-  <div class="section-title">Biggest Line Movers (6h)</div>
+  <div class="section-title" id="movers-title">Biggest Line Movers (48h)</div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -284,6 +306,22 @@ function gameName(g) {
   return (g.away_team || "Away") + " @ " + (g.home_team || "Home");
 }
 
+function getHoursUntilGame(item) {
+  const g = item.games || {};
+  const ct = g.start_time || g.commence_time;
+  if (!ct) return null;
+  const d = new Date(ct);
+  if (isNaN(d)) return null;
+  return (d - Date.now()) / 3600000;
+}
+
+function earlyBadge(item) {
+  const h = getHoursUntilGame(item);
+  if (h !== null && h >= 24) return `<span class="badge-early-steam">EARLY STEAM — ${Math.round(h)}h out</span>`;
+  if (h !== null && h > 0) return `<span class="badge-game-time">${h.toFixed(1)}h to game</span>`;
+  return '';
+}
+
 function setStatus(ok, text) {
   document.getElementById("status-dot").className = ok ? "dot" : "dot error";
   document.getElementById("status-text").textContent = text;
@@ -308,6 +346,7 @@ function renderAlerts(alerts) {
       <div class="alert-header">
         <span class="sport-badge sport-${sk}">${sportLabel(a.sport)}</span>
         <span class="alert-dir ${dirClass}">${dirLabel}</span>
+        ${earlyBadge(a)}
       </div>
       <div class="alert-game">${gameName(g)}</div>
       <div class="alert-side">${a.side || "—"} (${a.market_type || ""})</div>
@@ -452,10 +491,12 @@ async function loadChart(gameId, title) {
 
 // --- Data fetch ---
 async function fetchData() {
+  const hours = document.getElementById("filter-hours").value || 48;
+  document.getElementById("movers-title").textContent = `Biggest Line Movers (${hours}h)`;
   try {
     const [dashRes, movesRes] = await Promise.all([
       fetch(API_BASE + "/sharp-dashboard/"),
-      fetch(API_BASE + "/line-movements/?hours=6&limit=20"),
+      fetch(API_BASE + `/line-movements/?hours=${hours}&limit=40`),
     ]);
 
     if (!dashRes.ok) throw new Error("Dashboard HTTP " + dashRes.status);
@@ -473,8 +514,13 @@ async function fetchData() {
     document.getElementById("stat-biggest").textContent =
       bigMove ? fmtChange(bigMove.odds_change) : "—";
 
+    // Count early steam alerts (games 24h+ out).
+    const alerts = dash.latest_alerts || [];
+    const earlyCount = alerts.filter(a => { const h = getHoursUntilGame(a); return h !== null && h >= 24; }).length;
+    document.getElementById("stat-early-steam").textContent = earlyCount;
+
     // Render sections.
-    renderAlerts(dash.latest_alerts || []);
+    renderAlerts(alerts);
     renderMovers(movesData.movements || []);
 
     const now = new Date().toLocaleTimeString();
@@ -484,6 +530,8 @@ async function fetchData() {
   }
   countdown = REFRESH_INTERVAL;
 }
+
+document.getElementById("filter-hours").addEventListener("change", fetchData);
 
 function startTimer() {
   clearInterval(timerInterval);
