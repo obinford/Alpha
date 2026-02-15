@@ -299,8 +299,9 @@ def process_open_records(client: object) -> tuple[int, int]:
         if game_start > now:
             continue
 
-        # If game started more than 48h ago and we still don't have closing odds, expire.
-        if (now - game_start).total_seconds() > 48 * 3600:
+        # If game started more than CLV_EXPIRATION_HOURS ago, expire.
+        from config import CLV_EXPIRATION_HOURS
+        if (now - game_start).total_seconds() > CLV_EXPIRATION_HOURS * 3600:
             try:
                 resp = db._http.patch(
                     f"{db.base_url}/clv_records",

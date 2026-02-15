@@ -34,19 +34,11 @@ from config import (
     ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES,
     ALL_MARKETS, PROP_MARKETS, MARKETS,
     get_prop_markets_for_sport,
+    MIN_EV_THRESHOLD, DEFAULT_KELLY_FRACTION,
+    DEFAULT_BANKROLL_UNITS, PROP_WINDOW_HOURS,
+    STEAM_MIN_BOOKS, STEAM_WINDOW_MINUTES, STEAM_DEDUP_MINUTES,
+    SCAN_INTERVAL_MINUTES,
 )
-
-# Only surface bets with EV above this threshold.
-MIN_EV_THRESHOLD = 1.0
-
-# Default Kelly fraction (quarter Kelly).
-DEFAULT_KELLY_FRACTION = 0.25
-
-# Default bankroll units for recommended-units sizing.
-DEFAULT_BANKROLL_UNITS = 100.0
-
-# Props are only available for games within this many hours.
-PROP_WINDOW_HOURS = 18.0
 
 
 @dataclass
@@ -515,13 +507,6 @@ def store_ev_opportunities(
 # ---------------------------------------------------------------------------
 # Steam detection
 # ---------------------------------------------------------------------------
-
-# Minimum number of books moving same direction to trigger a steam alert.
-STEAM_MIN_BOOKS = 3
-# Only look at line movements from the last N minutes.
-STEAM_WINDOW_MINUTES = 30
-# Don't create duplicate alerts within this window (minutes).
-STEAM_DEDUP_MINUTES = 60
 
 
 def detect_steam_moves(db_client: object) -> int:
@@ -1145,8 +1130,6 @@ def run_scan(sport_keys: list[str]) -> int:
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
-
-SCAN_INTERVAL_MINUTES = 10
 
 
 def main() -> None:

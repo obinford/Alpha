@@ -10,15 +10,13 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
 
-
-# Minimum EV% to trigger a Discord alert (higher bar than display threshold).
-MIN_ALERT_EV = 5.0
+from config import MIN_ALERT_EV_THRESHOLD
 
 
 class AlertManager:
     """Manages Discord alert deduplication and dispatch."""
 
-    def __init__(self, min_ev: float = MIN_ALERT_EV) -> None:
+    def __init__(self, min_ev: float = MIN_ALERT_EV_THRESHOLD) -> None:
         self.min_ev = min_ev
         self._alerted_ev_keys: set[str] = set()
         self._alerted_steam_keys: set[str] = set()

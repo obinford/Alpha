@@ -84,9 +84,10 @@ def grade_signals(db_client) -> dict:
 
         # Use kelly-based units from signal, fall back to 1.0.
         # kelly_size is stored as kelly_fraction * 100 (same scale as recommended_units).
+        from shared.config import MIN_UNIT_SIZE, MAX_UNIT_SIZE
         kelly_size = signal.get("kelly_size")
         if kelly_size is not None and float(kelly_size) > 0:
-            units = max(0.1, min(float(kelly_size), 5.0))
+            units = max(MIN_UNIT_SIZE, min(float(kelly_size), MAX_UNIT_SIZE))
         else:
             units = 1.0
         profit = _calculate_profit(result, book_odds, units)

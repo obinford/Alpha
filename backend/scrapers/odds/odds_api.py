@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from config import ODDS_API_BASE_URL
 
-API_BASE = "https://api.the-odds-api.com/v4/sports"
+API_BASE = ODDS_API_BASE_URL
 
 # Shared httpx client for connection pooling.
 _odds_http = httpx.Client(timeout=30)

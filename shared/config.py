@@ -97,11 +97,33 @@ ALL_MARKETS = MARKETS + PROP_MARKETS
 # Fractional Kelly multiplier (0.25 = quarter Kelly)
 DEFAULT_KELLY_FRACTION = 0.25
 
+# Default bankroll units for recommended-units sizing.
+DEFAULT_BANKROLL_UNITS = 100.0
+
+# Min/max unit sizing (clamps kelly-based units to a safe range).
+MIN_UNIT_SIZE = 0.1
+MAX_UNIT_SIZE = 5.0
+
 # Minimum EV threshold to surface a pick (percentage)
 MIN_EV_THRESHOLD = 1.0
 
 # Minimum EV% to grade/track a bet as a "play" — anything below is noise
 MIN_GRADE_EV_THRESHOLD = 3.0
+
+# --- Scanner timing ---
+SCAN_INTERVAL_MINUTES = 10
+PROP_WINDOW_HOURS = 18.0
+
+# --- Steam detection ---
+STEAM_MIN_BOOKS = 3
+STEAM_WINDOW_MINUTES = 30
+STEAM_DEDUP_MINUTES = 60
+
+# --- CLV tracking ---
+CLV_EXPIRATION_HOURS = 48
+
+# --- API ---
+ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4/sports"
 
 # Discord notifications
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")

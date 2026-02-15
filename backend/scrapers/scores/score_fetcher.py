@@ -13,7 +13,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "sh
 import httpx
 from datetime import datetime, timedelta, timezone
 
-API_BASE = "https://api.the-odds-api.com/v4/sports"
+from config import ODDS_API_BASE_URL
+
+API_BASE = ODDS_API_BASE_URL
 
 # Shared httpx client for connection pooling.
 _score_http = httpx.Client(timeout=15)

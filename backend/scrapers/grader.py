@@ -155,7 +155,7 @@ def grade_opportunities(db_client: object) -> dict:
     Returns a summary dict with counts and stats.
     """
     from db import SupabaseClient
-    from shared.config import MIN_GRADE_EV_THRESHOLD
+    from shared.config import MIN_GRADE_EV_THRESHOLD, MIN_UNIT_SIZE, MAX_UNIT_SIZE
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
 
@@ -233,7 +233,7 @@ def grade_opportunities(db_client: object) -> dict:
                 units = 1.0  # fallback
 
         # Clamp to reasonable range.
-        units = max(0.1, min(units, 5.0))
+        units = max(MIN_UNIT_SIZE, min(units, MAX_UNIT_SIZE))
 
         profit = _calculate_profit(result, book_odds, units)
         total_units += profit
@@ -301,7 +301,7 @@ def recalculate_all_results(db_client: object) -> dict:
     This fixes historical results that were calculated with flat 1-unit sizing.
     """
     from db import SupabaseClient
-    from shared.config import MIN_GRADE_EV_THRESHOLD
+    from shared.config import MIN_GRADE_EV_THRESHOLD, MIN_UNIT_SIZE, MAX_UNIT_SIZE
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
 
@@ -356,7 +356,7 @@ def recalculate_all_results(db_client: object) -> dict:
             else:
                 units = 1.0
 
-        units = max(0.1, min(units, 5.0))
+        units = max(MIN_UNIT_SIZE, min(units, MAX_UNIT_SIZE))
 
         new_profit = _calculate_profit(result, book_odds, units)
         old_profit = float(r.get("profit_loss", 0))
