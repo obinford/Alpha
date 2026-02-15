@@ -192,7 +192,9 @@
 </div>
 
 <script>
-const API_URL = "http://localhost:8000/api/ev-opportunities/";
+const API_HOST = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+  ? 'http://localhost:8000' : '';
+const API_URL = API_HOST + "/api/ev-opportunities/";
 const REFRESH_INTERVAL = 60;
 
 let allOpps = [];
