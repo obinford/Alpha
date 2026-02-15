@@ -88,6 +88,16 @@
   .market{color:#5a6378;font-size:11px}
   .prop-tag{background:#1a1a2e;color:#7986cb;border:1px solid #2e2e5c;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
 
+  .time-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:0.5px;white-space:nowrap}
+  .time-live{background:#ff525220;color:#ff5252;border:1px solid #ff525240}
+  .time-soon{background:#ffc10720;color:#ffc107;border:1px solid #ffc10740}
+  .time-today{color:#c8cdd6}
+  .time-tomorrow{color:#8892a4}
+  .time-far{color:#5a6378}
+  .early-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:#00e67615;color:#00e676;border:1px solid #00e67640;margin-left:4px}
+
+  .date-separator{background:#0d1220;padding:8px 14px;font-size:11px;font-weight:700;color:#5a6378;text-transform:uppercase;letter-spacing:1.5px;border-bottom:1px solid #1a2035}
+
   .message{text-align:center;padding:60px 20px;color:#5a6378}
   .message.error{color:#ff5252}
   .spinner{width:28px;height:28px;border:3px solid #1a2035;border-top-color:#00e676;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
@@ -132,9 +142,11 @@
   </nav>
 
   <div class="stats" id="stats-row">
+    <div class="stat-card"><div class="label">Tracking</div><div class="value" id="stat-tracking">—</div></div>
     <div class="stat-card"><div class="label">Showing</div><div class="value" id="stat-count">—</div></div>
     <div class="stat-card"><div class="label">Best EV%</div><div class="value green" id="stat-best-ev">—</div></div>
     <div class="stat-card"><div class="label">Avg EV%</div><div class="value yellow" id="stat-avg-ev">—</div></div>
+    <div class="stat-card"><div class="label">Early Lines</div><div class="value green" id="stat-early">—</div></div>
     <div class="stat-card"><div class="label">Props</div><div class="value" id="stat-props">—</div></div>
   </div>
 
@@ -170,6 +182,23 @@
       </select>
     </div>
     <div class="filter-group">
+      <label>Time Window</label>
+      <select id="filter-time">
+        <option value="all" selected>All Upcoming (48h)</option>
+        <option value="today">Today</option>
+        <option value="tomorrow">Tomorrow</option>
+        <option value="soon">Starting Soon (&lt; 6h)</option>
+        <option value="early">Early Lines (24h+)</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Sort By</label>
+      <select id="filter-sort">
+        <option value="time">Game Time</option>
+        <option value="ev">EV %</option>
+      </select>
+    </div>
+    <div class="filter-group">
       <label>Search</label>
       <input type="text" id="filter-search" class="search-box" placeholder="Team or player name...">
     </div>
@@ -179,6 +208,7 @@
     <table>
       <thead>
         <tr>
+          <th>Starts</th>
           <th>Sport</th>
           <th>Game</th>
           <th>Selection</th>
@@ -231,6 +261,58 @@ function gameName(g) { return g?(g.away_team||"Away")+" @ "+(g.home_team||"Home"
 function isProps(mt) { return mt && mt.startsWith("player_"); }
 function propLabel(mt) { return mt?mt.replace("player_","").replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()):mt; }
 
+function getCommenceTime(o) {
+  return o.commence_time || (o.games && (o.games.commence_time || o.games.start_time)) || null;
+}
+
+function getHoursUntil(o) {
+  const ct = getCommenceTime(o);
+  if (!ct) return null;
+  const start = new Date(ct);
+  if (isNaN(start)) return null;
+  return (start - Date.now()) / 3600000;
+}
+
+function fmtStarts(o) {
+  const h = getHoursUntil(o);
+  if (h === null) return '<span class="time-today">--</span>';
+  if (h < -0.5) return '<span class="time-badge time-live">LIVE</span>';
+  if (h < 0) return '<span class="time-badge time-live">STARTING</span>';
+  if (h < 1) return `<span class="time-badge time-soon">${Math.round(h*60)}m</span>`;
+  if (h < 12) return `<span class="time-badge time-soon">${Math.floor(h)}h ${Math.round((h%1)*60)}m</span>`;
+
+  const ct = getCommenceTime(o);
+  const start = new Date(ct);
+  const now = new Date();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate()+1);
+
+  if (start.toDateString() === now.toDateString()) {
+    return `<span class="time-today">${start.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>`;
+  } else if (start.toDateString() === tomorrow.toDateString()) {
+    return `<span class="time-tomorrow">Tomorrow ${start.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>`;
+  } else {
+    return `<span class="time-far">${start.toLocaleDateString('en-US',{weekday:'short'})} ${start.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>`;
+  }
+}
+
+function earlyBadge(o) {
+  const h = getHoursUntil(o);
+  if (h !== null && h >= 24) return '<span class="early-badge">Early Line</span>';
+  return '';
+}
+
+function getDateGroup(o) {
+  const ct = getCommenceTime(o);
+  if (!ct) return 'Unknown';
+  const start = new Date(ct);
+  if (isNaN(start)) return 'Unknown';
+  const now = new Date();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate()+1);
+  if (start.toDateString() === now.toDateString()) return 'Today';
+  if (start.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+  return start.toLocaleDateString('en-US', {weekday:'long',month:'short',day:'numeric'});
+}
+
 function setStatus(ok, text) {
   document.getElementById("status-dot").className = ok?"dot":"dot error";
   document.getElementById("status-text").textContent = text;
@@ -241,6 +323,7 @@ function getFiltered() {
   const bookF = document.getElementById("filter-book").value;
   const marketF = document.getElementById("filter-market").value;
   const evF = Number(document.getElementById("filter-ev").value) || 0;
+  const timeF = document.getElementById("filter-time").value;
   const searchF = document.getElementById("filter-search").value.toLowerCase().trim();
 
   return allOpps.filter(o => {
@@ -252,6 +335,24 @@ function getFiltered() {
     if (marketF === "game" && isProps(o.market_type)) return false;
     if (marketF === "props" && !isProps(o.market_type)) return false;
     if (marketF && marketF !== "game" && marketF !== "props" && o.market_type !== marketF) return false;
+
+    // Time filter
+    if (timeF !== "all") {
+      const h = getHoursUntil(o);
+      if (h === null) return timeF === "all";
+      if (timeF === "today") {
+        const dg = getDateGroup(o);
+        if (dg !== "Today") return false;
+      } else if (timeF === "tomorrow") {
+        const dg = getDateGroup(o);
+        if (dg !== "Tomorrow") return false;
+      } else if (timeF === "soon") {
+        if (h > 6 || h < -3) return false;
+      } else if (timeF === "early") {
+        if (h < 24) return false;
+      }
+    }
+
     if (searchF) {
       const haystack = ((g.home_team||"")+" "+(g.away_team||"")+" "+(o.side||"")).toLowerCase();
       if (!haystack.includes(searchF)) return false;
@@ -290,8 +391,13 @@ function populateFilters() {
 
 function updateStats(filtered) {
   const propCount = filtered.filter(o=>isProps(o.market_type)).length;
+  const earlyCount = filtered.filter(o=>{const h=getHoursUntil(o);return h!==null&&h>=24}).length;
+  const uniqueGames = new Set(filtered.map(o=>o.game_id)).size;
+  const uniqueSports = new Set(filtered.map(o=>(o.games||{}).sport).filter(Boolean)).size;
+  document.getElementById("stat-tracking").textContent = uniqueGames + " games";
   document.getElementById("stat-count").textContent = filtered.length;
   document.getElementById("stat-props").textContent = propCount;
+  document.getElementById("stat-early").textContent = earlyCount;
   if (!filtered.length) {
     document.getElementById("stat-best-ev").textContent = "\u2014";
     document.getElementById("stat-avg-ev").textContent = "\u2014";
@@ -305,10 +411,12 @@ function updateStats(filtered) {
 function renderTable(opps) {
   const tbody = document.getElementById("table-body");
   if (!opps.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="message">No opportunities match your filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="message">No opportunities match your filters.</td></tr>';
     return;
   }
-  tbody.innerHTML = opps.map(o => {
+  let html = '';
+  let lastDateGroup = '';
+  opps.forEach(o => {
     const g = o.games || {};
     const sk = sportKey(g.sport);
     const ev = Number(o.ev_percentage) || 0;
@@ -317,7 +425,20 @@ function renderTable(opps) {
     const marketDisplay = isProp
       ? `<span class="prop-tag">${propLabel(o.market_type)}</span>`
       : (o.market_type || "\u2014");
-    return `<tr>
+
+    // Date separator
+    const sortMode = document.getElementById("filter-sort").value;
+    if (sortMode === "time") {
+      const dg = getDateGroup(o);
+      if (dg !== lastDateGroup) {
+        lastDateGroup = dg;
+        const dgCount = opps.filter(x => getDateGroup(x) === dg).length;
+        html += `<tr><td colspan="10" class="date-separator">${dg} \u2014 ${dgCount} opportunities</td></tr>`;
+      }
+    }
+
+    html += `<tr>
+      <td>${fmtStarts(o)}${earlyBadge(o)}</td>
       <td><span class="sport-badge sport-${sk}">${sportLabel(g.sport)}</span></td>
       <td>${gameName(g)}</td>
       <td class="side">${o.side || "\u2014"}</td>
@@ -328,12 +449,24 @@ function renderTable(opps) {
       <td class="${evClass}">${fmtPct(o.ev_percentage)}</td>
       <td class="kelly">${fmtDecimalAsPct(o.kelly_fraction)}</td>
     </tr>`;
-  }).join("");
+  });
+  tbody.innerHTML = html;
 }
 
 function applyFilters() {
   const filtered = getFiltered();
-  filtered.sort((a,b)=>(Number(b.ev_percentage)||0)-(Number(a.ev_percentage)||0));
+  const sortMode = document.getElementById("filter-sort").value;
+  if (sortMode === "time") {
+    filtered.sort((a,b)=>{
+      const ctA = getCommenceTime(a) || '';
+      const ctB = getCommenceTime(b) || '';
+      const cmp = ctA.localeCompare(ctB);
+      if (cmp !== 0) return cmp;
+      return (Number(b.ev_percentage)||0)-(Number(a.ev_percentage)||0);
+    });
+  } else {
+    filtered.sort((a,b)=>(Number(b.ev_percentage)||0)-(Number(a.ev_percentage)||0));
+  }
   renderTable(filtered);
   updateStats(filtered);
 }
@@ -357,7 +490,7 @@ async function fetchData() {
 }
 
 // Wire up filter change events.
-["filter-sport","filter-book","filter-market","filter-ev"].forEach(id=>{
+["filter-sport","filter-book","filter-market","filter-ev","filter-time","filter-sort"].forEach(id=>{
   document.getElementById(id).addEventListener("change", applyFilters);
 });
 document.getElementById("filter-search").addEventListener("input", applyFilters);
