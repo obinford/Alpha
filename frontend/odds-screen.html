@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTM Picks — Odds Comparison</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#0a0e17;color:#c8cdd6;
+    font-family:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+    font-size:13px;line-height:1.5;
+  }
+  a{color:#42a5f5;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .container{max-width:1600px;margin:0 auto;padding:16px 24px}
+
+  /* Nav */
+  nav{
+    display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;
+  }
+  nav a{color:#5a6378;padding:4px 0;border-bottom:2px solid transparent}
+  nav a:hover{color:#c8cdd6;text-decoration:none}
+  nav a.active{color:#00e676;border-bottom-color:#00e676}
+
+  /* Header */
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+  }
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{font-size:20px;font-weight:700;color:#e1e5eb;letter-spacing:1px}
+  .brand h1 span{color:#00e676}
+  .brand .tagline{font-size:11px;color:#5a6378;text-transform:uppercase;letter-spacing:2px}
+  .status-bar{display:flex;align-items:center;gap:16px;font-size:11px;color:#5a6378}
+  .status-bar .dot{
+    width:7px;height:7px;border-radius:50%;display:inline-block;
+    background:#00e676;box-shadow:0 0 6px #00e67680;
+  }
+  .status-bar .dot.error{background:#ff5252;box-shadow:0 0 6px #ff525280}
+
+  /* Filters */
+  .filters{
+    display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end;
+  }
+  .filters select{
+    background:#111827;border:1px solid #1a2035;border-radius:4px;
+    color:#c8cdd6;padding:6px 10px;font-family:inherit;font-size:12px;
+  }
+  .filters label{font-size:10px;color:#5a6378;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px}
+
+  /* Odds grid */
+  .odds-container{overflow-x:auto;margin-bottom:20px}
+
+  .game-card{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;
+    margin-bottom:12px;overflow:hidden;
+  }
+  .game-header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;background:#0d1420;border-bottom:1px solid #1a2035;
+  }
+  .game-teams{font-size:14px;font-weight:700;color:#e1e5eb}
+  .game-time{font-size:11px;color:#5a6378}
+
+  .odds-grid{overflow-x:auto}
+  .odds-table{width:100%;border-collapse:collapse;min-width:800px}
+  .odds-table th{
+    text-align:center;padding:6px 8px;font-size:10px;color:#5a6378;
+    text-transform:uppercase;letter-spacing:0.5px;font-weight:600;
+    border-bottom:1px solid #1a2035;background:#0d1420;
+    white-space:nowrap;min-width:70px;
+  }
+  .odds-table th.side-header{
+    text-align:left;min-width:120px;padding-left:16px;
+  }
+  .odds-table th.sharp{color:#ffc107;border-bottom-color:#ffc107}
+  .odds-table td{
+    text-align:center;padding:6px 8px;border-bottom:1px solid #0d1420;
+    font-size:12px;white-space:nowrap;
+  }
+  .odds-table td.side-cell{
+    text-align:left;padding-left:16px;font-weight:600;color:#e1e5eb;font-size:12px;
+  }
+  .odds-table tr:hover{background:#151e30}
+
+  .odds-cell{font-weight:600;cursor:default}
+  .odds-best{color:#00e676;font-weight:700}
+  .odds-sharp{color:#ffc107}
+  .odds-normal{color:#c8cdd6}
+  .odds-na{color:#2a3040}
+  .odds-point{font-size:10px;color:#5a6378;display:block}
+
+  /* Loading */
+  .message{text-align:center;padding:40px 20px;color:#5a6378}
+  .message.error{color:#ff5252}
+  .spinner{
+    width:28px;height:28px;border:3px solid #1a2035;border-top-color:#00e676;
+    border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media(max-width:900px){
+    .container{padding:10px 8px}
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="sharp-tracker.html">Sharp Tracker</a>
+    <a href="props.html">Props</a>
+    <a href="odds-screen.html" class="active">Odds Screen</a>
+    <a href="performance.html">Performance</a>
+    <a href="clv-report.html">CLV Report</a>
+    <a href="daily-recap.html">Daily Recap</a>
+    <a href="bankroll.html">Bankroll</a>
+  </nav>
+
+  <header>
+    <div class="brand">
+      <h1>RTM <span>PICKS</span></h1>
+      <span class="tagline">Odds Comparison</span>
+    </div>
+    <div class="status-bar">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">Loading...</span>
+      <span id="game-count" style="color:#8892a4"></span>
+      <span id="refresh-timer"></span>
+    </div>
+  </header>
+
+  <div class="filters">
+    <div>
+      <label>Sport</label>
+      <select id="filter-sport">
+        <option value="baseball_mlb">MLB</option>
+        <option value="basketball_nba" selected>NBA</option>
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="icehockey_nhl">NHL</option>
+        <option value="americanfootball_ncaaf">CFB</option>
+        <option value="basketball_ncaab">CBB</option>
+      </select>
+    </div>
+    <div>
+      <label>Market</label>
+      <select id="filter-market">
+        <option value="h2h" selected>Moneyline</option>
+        <option value="spreads">Spreads</option>
+        <option value="totals">Totals</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="odds-content">
+    <div class="message"><div class="spinner"></div>Fetching live odds...</div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin + "/api";
+const REFRESH = 120;
+let countdown = REFRESH;
+let timerInterval;
+
+const SHARP_BOOKS = new Set(["pinnacle", "circa", "betonlineag"]);
+
+function fmtOdds(v) {
+  const n = Number(v);
+  if (isNaN(n)) return "\u2014";
+  return n > 0 ? "+" + n : String(n);
+}
+
+function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleString("en-US", {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+}
+
+function setStatus(ok, text) {
+  document.getElementById("status-dot").className = ok ? "dot" : "dot error";
+  document.getElementById("status-text").textContent = text;
+}
+
+function renderOddsScreen(data) {
+  const container = document.getElementById("odds-content");
+  const books = data.books || [];
+  const games = data.games || [];
+  const market = data.market || "h2h";
+
+  document.getElementById("game-count").textContent = games.length + " games";
+
+  if (!games.length) {
+    container.innerHTML = '<div class="message">No games found for this sport. Games may not be available yet.</div>';
+    return;
+  }
+
+  let html = "";
+
+  games.forEach(game => {
+    const bookOdds = game.book_odds || {};
+    const bestOdds = game.best_odds || {};
+
+    // Determine sides based on market type.
+    let sides = [];
+    if (market === "h2h") {
+      sides = [
+        { name: game.away_team, key: game.away_team },
+        { name: game.home_team, key: game.home_team },
+      ];
+      // Check for Draw.
+      for (const bk in bookOdds) {
+        if (bookOdds[bk]["Draw"]) {
+          sides.push({ name: "Draw", key: "Draw" });
+          break;
+        }
+      }
+    } else if (market === "spreads") {
+      sides = [
+        { name: game.away_team, key: game.away_team },
+        { name: game.home_team, key: game.home_team },
+      ];
+    } else if (market === "totals") {
+      sides = [
+        { name: "Over", key: "Over" },
+        { name: "Under", key: "Under" },
+      ];
+    }
+
+    html += `<div class="game-card">
+      <div class="game-header">
+        <div class="game-teams">${game.away_team} @ ${game.home_team}</div>
+        <div class="game-time">${fmtTime(game.commence_time)}</div>
+      </div>
+      <div class="odds-grid">
+        <table class="odds-table">
+          <thead><tr>
+            <th class="side-header">Side</th>`;
+
+    books.forEach(bk => {
+      const cls = bk.is_sharp ? "sharp" : "";
+      const label = bk.title.length > 12 ? bk.key.slice(0, 10) : bk.title;
+      html += `<th class="${cls}" title="${bk.title}">${label}</th>`;
+    });
+
+    html += `</tr></thead><tbody>`;
+
+    sides.forEach(side => {
+      const best = bestOdds[side.key] || {};
+      html += `<tr><td class="side-cell">${side.name}</td>`;
+
+      books.forEach(bk => {
+        const bkData = bookOdds[bk.key] || {};
+        const sideData = bkData[side.key];
+
+        if (!sideData) {
+          html += `<td class="odds-cell odds-na">\u2014</td>`;
+          return;
+        }
+
+        const odds = sideData.odds;
+        const point = sideData.point;
+        const isBest = best.best_book === bk.key;
+        const isSharp = bk.is_sharp;
+
+        let cls = "odds-normal";
+        if (isBest) cls = "odds-best";
+        else if (isSharp) cls = "odds-sharp";
+
+        let content = fmtOdds(odds);
+        if (point != null && market !== "h2h") {
+          const prefix = point > 0 ? "+" : "";
+          content = `<span class="odds-point">${prefix}${point}</span>${fmtOdds(odds)}`;
+        }
+
+        html += `<td class="odds-cell ${cls}" title="${bk.title}: ${fmtOdds(odds)}">${content}</td>`;
+      });
+
+      html += `</tr>`;
+    });
+
+    html += `</tbody></table></div></div>`;
+  });
+
+  container.innerHTML = html;
+}
+
+async function fetchOdds() {
+  const sport = document.getElementById("filter-sport").value;
+  const market = document.getElementById("filter-market").value;
+
+  document.getElementById("odds-content").innerHTML =
+    '<div class="message"><div class="spinner"></div>Fetching live odds...</div>';
+
+  try {
+    const res = await fetch(API + "/odds-screen/" + sport + "?market=" + market);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    renderOddsScreen(data);
+    setStatus(true, "Live \u00b7 " + new Date().toLocaleTimeString());
+  } catch (e) {
+    setStatus(false, "Error: " + e.message);
+    document.getElementById("odds-content").innerHTML =
+      '<div class="message error">Failed to fetch odds: ' + e.message + '</div>';
+  }
+  countdown = REFRESH;
+}
+
+document.getElementById("filter-sport").addEventListener("change", fetchOdds);
+document.getElementById("filter-market").addEventListener("change", fetchOdds);
+
+function startTimer() {
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    countdown--;
+    document.getElementById("refresh-timer").textContent = "refresh in " + countdown + "s";
+    if (countdown <= 0) fetchOdds();
+  }, 1000);
+}
+
+fetchOdds();
+startTimer();
+</script>
+</body>
+</html>
