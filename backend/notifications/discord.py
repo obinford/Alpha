@@ -271,22 +271,30 @@ def send_signal_alert(signal: dict) -> bool:
 
     Signal dict should have: star_rating, signal_strength, side, sportsbook,
     book_odds, edge_percentage, ev_score, steam_score, projection_score,
-    consensus_score, kelly_size, sport, game, player_name.
+    consensus_score, kelly_size, sport, game, player_name, hours_until_start.
     """
     if not _is_enabled():
         return False
 
     stars = signal.get("star_rating", 3)
     strength = signal.get("signal_strength", 0)
+    h = signal.get("hours_until_start")
+
+    # Add early/urgent label to title.
+    time_label = ""
+    if h is not None and h >= 24:
+        time_label = " \U0001f331 EARLY"
+    elif h is not None and h <= 2:
+        time_label = " \U0001f6a8 URGENT"
 
     if stars >= 5:
-        title = "\u26a1 RTM SIGNAL \u2014 STRONG"
+        title = f"\u26a1 RTM SIGNAL \u2014 STRONG{time_label}"
         color = 0x00FF88
     elif stars >= 4:
-        title = "\U0001f525 RTM SIGNAL"
+        title = f"\U0001f525 RTM SIGNAL{time_label}"
         color = 0xFFD700
     else:
-        title = "\U0001f4ca RTM LEAN"
+        title = f"\U0001f4ca RTM LEAN{time_label}"
         color = 0x42A5F5
 
     star_str = "\u2b50" * stars
@@ -298,10 +306,23 @@ def send_signal_alert(signal: dict) -> bool:
     edge = signal.get("edge_percentage", 0)
     kelly = signal.get("kelly_size", 0)
 
+    # Game time field.
+    game_time_str = "\u2014"
+    if h is not None:
+        if h < 0:
+            game_time_str = "LIVE NOW"
+        elif h < 1:
+            game_time_str = f"{int(h * 60)}m"
+        elif h >= 24:
+            game_time_str = f"{h:.0f}h out (early line)"
+        else:
+            game_time_str = f"{h:.1f}h"
+
     fields = [
         {"name": "Play", "value": f"**{side}**", "inline": False},
         {"name": "Rating", "value": f"{star_str} ({strength:.0f}/100)", "inline": True},
         {"name": "Sport", "value": sport, "inline": True},
+        {"name": "Game Time", "value": game_time_str, "inline": True},
         {"name": "Game", "value": game or "\u2014", "inline": True},
         {"name": "Book", "value": book, "inline": True},
         {"name": "Odds", "value": odds_str, "inline": True},
@@ -321,6 +342,57 @@ def send_signal_alert(signal: dict) -> bool:
         "color": color,
         "fields": fields,
         "footer": {"text": "RTM Signal | Systems Over Opinions"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return _send_webhook({"embeds": [embed]})
+
+
+def send_morning_briefing(briefing: dict) -> bool:
+    """Send the morning briefing to Discord.
+
+    briefing dict should have: date, games_today, early_signals, active_signals,
+    yesterday_record, yesterday_units, top_signal, sports_on_slate.
+    """
+    if not _is_enabled():
+        return False
+
+    date_str = briefing.get("date", "")
+    games = briefing.get("games_today", 0)
+    early = briefing.get("early_signals", 0)
+    active = briefing.get("active_signals", 0)
+    yday_rec = briefing.get("yesterday_record", "\u2014")
+    yday_units = briefing.get("yesterday_units", 0)
+    sports = briefing.get("sports_on_slate", [])
+    top = briefing.get("top_signal")
+
+    color = 0x42A5F5
+
+    fields = [
+        {"name": "Games Today", "value": str(games), "inline": True},
+        {"name": "Active Signals", "value": str(active), "inline": True},
+        {"name": "Early Signals", "value": str(early), "inline": True},
+        {"name": "Yesterday", "value": f"{yday_rec} | {yday_units:+.2f}u", "inline": True},
+        {"name": "Sports", "value": ", ".join(sports) if sports else "\u2014", "inline": True},
+    ]
+
+    if top:
+        side = top.get("side", "")
+        stars = "\u2b50" * top.get("star_rating", 3)
+        strength = top.get("signal_strength", 0)
+        book = top.get("sportsbook", "")
+        odds_str = _format_odds(top.get("book_odds", 0))
+        fields.append({
+            "name": "\u26a1 Top Signal",
+            "value": f"**{side}** | {stars} ({strength:.0f}) | {book} {odds_str}",
+            "inline": False,
+        })
+
+    embed = {
+        "title": f"\u2600\ufe0f RTM MORNING BRIEFING | {date_str}",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "RTM Picks | Systems Over Opinions"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
