@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RTM Picks — Odds Comparison</title>
+<title>RTM Picks — Odds Research</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -18,13 +18,22 @@
   /* Nav */
   nav{
     display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
-    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;
+    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;overflow-x:auto;
   }
-  nav a{color:#5a6378;padding:4px 0;border-bottom:2px solid transparent}
+  nav a{color:#5a6378;padding:4px 0;border-bottom:2px solid transparent;white-space:nowrap}
   nav a:hover{color:#c8cdd6;text-decoration:none}
   nav a.active{color:#00e676;border-bottom-color:#00e676}
 
-  /* Header */
+  /* Header gradient bar */
+  .header-bar{
+    height:3px;
+    background:linear-gradient(90deg,#00e676,#42a5f5,#ffc107,#00e676);
+    background-size:300% 100%;
+    animation:header-grad 8s linear infinite;
+    border-radius:2px;margin-bottom:12px;
+  }
+  @keyframes header-grad{0%{background-position:0% 50%}100%{background-position:300% 50%}}
+
   header{
     display:flex;align-items:center;justify-content:space-between;
     padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
@@ -40,68 +49,148 @@
   }
   .status-bar .dot.error{background:#ff5252;box-shadow:0 0 6px #ff525280}
 
-  /* Filters */
-  .filters{
+  /* Toolbar */
+  .toolbar{
     display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end;
+    padding:12px 16px;background:#111827;border:1px solid #1a2035;border-radius:6px;
   }
-  .filters select{
-    background:#111827;border:1px solid #1a2035;border-radius:4px;
+  .field{display:flex;flex-direction:column;gap:4px}
+  .toolbar label{font-size:10px;color:#5a6378;text-transform:uppercase;letter-spacing:1px}
+  .toolbar select,.toolbar input[type=text]{
+    background:#0a0e17;border:1px solid #1a2035;border-radius:4px;
     color:#c8cdd6;padding:6px 10px;font-family:inherit;font-size:12px;
   }
-  .filters label{font-size:10px;color:#5a6378;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px}
+  .toolbar input[type=text]::placeholder{color:#2a3040}
+  .toolbar input[type=text]:focus{outline:none;border-color:#42a5f5}
 
-  /* Odds grid */
-  .odds-container{overflow-x:auto;margin-bottom:20px}
+  /* Format toggle */
+  .format-toggle{display:flex;gap:0;border-radius:4px;overflow:hidden;border:1px solid #1a2035;height:30px}
+  .fmt-btn{
+    background:#0a0e17;color:#5a6378;border:none;
+    padding:0 12px;font-family:inherit;font-size:11px;cursor:pointer;
+    letter-spacing:0.5px;transition:all 0.15s;
+  }
+  .fmt-btn:not(:last-child){border-right:1px solid #1a2035}
+  .fmt-btn:hover{color:#c8cdd6}
+  .fmt-btn.active{background:#1a2035;color:#00e676;font-weight:700}
 
+  /* Stats bar */
+  .stats-bar{
+    display:flex;gap:16px;align-items:center;flex-wrap:wrap;
+    padding:10px 16px;margin-bottom:16px;
+    background:#0d1420;border:1px solid #1a2035;border-radius:6px;
+    font-size:11px;color:#5a6378;
+  }
+  .stat{display:flex;align-items:center;gap:6px}
+  .stat-value{color:#c8cdd6;font-weight:700}
+  .stat-divider{width:1px;height:14px;background:#1a2035}
+  .book-chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+  .vig-chip{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;
+    background:#0a0e17;border:1px solid #1a2035;white-space:nowrap;
+  }
+  .vig-chip.sharp{border-color:#ffc10740;color:#ffc107}
+  .vig-val{font-weight:700}
+  .vl{color:#00e676}.vm{color:#ffc107}.vh{color:#ff5252}
+
+  /* Edge finder */
+  .edge-finder{margin-bottom:16px;border:1px solid #1a2035;border-radius:6px;overflow:hidden}
+  .edge-hdr{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;background:#111827;cursor:pointer;
+    font-size:12px;font-weight:700;color:#e1e5eb;user-select:none;
+  }
+  .edge-hdr:hover{background:#151e30}
+  .edge-badge{
+    display:inline-flex;align-items:center;justify-content:center;
+    padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-left:8px;
+  }
+  .edge-badge.has{background:#00e67620;color:#00e676;border:1px solid #00e67640}
+  .edge-badge.none{background:#2a304020;color:#5a6378;border:1px solid #2a3040}
+  .edge-arrow{color:#5a6378;font-size:10px;letter-spacing:1px}
+  .edge-body{max-height:0;overflow:hidden;transition:max-height 0.3s ease}
+  .edge-body.open{max-height:600px;overflow-y:auto}
+  .etbl{width:100%;border-collapse:collapse}
+  .etbl th{
+    text-align:left;padding:6px 12px;font-size:10px;color:#5a6378;
+    text-transform:uppercase;letter-spacing:0.5px;font-weight:600;
+    background:#0d1420;border-bottom:1px solid #1a2035;
+  }
+  .etbl th:nth-child(n+4){text-align:center}
+  .etbl td{padding:6px 12px;font-size:12px;border-bottom:1px solid #0d1420}
+  .etbl td:nth-child(n+4){text-align:center}
+  .etbl tr:hover{background:#151e30}
+  .ev-pos{color:#00e676;font-weight:700}
+  .ev-great{color:#00e676;font-weight:700;text-shadow:0 0 8px #00e67640}
+
+  /* Game cards */
   .game-card{
     background:#111827;border:1px solid #1a2035;border-radius:6px;
     margin-bottom:12px;overflow:hidden;
   }
-  .game-header{
+  .game-hdr{
     display:flex;align-items:center;justify-content:space-between;
     padding:10px 16px;background:#0d1420;border-bottom:1px solid #1a2035;
   }
-  .game-teams{font-size:14px;font-weight:700;color:#e1e5eb}
-  .game-time{font-size:11px;color:#5a6378}
+  .game-teams{font-size:14px;font-weight:700;color:#e1e5eb;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .game-time{font-size:11px;color:#5a6378;white-space:nowrap}
+  .edge-tag{
+    display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;
+    background:#00e67615;color:#00e676;border:1px solid #00e67640;white-space:nowrap;
+  }
 
   .odds-grid{overflow-x:auto}
-  .odds-table{width:100%;border-collapse:collapse;min-width:800px}
-  .odds-table th{
+  .otbl{width:100%;border-collapse:collapse;min-width:800px}
+  .otbl th{
     text-align:center;padding:6px 8px;font-size:10px;color:#5a6378;
     text-transform:uppercase;letter-spacing:0.5px;font-weight:600;
     border-bottom:1px solid #1a2035;background:#0d1420;
     white-space:nowrap;min-width:70px;
   }
-  .odds-table th.side-header{
-    text-align:left;min-width:120px;padding-left:16px;
-  }
-  .odds-table th.sharp{color:#ffc107;border-bottom-color:#ffc107}
-  .odds-table td{
+  .otbl th.sh{text-align:left;min-width:140px;padding-left:16px}
+  .otbl th.sk{color:#ffc107;border-bottom-color:#ffc107}
+  .otbl td{
     text-align:center;padding:6px 8px;border-bottom:1px solid #0d1420;
     font-size:12px;white-space:nowrap;
   }
-  .odds-table td.side-cell{
-    text-align:left;padding-left:16px;font-weight:600;color:#e1e5eb;font-size:12px;
-  }
-  .odds-table tr:hover{background:#151e30}
+  .otbl td.sc{text-align:left;padding-left:16px;font-weight:600;color:#e1e5eb;font-size:12px}
+  .otbl tr:hover{background:#151e30}
+  .otbl tr.vig-row:hover{background:transparent}
 
-  .odds-cell{font-weight:600;cursor:default}
-  .odds-best{color:#00e676;font-weight:700}
-  .odds-sharp{color:#ffc107}
-  .odds-normal{color:#c8cdd6}
-  .odds-na{color:#2a3040}
-  .odds-point{font-size:10px;color:#5a6378;display:block}
+  .odds-cell{font-weight:600;cursor:default;position:relative}
+  .o-best{color:#00e676;font-weight:700}
+  .o-sharp{color:#ffc107}
+  .o-norm{color:#c8cdd6}
+  .o-na{color:#2a3040}
+  .o-pt{font-size:10px;color:#5a6378;display:block}
+
+  /* True prob under side name */
+  .side-true{font-size:10px;font-weight:400;color:#ffc107;margin-top:1px}
+
+  /* EV dot indicator */
+  .ev-dot{
+    display:inline-block;width:5px;height:5px;border-radius:50%;
+    background:#00e676;margin-left:3px;vertical-align:middle;
+    box-shadow:0 0 4px #00e67680;
+  }
+
+  /* Vig row */
+  .vig-row td{
+    font-size:10px !important;color:#5a6378;border-top:1px solid #1a2035;
+    padding:4px 8px !important;background:#0a0e1780;font-weight:600 !important;
+  }
 
   /* Time badges */
-  .time-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;margin-left:6px}
+  .time-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap}
   .badge-live{background:#ff525220;color:#ff5252;border:1px solid #ff525240}
   .badge-soon{background:#ffc10720;color:#ffc107;border:1px solid #ffc10740}
   .badge-early{background:#00e67615;color:#00e676;border:1px solid #00e67640}
-  .date-separator{
+  .date-sep{
     padding:10px 0;font-size:11px;font-weight:700;letter-spacing:1.5px;
     text-transform:uppercase;color:#5a6378;border-bottom:1px solid #1a2035;margin-top:12px;
   }
-  .date-separator:first-child{margin-top:0}
+  .date-sep:first-child{margin-top:0}
 
   /* Loading */
   .message{text-align:center;padding:40px 20px;color:#5a6378}
@@ -112,8 +201,16 @@
   }
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  /* Help tooltip */
+  .help-row{font-size:10px;color:#5a6378;padding:8px 16px;border-top:1px solid #1a2035;background:#0d1420}
+  .help-row span{margin-right:16px}
+  .help-row .dot-ex{display:inline-block;width:5px;height:5px;border-radius:50%;background:#00e676;vertical-align:middle}
+
   @media(max-width:900px){
     .container{padding:10px 8px}
+    .toolbar{flex-direction:column;gap:8px}
+    .stats-bar{flex-direction:column;align-items:flex-start;gap:8px}
+    .book-chips{margin-left:0}
   }
 </style>
 </head>
@@ -131,10 +228,12 @@
     <a href="bankroll.html">Bankroll</a>
   </nav>
 
+  <div class="header-bar"></div>
+
   <header>
     <div class="brand">
       <h1>RTM <span>PICKS</span></h1>
-      <span class="tagline">Odds Comparison</span>
+      <span class="tagline">Odds Research</span>
     </div>
     <div class="status-bar">
       <span class="dot" id="status-dot"></span>
@@ -144,8 +243,8 @@
     </div>
   </header>
 
-  <div class="filters">
-    <div>
+  <div class="toolbar">
+    <div class="field">
       <label>Sport</label>
       <select id="filter-sport">
         <option value="baseball_mlb">MLB</option>
@@ -156,13 +255,50 @@
         <option value="basketball_ncaab">CBB</option>
       </select>
     </div>
-    <div>
+    <div class="field">
       <label>Market</label>
       <select id="filter-market">
         <option value="h2h" selected>Moneyline</option>
         <option value="spreads">Spreads</option>
         <option value="totals">Totals</option>
       </select>
+    </div>
+    <div class="field">
+      <label>Format</label>
+      <div class="format-toggle">
+        <button class="fmt-btn active" data-fmt="american">US</button>
+        <button class="fmt-btn" data-fmt="decimal">DEC</button>
+        <button class="fmt-btn" data-fmt="implied">PROB</button>
+      </div>
+    </div>
+    <div class="field" style="flex:1;min-width:150px">
+      <label>Search</label>
+      <input type="text" id="search-input" placeholder="Team name...">
+    </div>
+    <div class="field">
+      <label>Sort</label>
+      <select id="sort-by">
+        <option value="time">By Time</option>
+        <option value="edge">By Best Edge</option>
+        <option value="vig">By Lowest Vig</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="stats-bar" id="stats-bar" style="display:none"></div>
+
+  <div class="edge-finder" id="edge-finder" style="display:none">
+    <div class="edge-hdr" id="edge-toggle">
+      <div>EDGE FINDER <span class="edge-badge none" id="edge-badge">0</span></div>
+      <span class="edge-arrow" id="edge-arrow">EXPAND</span>
+    </div>
+    <div class="edge-body" id="edge-body">
+      <table class="etbl">
+        <thead><tr>
+          <th>Game</th><th>Side</th><th>Book</th><th>Odds</th><th>True Prob</th><th>EV%</th>
+        </tr></thead>
+        <tbody id="edge-tbody"></tbody>
+      </table>
     </div>
   </div>
 
@@ -172,35 +308,92 @@
 </div>
 
 <script>
-const API = window.location.origin + "/api";
+const API = window.location.origin + '/api';
 const REFRESH = 120;
+const SHARP_BOOKS = new Set(['pinnacle','circa','betonlineag']);
+const SHARP_PRIORITY = ['pinnacle','circa','betonlineag'];
+
 let countdown = REFRESH;
 let timerInterval;
+let currentFormat = 'american';
+let currentData = null;
+let edgeOpen = false;
 
-const SHARP_BOOKS = new Set(["pinnacle", "circa", "betonlineag"]);
+/* ===== Math utilities ===== */
+
+function americanToImplied(odds) {
+  const n = Number(odds);
+  if (isNaN(n) || n === 0) return 0;
+  return n > 0 ? 100 / (n + 100) : Math.abs(n) / (Math.abs(n) + 100);
+}
+
+function americanToDecimal(odds) {
+  const n = Number(odds);
+  if (isNaN(n) || n === 0) return 0;
+  return n > 0 ? n / 100 + 1 : 100 / Math.abs(n) + 1;
+}
+
+function impliedToAmerican(prob) {
+  if (prob <= 0 || prob >= 1) return 0;
+  return prob >= 0.5
+    ? Math.round(-prob / (1 - prob) * 100)
+    : Math.round((1 - prob) / prob * 100);
+}
+
+function calculateVig(outcomes) {
+  let total = 0;
+  for (const o of outcomes) total += americanToImplied(o.odds);
+  return (total - 1) * 100;
+}
+
+function devigOutcomes(outcomes) {
+  const imp = outcomes.map(o => americanToImplied(o.odds));
+  const sum = imp.reduce((a, b) => a + b, 0);
+  return sum > 0 ? imp.map(p => p / sum) : imp;
+}
+
+function calculateEV(trueProb, odds) {
+  const dec = americanToDecimal(odds);
+  return dec > 0 ? (trueProb * dec - 1) * 100 : 0;
+}
+
+/* ===== Format display ===== */
 
 function fmtOdds(v) {
   const n = Number(v);
-  if (isNaN(n)) return "\u2014";
-  return n > 0 ? "+" + n : String(n);
+  if (isNaN(n)) return '\u2014';
+  return n > 0 ? '+' + n : String(n);
+}
+
+function fmtDec(v) {
+  const d = americanToDecimal(v);
+  return d > 0 ? d.toFixed(2) : '\u2014';
+}
+
+function fmtProb(v) {
+  const p = americanToImplied(v);
+  return p > 0 ? (p * 100).toFixed(1) + '%' : '\u2014';
+}
+
+function fmtByFmt(odds, fmt) {
+  if (fmt === 'decimal') return fmtDec(odds);
+  if (fmt === 'implied') return fmtProb(odds);
+  return fmtOdds(odds);
 }
 
 function fmtTime(ts) {
-  if (!ts) return "";
+  if (!ts) return '';
   const d = new Date(ts);
-  return d.toLocaleString("en-US", {
-    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-  });
+  return d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
 }
 
 function hoursUntil(ts) {
   if (!ts) return null;
   const d = new Date(ts);
-  if (isNaN(d)) return null;
-  return (d - Date.now()) / 3600000;
+  return isNaN(d) ? null : (d - Date.now()) / 3600000;
 }
 
-function gameTimeBadge(ts) {
+function timeBadge(ts) {
   const h = hoursUntil(ts);
   if (h === null) return '';
   if (h < 0) return '<span class="time-badge badge-live">LIVE</span>';
@@ -220,159 +413,398 @@ function dateGroup(ts) {
   if (diff < 0) return 'LIVE / IN PROGRESS';
   if (diff < 1) return 'TODAY';
   if (diff < 2) return 'TOMORROW';
-  return d.toLocaleDateString('en-US', {weekday:'long', month:'short', day:'numeric'}).toUpperCase();
+  return d.toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }).toUpperCase();
 }
+
+/* ===== Game analysis ===== */
+
+function analyzeGame(game, books, market) {
+  const bookOdds = game.book_odds || {};
+
+  // Determine sides for this market.
+  let sideKeys = [];
+  if (market === 'h2h') {
+    sideKeys = [game.away_team, game.home_team];
+    for (const bk in bookOdds) {
+      if (bookOdds[bk]['Draw']) { sideKeys.push('Draw'); break; }
+    }
+  } else if (market === 'spreads') {
+    sideKeys = [game.away_team, game.home_team];
+  } else if (market === 'totals') {
+    sideKeys = ['Over', 'Under'];
+  }
+
+  // Vig per book.
+  const bookVigs = {};
+  for (const bk of books) {
+    const d = bookOdds[bk.key];
+    if (!d) continue;
+    const oc = sideKeys.filter(s => d[s]).map(s => ({ odds: d[s].odds }));
+    if (oc.length >= 2) bookVigs[bk.key] = calculateVig(oc);
+  }
+
+  // Sharp true line from best available sharp book.
+  let sharpBook = null;
+  let trueLine = null;
+  for (const sk of SHARP_PRIORITY) {
+    const d = bookOdds[sk];
+    if (!d) continue;
+    const oc = sideKeys.filter(s => d[s]).map(s => ({ odds: d[s].odds, side: s }));
+    if (oc.length >= 2) {
+      sharpBook = sk;
+      const tp = devigOutcomes(oc);
+      trueLine = {};
+      oc.forEach((o, i) => { trueLine[o.side] = tp[i]; });
+      break;
+    }
+  }
+
+  // Find +EV edges.
+  const edges = [];
+  if (trueLine) {
+    for (const bk of books) {
+      if (SHARP_BOOKS.has(bk.key)) continue;
+      const d = bookOdds[bk.key];
+      if (!d) continue;
+      for (const side of sideKeys) {
+        const sd = d[side];
+        if (!sd) continue;
+        const tp = trueLine[side];
+        if (!tp) continue;
+        const ev = calculateEV(tp, sd.odds);
+        if (ev > 0) {
+          edges.push({
+            game: game.away_team + ' @ ' + game.home_team,
+            side, book: bk.title, bookKey: bk.key,
+            odds: sd.odds, point: sd.point,
+            trueProb: tp, ev,
+            commence: game.commence_time,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    sideKeys, bookVigs, trueLine, sharpBook, edges,
+    bestEdge: edges.length ? Math.max(...edges.map(e => e.ev)) : 0,
+    sharpVig: sharpBook && bookVigs[sharpBook] != null ? bookVigs[sharpBook] : 99,
+  };
+}
+
+/* ===== Status ===== */
 
 function setStatus(ok, text) {
-  document.getElementById("status-dot").className = ok ? "dot" : "dot error";
-  document.getElementById("status-text").textContent = text;
+  document.getElementById('status-dot').className = ok ? 'dot' : 'dot error';
+  document.getElementById('status-text').textContent = text;
 }
 
-function renderOddsScreen(data) {
-  const container = document.getElementById("odds-content");
+/* ===== Rendering ===== */
+
+function renderAll() {
+  if (!currentData) return;
+  const data = currentData;
   const books = data.books || [];
-  const games = (data.games || []).sort((a, b) => {
-    const ta = a.commence_time ? new Date(a.commence_time) : new Date(0);
-    const tb = b.commence_time ? new Date(b.commence_time) : new Date(0);
-    return ta - tb;
-  });
-  const market = data.market || "h2h";
+  const market = data.market || 'h2h';
+  const search = document.getElementById('search-input').value.trim().toLowerCase();
+  const sortBy = document.getElementById('sort-by').value;
 
-  document.getElementById("game-count").textContent = games.length + " games";
+  let games = [...(data.games || [])];
 
-  if (!games.length) {
-    container.innerHTML = '<div class="message">No games found for this sport. Games may not be available yet.</div>';
+  // Search filter.
+  if (search) {
+    games = games.filter(g =>
+      g.home_team.toLowerCase().includes(search) ||
+      g.away_team.toLowerCase().includes(search)
+    );
+  }
+
+  // Analyze every game.
+  const analyses = new Map();
+  const allEdges = [];
+  const allBookVigs = {};
+
+  for (const g of games) {
+    const a = analyzeGame(g, books, market);
+    analyses.set(g.id, a);
+    allEdges.push(...a.edges);
+    for (const [bk, vig] of Object.entries(a.bookVigs)) {
+      (allBookVigs[bk] || (allBookVigs[bk] = [])).push(vig);
+    }
+  }
+
+  // Sort.
+  if (sortBy === 'edge') {
+    games.sort((a, b) => (analyses.get(b.id)?.bestEdge || 0) - (analyses.get(a.id)?.bestEdge || 0));
+  } else if (sortBy === 'vig') {
+    games.sort((a, b) => (analyses.get(a.id)?.sharpVig || 99) - (analyses.get(b.id)?.sharpVig || 99));
+  } else {
+    games.sort((a, b) => new Date(a.commence_time || 0) - new Date(b.commence_time || 0));
+  }
+
+  renderStatsBar(games.length, books, allBookVigs);
+  renderEdgeFinder(allEdges);
+  renderGames(games, books, market, analyses, sortBy);
+  document.getElementById('game-count').textContent = games.length + ' games';
+}
+
+/* --- Stats bar --- */
+
+function renderStatsBar(count, books, allBookVigs) {
+  const el = document.getElementById('stats-bar');
+  if (!count) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+
+  const avgs = [];
+  for (const bk of books) {
+    const v = allBookVigs[bk.key];
+    if (v && v.length) {
+      avgs.push({ key: bk.key, title: bk.title, avg: v.reduce((a,b)=>a+b,0)/v.length, isSharp: bk.is_sharp });
+    }
+  }
+  avgs.sort((a, b) => a.avg - b.avg);
+
+  const overall = avgs.length ? avgs.reduce((s, b) => s + b.avg, 0) / avgs.length : 0;
+
+  let h = `
+    <div class="stat">Games <span class="stat-value">${count}</span></div>
+    <div class="stat-divider"></div>
+    <div class="stat">Books <span class="stat-value">${avgs.length}</span></div>
+    <div class="stat-divider"></div>
+    <div class="stat">Avg Vig <span class="stat-value">${overall.toFixed(1)}%</span></div>
+    <div class="book-chips">`;
+
+  for (const b of avgs) {
+    const vc = b.avg < 3 ? 'vl' : b.avg < 5 ? 'vm' : 'vh';
+    const sc = b.isSharp ? ' sharp' : '';
+    const lbl = b.title.length > 10 ? b.key.slice(0, 8) : b.title;
+    h += `<span class="vig-chip${sc}" title="${b.title}: ${b.avg.toFixed(1)}% avg vig">${lbl} <span class="vig-val ${vc}">${b.avg.toFixed(1)}%</span></span>`;
+  }
+  h += '</div>';
+  el.innerHTML = h;
+}
+
+/* --- Edge finder --- */
+
+function renderEdgeFinder(edges) {
+  const el = document.getElementById('edge-finder');
+  const badge = document.getElementById('edge-badge');
+  const tbody = document.getElementById('edge-tbody');
+
+  el.style.display = 'block';
+  badge.textContent = edges.length;
+  badge.className = 'edge-badge ' + (edges.length ? 'has' : 'none');
+
+  if (!edges.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#5a6378;padding:16px">No +EV edges found in current data</td></tr>';
     return;
   }
 
-  let html = "";
-  let lastDateGroup = '';
+  edges.sort((a, b) => b.ev - a.ev);
+  let h = '';
+  for (const e of edges) {
+    const ec = e.ev >= 5 ? 'ev-great' : 'ev-pos';
+    const pt = e.point != null ? ' (' + (e.point > 0 ? '+' : '') + e.point + ')' : '';
+    h += `<tr>
+      <td>${e.game}</td>
+      <td>${e.side}${pt}</td>
+      <td>${e.book}</td>
+      <td>${fmtByFmt(e.odds, currentFormat)}</td>
+      <td style="color:#ffc107">${(e.trueProb * 100).toFixed(1)}%</td>
+      <td class="${ec}">+${e.ev.toFixed(1)}%</td>
+    </tr>`;
+  }
+  tbody.innerHTML = h;
+}
 
-  games.forEach(game => {
-    const dg = dateGroup(game.commence_time);
-    if (dg !== lastDateGroup) {
-      html += `<div class="date-separator">${dg}</div>`;
-      lastDateGroup = dg;
+/* --- Game cards --- */
+
+function renderGames(games, books, market, analyses, sortBy) {
+  const container = document.getElementById('odds-content');
+  if (!games.length) {
+    container.innerHTML = '<div class="message">No games found. Try a different sport or check back later.</div>';
+    return;
+  }
+
+  let html = '';
+  let lastDG = '';
+
+  for (const game of games) {
+    // Date separators only when sorting by time.
+    if (sortBy === 'time') {
+      const dg = dateGroup(game.commence_time);
+      if (dg !== lastDG) {
+        html += `<div class="date-sep">${dg}</div>`;
+        lastDG = dg;
+      }
     }
+
+    const a = analyses.get(game.id) || {};
     const bookOdds = game.book_odds || {};
     const bestOdds = game.best_odds || {};
+    const { sideKeys = [], bookVigs = {}, trueLine, edges = [] } = a;
 
-    // Determine sides based on market type.
-    let sides = [];
-    if (market === "h2h") {
-      sides = [
-        { name: game.away_team, key: game.away_team },
-        { name: game.home_team, key: game.home_team },
-      ];
-      // Check for Draw.
-      for (const bk in bookOdds) {
-        if (bookOdds[bk]["Draw"]) {
-          sides.push({ name: "Draw", key: "Draw" });
-          break;
-        }
-      }
-    } else if (market === "spreads") {
-      sides = [
-        { name: game.away_team, key: game.away_team },
-        { name: game.home_team, key: game.home_team },
-      ];
-    } else if (market === "totals") {
-      sides = [
-        { name: "Over", key: "Over" },
-        { name: "Under", key: "Under" },
-      ];
+    // Edge badge on the game card.
+    let edgeBadge = '';
+    if (edges.length) {
+      const best = Math.max(...edges.map(e => e.ev));
+      edgeBadge = `<span class="edge-tag">${edges.length} edge${edges.length !== 1 ? 's' : ''} &middot; best +${best.toFixed(1)}%</span>`;
     }
 
     html += `<div class="game-card">
-      <div class="game-header">
-        <div class="game-teams">${game.away_team} @ ${game.home_team}${gameTimeBadge(game.commence_time)}</div>
+      <div class="game-hdr">
+        <div class="game-teams">
+          <span>${game.away_team} @ ${game.home_team}</span>
+          ${timeBadge(game.commence_time)}
+          ${edgeBadge}
+        </div>
         <div class="game-time">${fmtTime(game.commence_time)}</div>
       </div>
-      <div class="odds-grid">
-        <table class="odds-table">
-          <thead><tr>
-            <th class="side-header">Side</th>`;
+      <div class="odds-grid"><table class="otbl">
+        <thead><tr><th class="sh">Side</th>`;
 
-    books.forEach(bk => {
-      const cls = bk.is_sharp ? "sharp" : "";
-      const label = bk.title.length > 12 ? bk.key.slice(0, 10) : bk.title;
-      html += `<th class="${cls}" title="${bk.title}">${label}</th>`;
-    });
+    for (const bk of books) {
+      const cls = bk.is_sharp ? ' sk' : '';
+      const lbl = bk.title.length > 12 ? bk.key.slice(0, 10) : bk.title;
+      html += `<th class="${cls}" title="${bk.title}">${lbl}</th>`;
+    }
+    html += '</tr></thead><tbody>';
 
-    html += `</tr></thead><tbody>`;
+    // Odds rows — one per side.
+    for (const side of sideKeys) {
+      const best = bestOdds[side] || {};
+      const tp = trueLine ? trueLine[side] : null;
 
-    sides.forEach(side => {
-      const best = bestOdds[side.key] || {};
-      html += `<tr><td class="side-cell">${side.name}</td>`;
+      // Side cell with optional true probability.
+      html += '<tr><td class="sc">';
+      html += `<div>${side}</div>`;
+      if (tp != null) {
+        const fairOdds = impliedToAmerican(tp);
+        html += `<div class="side-true">Fair: ${(tp * 100).toFixed(1)}% / ${fmtOdds(fairOdds)}</div>`;
+      }
+      html += '</td>';
 
-      books.forEach(bk => {
-        const bkData = bookOdds[bk.key] || {};
-        const sideData = bkData[side.key];
+      // One cell per book.
+      for (const bk of books) {
+        const bd = bookOdds[bk.key] || {};
+        const sd = bd[side];
 
-        if (!sideData) {
-          html += `<td class="odds-cell odds-na">\u2014</td>`;
-          return;
-        }
+        if (!sd) { html += '<td class="odds-cell o-na">\u2014</td>'; continue; }
 
-        const odds = sideData.odds;
-        const point = sideData.point;
+        const odds = sd.odds;
+        const point = sd.point;
         const isBest = best.best_book === bk.key;
         const isSharp = bk.is_sharp;
 
-        let cls = "odds-normal";
-        if (isBest) cls = "odds-best";
-        else if (isSharp) cls = "odds-sharp";
-
-        let content = fmtOdds(odds);
-        if (point != null && market !== "h2h") {
-          const prefix = point > 0 ? "+" : "";
-          content = `<span class="odds-point">${prefix}${point}</span>${fmtOdds(odds)}`;
+        // EV check.
+        let hasEV = false, evPct = 0;
+        if (tp && !SHARP_BOOKS.has(bk.key)) {
+          evPct = calculateEV(tp, odds);
+          hasEV = evPct > 0;
         }
 
-        html += `<td class="odds-cell ${cls}" title="${bk.title}: ${fmtOdds(odds)}">${content}</td>`;
-      });
+        let cls = 'o-norm';
+        if (isBest) cls = 'o-best';
+        else if (isSharp) cls = 'o-sharp';
 
-      html += `</tr>`;
-    });
+        let content = fmtByFmt(odds, currentFormat);
+        if (point != null && market !== 'h2h') {
+          const pfx = point > 0 ? '+' : '';
+          content = `<span class="o-pt">${pfx}${point}</span>${fmtByFmt(odds, currentFormat)}`;
+        }
 
-    html += `</tbody></table></div></div>`;
-  });
+        const evDot = hasEV ? `<span class="ev-dot" title="+${evPct.toFixed(1)}% EV"></span>` : '';
+        const ttip = bk.title + ': ' + fmtOdds(odds) + (hasEV ? ' | +' + evPct.toFixed(1) + '% EV' : '');
+        html += `<td class="odds-cell ${cls}" title="${ttip}">${content}${evDot}</td>`;
+      }
+      html += '</tr>';
+    }
+
+    // Vig row.
+    html += '<tr class="vig-row"><td class="sc" style="font-size:10px;color:#5a6378">VIG</td>';
+    for (const bk of books) {
+      const vig = bookVigs[bk.key];
+      if (vig == null) { html += '<td>\u2014</td>'; continue; }
+      const vc = vig < 3 ? 'vl' : vig < 5 ? 'vm' : 'vh';
+      html += `<td class="${vc}">${vig.toFixed(1)}%</td>`;
+    }
+    html += '</tr>';
+
+    html += '</tbody></table></div>';
+
+    // Legend row (only on first card).
+    if (games.indexOf(game) === 0) {
+      html += `<div class="help-row">
+        <span><span class="dot-ex"></span> = +EV vs sharp line</span>
+        <span style="color:#00e676;font-weight:700">Green</span> = best odds
+        <span style="color:#ffc107">Gold</span> = sharp book
+        <span class="vl">Low vig</span> &lt;3%
+        <span class="vm">Med vig</span> 3-5%
+        <span class="vh">High vig</span> &gt;5%
+      </div>`;
+    }
+
+    html += '</div>';
+  }
 
   container.innerHTML = html;
 }
 
-async function fetchOdds() {
-  const sport = document.getElementById("filter-sport").value;
-  const market = document.getElementById("filter-market").value;
+/* ===== Fetch ===== */
 
-  document.getElementById("odds-content").innerHTML =
+async function fetchOdds() {
+  const sport = document.getElementById('filter-sport').value;
+  const market = document.getElementById('filter-market').value;
+
+  document.getElementById('odds-content').innerHTML =
     '<div class="message"><div class="spinner"></div>Fetching live odds...</div>';
 
   try {
-    const res = await fetch(API + "/odds-screen/" + sport + "?market=" + market);
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    const res = await fetch(API + '/odds-screen/' + sport + '?market=' + market);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-
     if (data.error) throw new Error(data.error);
 
-    renderOddsScreen(data);
-    setStatus(true, "Live \u00b7 " + new Date().toLocaleTimeString());
+    currentData = data;
+    renderAll();
+    setStatus(true, 'Live \u00b7 ' + new Date().toLocaleTimeString());
   } catch (e) {
-    setStatus(false, "Error: " + e.message);
-    document.getElementById("odds-content").innerHTML =
+    setStatus(false, 'Error: ' + e.message);
+    document.getElementById('odds-content').innerHTML =
       '<div class="message error">Failed to fetch odds: ' + e.message + '</div>';
   }
   countdown = REFRESH;
 }
 
-document.getElementById("filter-sport").addEventListener("change", fetchOdds);
-document.getElementById("filter-market").addEventListener("change", fetchOdds);
+/* ===== Event handlers ===== */
+
+document.getElementById('filter-sport').addEventListener('change', fetchOdds);
+document.getElementById('filter-market').addEventListener('change', fetchOdds);
+document.getElementById('search-input').addEventListener('input', renderAll);
+document.getElementById('sort-by').addEventListener('change', renderAll);
+
+document.querySelectorAll('.fmt-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.fmt-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFormat = btn.dataset.fmt;
+    renderAll();
+  });
+});
+
+document.getElementById('edge-toggle').addEventListener('click', () => {
+  edgeOpen = !edgeOpen;
+  document.getElementById('edge-body').classList.toggle('open', edgeOpen);
+  document.getElementById('edge-arrow').textContent = edgeOpen ? 'COLLAPSE' : 'EXPAND';
+});
+
+/* ===== Timer ===== */
 
 function startTimer() {
   clearInterval(timerInterval);
   timerInterval = setInterval(() => {
     countdown--;
-    document.getElementById("refresh-timer").textContent = "refresh in " + countdown + "s";
+    document.getElementById('refresh-timer').textContent = 'refresh in ' + countdown + 's';
     if (countdown <= 0) fetchOdds();
   }, 1000);
 }
