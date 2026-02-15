@@ -3,6 +3,8 @@ import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 # Ensure the backend directory is on sys.path so sibling packages (db, models,
@@ -48,3 +50,15 @@ app.include_router(clv.router, prefix="/api/clv", tags=["clv"])
 def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok", "service": "rtm-picks-api"}
+
+
+@app.get("/")
+def root_redirect() -> RedirectResponse:
+    """Redirect / to the +EV dashboard."""
+    return RedirectResponse(url="/dashboard.html")
+
+
+# Serve frontend static files at / — must be last so API routes take priority.
+_frontend_dir = os.path.join(_backend_dir, "..", "frontend")
+if os.path.isdir(_frontend_dir):
+    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
