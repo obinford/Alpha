@@ -19,7 +19,7 @@ def grade_signals(db_client) -> dict:
 
     Returns a summary dict with counts and stats.
     """
-    import httpx as _httpx
+    # Use db_client._http to bypass egress proxy.
 
     # Fetch active signals.
     active_signals = db_client._get(
@@ -95,7 +95,7 @@ def grade_signals(db_client) -> dict:
         # Update signal in database.
         try:
             signal_id = signal["id"]
-            resp = _httpx.patch(
+            resp = db_client._http.patch(
                 f"{db_client.base_url}/rtm_signals",
                 headers={**db_client.headers, "Prefer": "return=minimal"},
                 params={"id": f"eq.{signal_id}"},

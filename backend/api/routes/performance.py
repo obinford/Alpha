@@ -115,9 +115,13 @@ def performance_results(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     result: str | None = Query(None),
+    range: str | None = Query(None),
 ) -> dict:
     """Detailed graded results with filters."""
     db = get_supabase()
+    # Support both explicit date_from/date_to and shorthand range param.
+    if range and not date_from:
+        date_from, date_to = _range_to_dates(range)
     raw = _get_graded_results(
         db, sport=sport, sportsbook=sportsbook,
         market_type=market_type, date_from=date_from,

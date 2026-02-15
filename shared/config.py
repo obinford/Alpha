@@ -50,13 +50,46 @@ SHARP_BOOKS = ["pinnacle", "circa", "betonlineag"]
 
 MARKETS = ["h2h", "spreads", "totals"]
 
-# Player prop markets supported by The Odds API.
+# Player prop markets supported by The Odds API (all types).
 PROP_MARKETS = [
     "player_points", "player_rebounds", "player_assists", "player_threes",
     "player_blocks", "player_steals", "player_points_rebounds_assists",
     "player_pass_tds", "player_pass_yds", "player_rush_yds",
     "player_receptions", "player_reception_yds", "player_anytime_td",
 ]
+
+# Sport-specific prop markets — each sport only supports certain props.
+# Sending unsupported markets to The Odds API returns 422.
+_BASKETBALL_PROPS = [
+    "player_points", "player_rebounds", "player_assists", "player_threes",
+    "player_blocks", "player_steals", "player_points_rebounds_assists",
+]
+
+_FOOTBALL_PROPS = PROP_MARKETS  # football supports all prop markets
+
+_HOCKEY_PROPS = [
+    "player_points", "player_assists", "player_blocks", "player_steals",
+]
+
+SPORT_PROP_MARKETS: dict[str, list[str]] = {
+    "basketball_nba": _BASKETBALL_PROPS,
+    "basketball_ncaab": _BASKETBALL_PROPS,
+    "basketball_wnba": _BASKETBALL_PROPS,
+    "americanfootball_nfl": _FOOTBALL_PROPS,
+    "americanfootball_ncaaf": _FOOTBALL_PROPS,
+    "icehockey_nhl": _HOCKEY_PROPS,
+    # MLB: add when player prop markets are confirmed
+    # Tennis: no player props
+}
+
+
+def get_prop_markets_for_sport(sport_key: str) -> list[str]:
+    """Return the prop markets available for a given sport key.
+
+    Returns an empty list for sports without prop support (e.g. tennis, MLB).
+    """
+    return SPORT_PROP_MARKETS.get(sport_key, [])
+
 
 # Combined list for API requests.
 ALL_MARKETS = MARKETS + PROP_MARKETS

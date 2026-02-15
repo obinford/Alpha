@@ -281,7 +281,6 @@ def process_open_records(client: object) -> tuple[int, int]:
     expired = 0
 
     from db import SupabaseClient
-    import httpx
 
     db: SupabaseClient = client  # type: ignore[assignment]
 
@@ -303,7 +302,7 @@ def process_open_records(client: object) -> tuple[int, int]:
         # If game started more than 48h ago and we still don't have closing odds, expire.
         if (now - game_start).total_seconds() > 48 * 3600:
             try:
-                resp = httpx.patch(
+                resp = db._http.patch(
                     f"{db.base_url}/clv_records",
                     headers={**db.headers, "Prefer": "return=minimal"},
                     params={"id": f"eq.{rec['id']}"},
@@ -343,7 +342,7 @@ def process_open_records(client: object) -> tuple[int, int]:
         }
 
         try:
-            resp = httpx.patch(
+            resp = db._http.patch(
                 f"{db.base_url}/clv_records",
                 headers={**db.headers, "Prefer": "return=minimal"},
                 params={"id": f"eq.{rec['id']}"},

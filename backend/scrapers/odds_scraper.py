@@ -33,6 +33,7 @@ from scrapers.odds.odds_api import Game, Market, fetch_odds
 from config import (
     ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES,
     ALL_MARKETS, PROP_MARKETS, MARKETS,
+    get_prop_markets_for_sport,
 )
 
 # Only surface bets with EV above this threshold.
@@ -263,11 +264,16 @@ def scan_game_props(game: Game) -> list[EVOpportunity]:
     if sharp_key is None:
         return []
 
+    # Only scan prop markets supported for this sport.
+    sport_props = get_prop_markets_for_sport(game.sport_key)
+    if not sport_props:
+        return []
+
     sharp_bk = next(bk for bk in game.bookmakers if bk.key == sharp_key)
     game_label = f"{game.away_team} @ {game.home_team}"
     opportunities: list[EVOpportunity] = []
 
-    for prop_market_key in PROP_MARKETS:
+    for prop_market_key in sport_props:
         sharp_market = get_market(sharp_bk.markets, prop_market_key)
         if sharp_market is None:
             continue
@@ -901,17 +907,21 @@ def run_scan(sport_keys: list[str]) -> int:
             f"{len(far_games)} further out)."
         )
 
-        # Step 2: Fetch props ONLY if there are games within the prop window.
-        if near_games:
-            print(f"  Fetching {display} props for {len(near_games)} near-term game(s)...")
+        # Step 2: Fetch props ONLY if there are games within the prop window
+        # and the sport has supported prop markets.
+        sport_props = get_prop_markets_for_sport(sport_key)
+        if near_games and sport_props:
+            print(f"  Fetching {display} props ({len(sport_props)} markets) for {len(near_games)} near-term game(s)...")
             time.sleep(1)
             try:
-                prop_games = fetch_odds(sport_key, markets=PROP_MARKETS)
+                prop_games = fetch_odds(sport_key, markets=sport_props)
                 if prop_games:
                     merge_prop_data(games, prop_games)
                     print(f"  Props merged for {display}.")
             except Exception as e:
                 print(f"  Warning: Prop fetch failed for {display} ({e}).")
+        elif near_games:
+            print(f"  Skipping props for {display} — no prop markets configured for this sport.")
         else:
             print(f"  Skipping props for {display} — no games within {PROP_WINDOW_HOURS:.0f}h.")
 
@@ -1000,8 +1010,6 @@ def run_scan(sport_keys: list[str]) -> int:
             new_alerts = detect_steam_moves(db)
             if new_alerts:
                 print(f"\nSteam alerts: {new_alerts} new alert(s) detected!")
-            else:
-                print("\nSteam alerts: no new steam detected.")
         except Exception as e:
             print(f"Warning: Steam detection failed ({e}).")
 
@@ -1093,8 +1101,7 @@ def run_scan(sport_keys: list[str]) -> int:
                             send_signal_alert(sig)
                         except Exception:
                             pass
-            else:
-                print("\nRTM Signals: no signals met threshold.")
+            # Silent when no signals fire — expected for many scans.
         except Exception as e:
             print(f"Warning: RTM Signal generation failed ({e}).")
 
@@ -1125,8 +1132,6 @@ def run_scan(sport_keys: list[str]) -> int:
         ev_sent = alert_manager.check_and_alert(opp_dicts)
         if ev_sent:
             print(f"Discord: sent {ev_sent} EV alert(s).")
-        else:
-            print("Discord: no new alerts to send.")
     except Exception as e:
         print(f"Warning: Discord alerts failed ({e}).")
 

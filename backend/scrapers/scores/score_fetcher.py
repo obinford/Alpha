@@ -15,6 +15,9 @@ from datetime import datetime, timedelta, timezone
 
 API_BASE = "https://api.the-odds-api.com/v4/sports"
 
+# Shared httpx client for connection pooling.
+_score_http = httpx.Client(timeout=15)
+
 
 def fetch_scores(sport_key: str, days_from: int = 1) -> list[dict]:
     """Fetch scores for a sport from The Odds API.
@@ -31,13 +34,12 @@ def fetch_scores(sport_key: str, days_from: int = 1) -> list[dict]:
         return []
 
     try:
-        resp = httpx.get(
+        resp = _score_http.get(
             f"{API_BASE}/{sport_key}/scores",
             params={
                 "apiKey": api_key,
                 "daysFrom": days_from,
             },
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json()
@@ -85,7 +87,7 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
 
         # Update the game in Supabase.
         try:
-            resp = httpx.patch(
+            resp = client._http.patch(
                 f"{client.base_url}/games",
                 headers={**client.headers, "Prefer": "return=minimal"},
                 params={"game_id": f"eq.{game_id}"},

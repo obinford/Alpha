@@ -13,6 +13,9 @@ import httpx
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
+# Shared httpx client for connection pooling.
+_discord_http = httpx.Client(timeout=10)
+
 # Rate limit: minimum seconds between Discord messages.
 _RATE_LIMIT_SECONDS = 2.0
 _last_send_time: float = 0.0
@@ -45,7 +48,7 @@ def _send_webhook(payload: dict[str, Any]) -> bool:
         return False
     _rate_limit()
     try:
-        resp = httpx.post(url, json=payload, timeout=10)
+        resp = _discord_http.post(url, json=payload)
         resp.raise_for_status()
         return True
     except Exception:

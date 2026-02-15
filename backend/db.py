@@ -21,13 +21,14 @@ class SupabaseClient:
             "Content-Type": "application/json",
             "Prefer": "return=representation",
         }
+        # Persistent client for connection pooling across requests.
+        self._http = httpx.Client(timeout=15)
 
     def _post(self, table: str, data: dict[str, Any]) -> dict:
-        resp = httpx.post(
+        resp = self._http.post(
             f"{self.base_url}/{table}",
             headers=self.headers,
             json=data,
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json()
@@ -36,7 +37,7 @@ class SupabaseClient:
         """Bulk-insert multiple rows in a single POST request."""
         if not rows:
             return []
-        resp = httpx.post(
+        resp = self._http.post(
             f"{self.base_url}/{table}",
             headers=self.headers,
             json=rows,
@@ -52,11 +53,10 @@ class SupabaseClient:
             **self.headers,
             "Prefer": "return=representation,resolution=merge-duplicates",
         }
-        resp = httpx.post(
+        resp = self._http.post(
             f"{self.base_url}/{table}",
             headers=headers,
             json=data,
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json()
@@ -78,11 +78,10 @@ class SupabaseClient:
         headers = {**self.headers}
         if limit is not None:
             headers["Range"] = f"0-{limit - 1}"
-        resp = httpx.get(
+        resp = self._http.get(
             f"{self.base_url}/{table}",
             headers=headers,
             params=params,
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json()

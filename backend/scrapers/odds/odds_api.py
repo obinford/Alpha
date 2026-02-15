@@ -8,6 +8,9 @@ import httpx
 
 API_BASE = "https://api.the-odds-api.com/v4/sports"
 
+# Shared httpx client for connection pooling.
+_odds_http = httpx.Client(timeout=30)
+
 
 @dataclass
 class SportInfo:
@@ -65,10 +68,9 @@ def fetch_sports() -> list[SportInfo]:
     Returns only active (in-season) sports.
     """
     api_key = get_api_key()
-    resp = httpx.get(
+    resp = _odds_http.get(
         API_BASE,
         params={"apiKey": api_key},
-        timeout=15,
     )
     resp.raise_for_status()
     return [
@@ -105,7 +107,7 @@ def fetch_odds(
 
     api_key = get_api_key()
 
-    resp = httpx.get(
+    resp = _odds_http.get(
         f"{API_BASE}/{sport}/odds",
         params={
             "apiKey": api_key,
@@ -113,7 +115,6 @@ def fetch_odds(
             "markets": ",".join(markets),
             "oddsFormat": "american",
         },
-        timeout=30,
     )
     resp.raise_for_status()
 

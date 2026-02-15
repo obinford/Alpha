@@ -155,7 +155,6 @@ def grade_opportunities(db_client: object) -> dict:
     Returns a summary dict with counts and stats.
     """
     from db import SupabaseClient
-    import httpx as _httpx
     from shared.config import MIN_GRADE_EV_THRESHOLD
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
@@ -204,7 +203,7 @@ def grade_opportunities(db_client: object) -> dict:
             below_threshold += 1
             # Still mark as graded so we don't keep re-checking.
             try:
-                resp = _httpx.patch(
+                resp = client._http.patch(
                     f"{client.base_url}/ev_opportunities",
                     headers={**client.headers, "Prefer": "return=minimal"},
                     params={"id": f"eq.{opp_id}"},
@@ -261,7 +260,7 @@ def grade_opportunities(db_client: object) -> dict:
 
         # Update EV opportunity status.
         try:
-            resp = _httpx.patch(
+            resp = client._http.patch(
                 f"{client.base_url}/ev_opportunities",
                 headers={**client.headers, "Prefer": "return=minimal"},
                 params={"id": f"eq.{opp_id}"},
@@ -302,7 +301,6 @@ def recalculate_all_results(db_client: object) -> dict:
     This fixes historical results that were calculated with flat 1-unit sizing.
     """
     from db import SupabaseClient
-    import httpx as _httpx
     from shared.config import MIN_GRADE_EV_THRESHOLD
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
@@ -332,7 +330,8 @@ def recalculate_all_results(db_client: object) -> dict:
         # Remove results below EV threshold.
         if ev_pct < MIN_GRADE_EV_THRESHOLD:
             try:
-                resp = _httpx.delete(
+                resp = client._http.request(
+                    "DELETE",
                     f"{client.base_url}/bet_results",
                     headers={**client.headers, "Prefer": "return=minimal"},
                     params={"id": f"eq.{result_id}"},
@@ -367,7 +366,7 @@ def recalculate_all_results(db_client: object) -> dict:
             continue
 
         try:
-            resp = _httpx.patch(
+            resp = client._http.patch(
                 f"{client.base_url}/bet_results",
                 headers={**client.headers, "Prefer": "return=minimal"},
                 params={"id": f"eq.{result_id}"},
