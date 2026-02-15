@@ -1,5 +1,6 @@
 """RTM Signal API — active signals, history, and performance."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
@@ -7,6 +8,52 @@ from fastapi import APIRouter, HTTPException, Query
 from db import get_supabase
 
 router = APIRouter()
+
+
+def _dedup_signals(rows: list[dict]) -> list[dict]:
+    """Deduplicate signals by (game_id, market_type, side), keeping strongest.
+
+    Merges alternate sportsbooks into the ``other_books`` list.
+    """
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        key = f"{r.get('game_id', '')}|{r.get('market_type', '')}|{(r.get('side', '') or '').strip().lower()}"
+        groups.setdefault(key, []).append(r)
+
+    deduped = []
+    for key, group in groups.items():
+        group.sort(key=lambda s: float(s.get("signal_strength", 0)), reverse=True)
+        best = group[0]
+        # Parse existing other_books if stored as JSON string.
+        existing_others = best.get("other_books")
+        if isinstance(existing_others, str):
+            try:
+                existing_others = json.loads(existing_others)
+            except (json.JSONDecodeError, TypeError):
+                existing_others = []
+        elif not isinstance(existing_others, list):
+            existing_others = []
+
+        # Add alternates from duplicate rows.
+        seen_books = {best.get("sportsbook", "").lower()}
+        for ob in existing_others:
+            seen_books.add(ob.get("sportsbook", "").lower())
+        for alt in group[1:]:
+            alt_book = (alt.get("sportsbook", "") or "").lower()
+            if alt_book and alt_book not in seen_books:
+                existing_others.append({
+                    "sportsbook": alt.get("sportsbook", ""),
+                    "book_odds": alt.get("book_odds"),
+                    "ev_pct": alt.get("edge_percentage"),
+                    "kelly_size": alt.get("kelly_size"),
+                })
+                seen_books.add(alt_book)
+
+        best["other_books"] = existing_others
+        deduped.append(best)
+
+    deduped.sort(key=lambda s: float(s.get("signal_strength", 0)), reverse=True)
+    return deduped
 
 
 @router.get("/active")
@@ -31,7 +78,9 @@ def active_signals(
         if sport:
             rows = [r for r in rows if r.get("sport") == sport]
 
-        return {"count": len(rows), "signals": rows}
+        # Deduplicate: one card per play, best book featured.
+        signals = _dedup_signals(rows)
+        return {"count": len(signals), "signals": signals}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

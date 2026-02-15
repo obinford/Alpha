@@ -248,12 +248,15 @@ class RTMSignal:
         game_id: str,
         side: str,
         market_type: str,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Score based on how many sportsbooks show +EV on the same side.
 
         Counts distinct sportsbooks from the current EV opportunities.
-        1 book → 15, 2 → 35, 3 → 55, 4+ → 75.
+        More granular scaling to differentiate between book counts:
+          1 book → 10, 2 → 20, 3 → 35, 4 → 45, 5 → 55, 6 → 65, 7+ → 75
         +15 bonus if a steam alert confirms this side.
+
+        Returns (score, num_books) tuple.
         """
         num_books = 0
         if self._consensus_map is not None:
@@ -261,16 +264,13 @@ class RTMSignal:
             books = self._consensus_map.get(key, set())
             num_books = len(books)
 
-        if num_books >= 4:
+        _CONSENSUS_TIERS = {1: 10, 2: 20, 3: 35, 4: 45, 5: 55, 6: 65}
+        if num_books >= 7:
             base = 75
-        elif num_books >= 3:
-            base = 55
-        elif num_books >= 2:
-            base = 35
         elif num_books >= 1:
-            base = 15
+            base = _CONSENSUS_TIERS.get(num_books, 10)
         else:
-            base = 10
+            base = 0
 
         # Bonus if steam confirms this side.
         steam = self._get_steam_alerts(game_id)
@@ -287,7 +287,7 @@ class RTMSignal:
         if has_steam_confirm:
             base = min(100, base + 15)
 
-        return base
+        return base, num_books
 
     # ------------------------------------------------------------------
     # Signal generation
@@ -338,7 +338,9 @@ class RTMSignal:
                     ).get("mean"),
                 }
 
-        consensus = self.market_consensus_score(game_id, side, market_type)
+        consensus, consensus_books = self.market_consensus_score(
+            game_id, side, market_type,
+        )
 
         # Select sport-adaptive weights.
         weights = _get_weights(sport, is_prop)
@@ -374,12 +376,21 @@ class RTMSignal:
                 player_name = m.group(1).strip()
                 prop_line = float(m.group(3))
 
-        # Kelly sizing.
+        # Kelly sizing — quarter Kelly, clamped to 3u max.
         true_prob = float(opportunity.get("true_prob", 0.5))
         decimal_odds = american_to_decimal(book_odds)
         b = decimal_odds - 1
         q = 1 - true_prob
-        kelly = max(0, (true_prob * b - q) / b) if b > 0 else 0
+        full_kelly = max(0, (true_prob * b - q) / b) if b > 0 else 0
+        kelly_units = min(full_kelly * 0.25 * 100, 3.0)  # quarter Kelly, 3u cap
+
+        # Compute fair value odds from true probability.
+        fair_odds = None
+        if true_prob > 0 and true_prob < 1:
+            if true_prob >= 0.5:
+                fair_odds = round(-true_prob / (1 - true_prob) * 100)
+            else:
+                fair_odds = round((1 - true_prob) / true_prob * 100)
 
         return {
             "game_id": game_id,
@@ -396,9 +407,11 @@ class RTMSignal:
             "steam_score": steam,
             "projection_score": proj,
             "consensus_score": consensus,
-            "fair_odds": None,  # Set if projection available
+            "consensus_books": consensus_books,
+            "fair_odds": fair_odds,
+            "true_prob": true_prob,
             "edge_percentage": ev_pct,
-            "kelly_size": round(kelly * 100, 2),
+            "kelly_size": round(kelly_units, 2),
             "home_team": home_team,
             "away_team": away_team,
             "game": f"{away_team} @ {home_team}" if home_team else "",
@@ -458,14 +471,28 @@ class RTMSignal:
                 all_signals.append(signal)
 
         # Deduplicate: keep the strongest signal per (game_id, market_type, side).
-        dedup: dict[tuple[str, str, str], dict] = {}
+        # Collect all books for each play to populate other_books.
+        groups: dict[tuple[str, str, str], list[dict]] = {}
         for sig in all_signals:
             key = (sig["game_id"], sig["market_type"], _normalize_side(sig["side"]))
-            existing = dedup.get(key)
-            if existing is None or sig["signal_strength"] > existing["signal_strength"]:
-                dedup[key] = sig
+            groups.setdefault(key, []).append(sig)
 
-        signals = list(dedup.values())
+        signals = []
+        for key, group in groups.items():
+            # Sort by signal_strength desc, pick best.
+            group.sort(key=lambda s: s["signal_strength"], reverse=True)
+            best = group[0]
+            # Attach other books (excluding the featured sportsbook).
+            other_books = []
+            for alt in group[1:]:
+                other_books.append({
+                    "sportsbook": alt["sportsbook"],
+                    "book_odds": alt["book_odds"],
+                    "ev_pct": alt["edge_percentage"],
+                    "kelly_size": alt["kelly_size"],
+                })
+            best["other_books"] = other_books
+            signals.append(best)
 
         # Sort by signal strength descending.
         signals.sort(key=lambda s: s["signal_strength"], reverse=True)
@@ -576,6 +603,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
     if not signals or db_client is None:
         return 0
 
+    import json as _json
+
     rows = []
     for s in signals:
         rows.append({
@@ -593,9 +622,15 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "steam_score": s["steam_score"],
             "projection_score": s.get("projection_score", 0),
             "consensus_score": s["consensus_score"],
+            "consensus_books": s.get("consensus_books", 0),
             "fair_odds": s.get("fair_odds"),
+            "true_prob": s.get("true_prob"),
             "edge_percentage": s["edge_percentage"],
             "kelly_size": s.get("kelly_size"),
+            "home_team": s.get("home_team", ""),
+            "away_team": s.get("away_team", ""),
+            "commence_time": s.get("commence_time"),
+            "other_books": _json.dumps(s.get("other_books", [])),
             "status": "active",
         })
 
