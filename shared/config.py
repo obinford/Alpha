@@ -48,6 +48,17 @@ SHARP_BOOKS = ["pinnacle", "circa", "betonlineag"]
 
 MARKETS = ["h2h", "spreads", "totals"]
 
+# Player prop markets supported by The Odds API.
+PROP_MARKETS = [
+    "player_points", "player_rebounds", "player_assists", "player_threes",
+    "player_blocks", "player_steals", "player_points_rebounds_assists",
+    "player_pass_tds", "player_pass_yds", "player_rush_yds",
+    "player_receptions", "player_reception_yds", "player_anytime_td",
+]
+
+# Combined list for API requests.
+ALL_MARKETS = MARKETS + PROP_MARKETS
+
 # Fractional Kelly multiplier (0.25 = quarter Kelly)
 DEFAULT_KELLY_FRACTION = 0.25
 

@@ -30,7 +30,10 @@ from models.ev_calculator import (
 from models.kelly import kelly_fraction
 from scrapers.odds.odds_api import Game, Market, fetch_odds
 
-from config import ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES
+from config import (
+    ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES,
+    ALL_MARKETS, PROP_MARKETS,
+)
 
 # Only surface bets with EV above this threshold.
 MIN_EV_THRESHOLD = 1.0
@@ -161,6 +164,103 @@ def scan_game(game: Game) -> list[EVOpportunity]:
     return opportunities
 
 
+def _build_prop_sharp_map(
+    sharp_market: Market,
+) -> dict[tuple[str, str, float | None], float]:
+    """Build (player_name, over_under, point) -> true probability for a prop market.
+
+    Groups outcomes by (description, point) pairs — each pair is an
+    Over/Under duo that can be devigged.
+    """
+    # Group outcomes by (description, point) to find Over/Under pairs.
+    pairs: dict[tuple[str | None, float | None], list] = {}
+    for o in sharp_market.outcomes:
+        key = (o.description, o.point)
+        pairs.setdefault(key, []).append(o)
+
+    result: dict[tuple[str, str, float | None], float] = {}
+    for (_desc, _point), outcomes in pairs.items():
+        if len(outcomes) != 2:
+            continue
+        # Sort so Over comes first for consistent devigging.
+        outcomes.sort(key=lambda o: o.name)  # Over < Under alphabetically
+        true_a, true_b = calculate_no_vig_probability(
+            outcomes[0].price, outcomes[1].price
+        )
+        for i, o in enumerate(outcomes):
+            player = o.description or ""
+            result[(player, o.name, o.point)] = true_a if i == 0 else true_b
+    return result
+
+
+def scan_game_props(game: Game) -> list[EVOpportunity]:
+    """Scan a single game for +EV player prop opportunities."""
+    sharp_key = find_sharp_book(game)
+    if sharp_key is None:
+        return []
+
+    sharp_bk = next(bk for bk in game.bookmakers if bk.key == sharp_key)
+    game_label = f"{game.away_team} @ {game.home_team}"
+    opportunities: list[EVOpportunity] = []
+
+    for prop_market_key in PROP_MARKETS:
+        sharp_market = get_market(sharp_bk.markets, prop_market_key)
+        if sharp_market is None:
+            continue
+
+        true_probs = _build_prop_sharp_map(sharp_market)
+        if not true_probs:
+            continue
+
+        for bk in game.bookmakers:
+            if bk.key == sharp_key:
+                continue
+
+            book_market = get_market(bk.markets, prop_market_key)
+            if book_market is None:
+                continue
+
+            for outcome in book_market.outcomes:
+                player = outcome.description or ""
+                lookup_key = (player, outcome.name, outcome.point)
+                true_prob = true_probs.get(lookup_key)
+                if true_prob is None:
+                    continue
+
+                ev_pct = calculate_ev(outcome.price, true_prob)
+                if ev_pct < MIN_EV_THRESHOLD:
+                    continue
+
+                kelly_pct = kelly_fraction(
+                    true_prob, outcome.price, DEFAULT_KELLY_FRACTION
+                )
+
+                # Build selection string: "Player Name Over/Under X.X"
+                point_str = f" {outcome.point}" if outcome.point is not None else ""
+                selection = f"{player} {outcome.name}{point_str}"
+
+                opportunities.append(
+                    EVOpportunity(
+                        game_id=game.id,
+                        sport_key=game.sport_key,
+                        game=game_label,
+                        commence_time=game.commence_time,
+                        market=prop_market_key,
+                        selection=selection,
+                        point=outcome.point,
+                        book=bk.title,
+                        book_key=bk.key,
+                        book_odds=outcome.price,
+                        book_implied_prob=american_to_implied_prob(outcome.price),
+                        true_prob=true_prob,
+                        ev_pct=ev_pct,
+                        kelly_pct=kelly_pct,
+                    )
+                )
+
+    return opportunities
+
+
 # ---------------------------------------------------------------------------
 # Database persistence
 # ---------------------------------------------------------------------------
@@ -211,9 +311,14 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
         for bk in game.bookmakers:
             for mkt in bk.markets:
                 for outcome in mkt.outcomes:
-                    side = outcome.name + (
-                        f" {outcome.point}" if outcome.point is not None else ""
-                    )
+                    # For props, include player name in side.
+                    if outcome.description:
+                        point_str = f" {outcome.point}" if outcome.point is not None else ""
+                        side = f"{outcome.description} {outcome.name}{point_str}"
+                    else:
+                        side = outcome.name + (
+                            f" {outcome.point}" if outcome.point is not None else ""
+                        )
                     key = (bk.key, mkt.key, side)
                     current_odds = float(outcome.price)
                     prev = latest_map.get(key)
@@ -495,14 +600,69 @@ def print_sport_results(sport_key: str, opportunities: list[EVOpportunity]) -> N
     print(divider)
 
 
+def _is_prop_market(market_key: str) -> bool:
+    """Return True if the market key is a player prop."""
+    return market_key.startswith("player_")
+
+
+def print_prop_results(opportunities: list[EVOpportunity]) -> None:
+    """Print +EV player prop opportunities grouped by prop type."""
+    if not opportunities:
+        return
+
+    by_prop: dict[str, list[EVOpportunity]] = {}
+    for opp in opportunities:
+        by_prop.setdefault(opp.market, []).append(opp)
+
+    for prop_type, opps in sorted(by_prop.items()):
+        opps.sort(key=lambda o: o.ev_pct, reverse=True)
+        label = prop_type.replace("player_", "").replace("_", " ").title()
+        header = (
+            f"{'Game':<35} {'Player':<22} {'Line':>6} {'Side':<6} "
+            f"{'Book':<18} {'Odds':>7} {'True%':>7} {'Book%':>7} "
+            f"{'EV%':>7} {'Kelly%':>7}"
+        )
+        divider = "-" * len(header)
+        print(f"\n  Props: {label}  ({len(opps)} opportunities)")
+        print(divider)
+        print(header)
+        print(divider)
+        for opp in opps:
+            # Parse player/side from selection "Player Name Over X.X"
+            parts = opp.selection.rsplit(" ", 2)
+            if len(parts) >= 3:
+                player = " ".join(parts[:-2])
+                ou = parts[-2]
+                line = parts[-1]
+            elif len(parts) == 2:
+                player = parts[0]
+                ou = parts[1]
+                line = ""
+            else:
+                player = opp.selection
+                ou = ""
+                line = ""
+            print(
+                f"{opp.game:<35} {player:<22} {line:>6} {ou:<6} "
+                f"{opp.book:<18} {format_american(opp.book_odds):>7} "
+                f"{opp.true_prob * 100:>6.1f}% {opp.book_implied_prob * 100:>6.1f}% "
+                f"{opp.ev_pct:>+6.1f}% {opp.kelly_pct * 100:>6.2f}%"
+            )
+        print(divider)
+
+
 def print_results(all_opportunities: list[EVOpportunity]) -> None:
     """Print +EV opportunities grouped by sport with a combined summary."""
+    # Split game lines from props.
+    game_opps = [o for o in all_opportunities if not _is_prop_market(o.market)]
+    prop_opps = [o for o in all_opportunities if _is_prop_market(o.market)]
+
     banner_width = 120
     print(f"\n{'=' * banner_width}")
     print(
         f"  RTM +EV Scanner  |  "
         f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  |  "
-        f"{len(all_opportunities)} total opportunities"
+        f"{len(all_opportunities)} total ({len(game_opps)} lines, {len(prop_opps)} props)"
     )
     print(f"{'=' * banner_width}")
 
@@ -510,17 +670,22 @@ def print_results(all_opportunities: list[EVOpportunity]) -> None:
         print("\nNo +EV opportunities found across any sport right now.\n")
         return
 
-    # Group by sport.
-    sports_seen: list[str] = []
-    by_sport: dict[str, list[EVOpportunity]] = {}
-    for opp in all_opportunities:
-        if opp.sport_key not in by_sport:
-            by_sport[opp.sport_key] = []
-            sports_seen.append(opp.sport_key)
-        by_sport[opp.sport_key].append(opp)
+    # Group game lines by sport.
+    if game_opps:
+        sports_seen: list[str] = []
+        by_sport: dict[str, list[EVOpportunity]] = {}
+        for opp in game_opps:
+            if opp.sport_key not in by_sport:
+                by_sport[opp.sport_key] = []
+                sports_seen.append(opp.sport_key)
+            by_sport[opp.sport_key].append(opp)
 
-    for sport_key in sports_seen:
-        print_sport_results(sport_key, by_sport[sport_key])
+        for sport_key in sports_seen:
+            print_sport_results(sport_key, by_sport[sport_key])
+
+    # Print props.
+    if prop_opps:
+        print_prop_results(prop_opps)
 
     # Best overall.
     best = max(all_opportunities, key=lambda o: o.ev_pct)
@@ -583,7 +748,7 @@ def run_scan(sport_keys: list[str]) -> int:
         print(f"Fetching {display} odds...")
 
         try:
-            games = fetch_odds(sport_key)
+            games = fetch_odds(sport_key, markets=ALL_MARKETS)
         except Exception as e:
             print(f"  Skipping {display}: {e}")
             continue
@@ -610,9 +775,10 @@ def run_scan(sport_keys: list[str]) -> int:
             except Exception as e:
                 print(f"  Warning: Line movement write failed for {display} ({e}).")
 
-        # Scan for +EV.
+        # Scan for +EV (game lines + props).
         for game in games:
             all_opportunities.extend(scan_game(game))
+            all_opportunities.extend(scan_game_props(game))
 
     # --- Persist EV opportunities ---
     if db is not None and all_opportunities:

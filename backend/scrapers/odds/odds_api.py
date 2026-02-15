@@ -22,6 +22,7 @@ class Outcome:
     name: str
     price: int  # American odds
     point: float | None = None  # spread/total line
+    description: str | None = None  # player name for prop markets
 
 
 @dataclass
@@ -126,6 +127,7 @@ def fetch_odds(
                         name=o["name"],
                         price=int(o["price"]),
                         point=o.get("point"),
+                        description=o.get("description"),
                     )
                     for o in mkt.get("outcomes", [])
                 ]
