@@ -53,8 +53,7 @@ def calculate_no_vig_probability(
 def calculate_ev(book_odds: int, true_probability: float) -> float:
     """Calculate expected value of a bet.
 
-    EV% = (true_probability * net_profit) - (1 - true_probability) * 1
-    where net_profit = decimal_odds - 1, and stake = 1 unit.
+    EV% = (true_probability * decimal_odds - 1) * 100
 
     Args:
         book_odds: American odds offered by the sportsbook.
@@ -66,3 +65,44 @@ def calculate_ev(book_odds: int, true_probability: float) -> float:
     decimal_odds = american_to_decimal(book_odds)
     ev = (true_probability * decimal_odds) - 1
     return ev * 100
+
+
+def validate_edge(
+    ev_pct: float, true_prob: float, book_odds: int,
+    devig_confidence: str = "",
+) -> tuple[str, list[str]]:
+    """Classify edge confidence and flag suspicious values.
+
+    Returns:
+        (confidence_label, warnings_list)
+        confidence_label: HIGH, MEDIUM, LOW, or CAUTION
+        warnings_list: list of warning strings (empty = clean)
+    """
+    warnings: list[str] = []
+
+    # Flag extreme EVs.
+    if ev_pct > 20.0:
+        warnings.append(f"EXTREME_EV: {ev_pct:.1f}% — likely stale line or data error")
+
+    # Flag invalid probabilities.
+    if true_prob <= 0 or true_prob >= 1:
+        warnings.append(f"INVALID_PROB: {true_prob}")
+
+    # Flag suspicious large-favorite edges.
+    if ev_pct > 15.0 and true_prob > 0.5:
+        warnings.append("LARGE_FAV_EDGE: >15% EV on a favorite is unusual")
+
+    # Confidence based on devig source.
+    if devig_confidence:
+        confidence = devig_confidence
+    elif ev_pct > 10.0:
+        confidence = "LOW"  # High EV without known source → suspicious
+    elif ev_pct > 5.0:
+        confidence = "MEDIUM"
+    else:
+        confidence = "HIGH"
+
+    if warnings:
+        confidence = "CAUTION"
+
+    return confidence, warnings
