@@ -10,6 +10,62 @@ from db import get_supabase
 router = APIRouter()
 
 
+def _american_to_decimal(odds: int | float) -> float:
+    """Convert American odds to decimal odds."""
+    odds = int(odds)
+    if odds > 0:
+        return 1.0 + odds / 100.0
+    elif odds < 0:
+        return 1.0 + 100.0 / abs(odds)
+    return 1.0
+
+
+def _recalc_kelly(signal: dict) -> dict:
+    """Recalculate kelly_size from true_prob and book_odds.
+
+    Quarter Kelly: f = (b*p - q) / b * 0.25, units = f * 100.
+    Always recomputes to ensure correctness regardless of stored value.
+    """
+    true_prob = signal.get("true_prob")
+    book_odds = signal.get("book_odds")
+    if true_prob is not None and book_odds is not None:
+        try:
+            p = float(true_prob)
+            decimal_odds = _american_to_decimal(int(book_odds))
+            b = decimal_odds - 1
+            q = 1 - p
+            if b > 0:
+                full_kelly = (p * b - q) / b
+                if full_kelly > 0:
+                    signal["kelly_size"] = round(full_kelly * 0.25 * 100, 2)
+                else:
+                    signal["kelly_size"] = 0.0
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
+    # Also fix other_books kelly if present.
+    others = signal.get("other_books")
+    if isinstance(others, str):
+        try:
+            others = json.loads(others)
+        except (json.JSONDecodeError, TypeError):
+            others = []
+    if isinstance(others, list):
+        for alt in others:
+            alt_prob = alt.get("true_prob") or signal.get("true_prob")
+            alt_odds = alt.get("book_odds")
+            if alt_prob is not None and alt_odds is not None:
+                try:
+                    p = float(alt_prob)
+                    dec = _american_to_decimal(int(alt_odds))
+                    b = dec - 1
+                    if b > 0:
+                        fk = (p * b - (1 - p)) / b
+                        alt["kelly_size"] = round(max(0, fk) * 0.25 * 100, 2)
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
+    return signal
+
+
 def _dedup_signals(rows: list[dict]) -> list[dict]:
     """Deduplicate signals by (game_id, market_type, side), keeping strongest.
 
@@ -80,6 +136,8 @@ def active_signals(
 
         # Deduplicate: one card per play, best book featured.
         signals = _dedup_signals(rows)
+        # Recalculate kelly_size from true_prob + book_odds (quarter Kelly).
+        signals = [_recalc_kelly(s) for s in signals]
         return {"count": len(signals), "signals": signals}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -113,6 +171,8 @@ def signal_history(
         if sport:
             rows = [r for r in rows if r.get("sport") == sport]
 
+        # Recalculate kelly_size from true_prob + book_odds (quarter Kelly).
+        rows = [_recalc_kelly(r) for r in rows]
         return {"count": len(rows), "signals": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

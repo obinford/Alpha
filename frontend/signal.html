@@ -480,6 +480,19 @@ function timeBadgeHTML(sig) {
   return `<span class="badge-game-time">${fmtGameTime(sig)}</span>`;
 }
 
+// Recalculate quarter Kelly units from true_prob and American odds.
+// f = (b*p - q) / b, quarter Kelly = f * 0.25, units = f * 0.25 * 100.
+function calcKelly(trueProb, americanOdds) {
+  if (!trueProb || trueProb <= 0 || trueProb >= 1 || !americanOdds) return 0;
+  const dec = americanOdds > 0 ? 1 + americanOdds / 100 : 1 + 100 / Math.abs(americanOdds);
+  const b = dec - 1;
+  if (b <= 0) return 0;
+  const q = 1 - trueProb;
+  const fullKelly = (trueProb * b - q) / b;
+  if (fullKelly <= 0) return 0;
+  return Math.round(fullKelly * 0.25 * 100 * 100) / 100; // 2 decimal places
+}
+
 function unitsDisplay(kelly) {
   if (!kelly || kelly <= 0) return '';
   const units = kelly;
@@ -504,7 +517,8 @@ function renderSignalCard(sig) {
   const proj = sig.projection_score || 0;
   const cons = sig.consensus_score || 0;
   const intel = sig.intelligence_score || 0;
-  const kelly = sig.kelly_size || 0;
+  // Always recalculate kelly from true_prob + book_odds (quarter Kelly).
+  const kelly = calcKelly(sig.true_prob, odds) || sig.kelly_size || 0;
   const propLine = sig.prop_line;
   const created = sig.created_at;
   const mt = sig.market_type || '';
@@ -598,7 +612,7 @@ function renderHistoryRow(sig) {
   const stars = sig.star_rating || 3;
   const result = sig.result || 'pending';
   const pl = sig.profit_loss;
-  const kelly = sig.kelly_size || 0;
+  const kelly = calcKelly(sig.true_prob, sig.book_odds) || sig.kelly_size || 0;
   const units = kelly > 0 ? kelly : 1.0;
   let resultClass = 'result-pending';
   let resultText = 'Pending';
