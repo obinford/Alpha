@@ -401,11 +401,18 @@ def get_line_movements_for_game(
     client: SupabaseClient,
     game_id: str,
     market_type: str | None = None,
+    since: str | None = None,
 ) -> list[dict]:
-    """Full odds history for a game, all bookmakers, sorted by timestamp."""
+    """Full odds history for a game, all bookmakers, sorted by timestamp.
+
+    Args:
+        since: ISO-8601 timestamp — only return movements at or after this time.
+    """
     filters: dict[str, str] = {"game_id": f"eq.{game_id}"}
     if market_type is not None:
         filters["market_type"] = f"eq.{market_type}"
+    if since is not None:
+        filters["timestamp"] = f"gte.{since}"
     return client._get(
         "line_movements",
         select="*",

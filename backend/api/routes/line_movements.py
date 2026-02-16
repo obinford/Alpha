@@ -34,10 +34,18 @@ def game_line_movements(
     game_id: str,
     market_type: str | None = Query(None, description="Filter by market (h2h, spreads, totals)"),
 ) -> dict:
-    """Return full odds history for a specific game, all bookmakers, sorted by timestamp."""
+    """Return odds history for a specific game starting 12h before game time."""
     try:
         db = get_supabase()
-        movements = get_line_movements_for_game(db, game_id, market_type=market_type)
+
+        # Look up game start_time so we can filter to 12h before game.
+        games = db._get("games", select="start_time", filters={"game_id": f"eq.{game_id}"}, limit=1)
+        since: str | None = None
+        if games and games[0].get("start_time"):
+            game_start = datetime.fromisoformat(games[0]["start_time"])
+            since = (game_start - timedelta(hours=12)).isoformat()
+
+        movements = get_line_movements_for_game(db, game_id, market_type=market_type, since=since)
         return {
             "game_id": game_id,
             "count": len(movements),

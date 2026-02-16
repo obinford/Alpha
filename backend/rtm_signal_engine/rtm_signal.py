@@ -925,6 +925,7 @@ def store_signals(db_client, signals: list[dict]) -> int:
     for s in signals:
         # Only include columns that exist in the rtm_signals table.
         # Omitted: away_team, commence_time, consensus_books, home_team.
+        intel_ctx = s.get("intelligence_context")
         rows.append({
             "game_id": s["game_id"],
             "sport": s["sport"],
@@ -941,7 +942,7 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "projection_score": s.get("projection_score", 0),
             "consensus_score": s["consensus_score"],
             "intelligence_score": s.get("intelligence_score", 0),
-            "intelligence_context": s.get("intelligence_context"),
+            "intelligence_context": _json.dumps(intel_ctx) if isinstance(intel_ctx, dict) else intel_ctx,
             "fair_odds": s.get("fair_odds"),
             "true_prob": s.get("true_prob"),
             "edge_percentage": s["edge_percentage"],
