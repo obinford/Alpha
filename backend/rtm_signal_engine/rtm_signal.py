@@ -1,14 +1,15 @@
 """RTM Signal — confluence model for high-confidence betting signals.
 
-Combines up to four independent systems:
+Combines up to five independent systems:
   1. +EV from devigged sharp books (top-down)
   2. Steam detection / line movement confirmation
   3. In-house player projections + simulation (bottom-up, NBA only)
   4. Market consensus — how many books show +EV on the same side
+  5. Intelligence layers — stale lines, book profiling, market timing, correlations
 
-Sport-adaptive weights:
-  NBA (4 components): ev=0.30, steam=0.25, projection=0.25, consensus=0.20
-  Other sports (3 components): ev=0.45, steam=0.30, consensus=0.25
+Sport-adaptive weights (with intelligence):
+  NBA (5 components): ev=0.25, steam=0.15, projection=0.25, consensus=0.15, intelligence=0.20
+  Other sports (4 components): ev=0.40, steam=0.20, consensus=0.20, intelligence=0.20
 
 Signal tiers:
   70+ → STRONG SIGNAL (5 stars)
@@ -30,28 +31,31 @@ from projections.math_utils import american_to_decimal, american_to_implied_prob
 # Sport-adaptive weights
 # ---------------------------------------------------------------------------
 
-# NBA uses all 4 components including projections.
+# NBA uses all 5 components including projections + intelligence.
 NBA_WEIGHTS = {
-    "ev": 0.30,
-    "steam": 0.25,
+    "ev": 0.25,
+    "steam": 0.15,
     "projection": 0.25,
-    "consensus": 0.20,
+    "consensus": 0.15,
+    "intelligence": 0.20,
 }
 
-# All other sports use 3 components (no projection data available).
+# All other sports use 4 components (no projection data available).
 DEFAULT_WEIGHTS = {
-    "ev": 0.45,
-    "steam": 0.30,
+    "ev": 0.40,
+    "steam": 0.20,
     "projection": 0.00,
-    "consensus": 0.25,
+    "consensus": 0.20,
+    "intelligence": 0.20,
 }
 
 # NBA prop weights (projection is more important for props).
 NBA_PROP_WEIGHTS = {
-    "ev": 0.25,
-    "steam": 0.20,
-    "projection": 0.35,
-    "consensus": 0.20,
+    "ev": 0.20,
+    "steam": 0.15,
+    "projection": 0.30,
+    "consensus": 0.15,
+    "intelligence": 0.20,
 }
 
 # Signal tier thresholds.
@@ -243,6 +247,137 @@ class RTMSignal:
             return 10
         return 0
 
+    def intelligence_score(
+        self,
+        game_id: str,
+        sport: str,
+        market_type: str,
+        side: str,
+        sportsbook: str,
+        hours_until_start: float | None = None,
+    ) -> tuple[int, dict]:
+        """Score based on intelligence layers.
+
+        Combines:
+          - Stale line detection (+30 pts if this book has a stale line)
+          - Book profiling (+15 pts if this book is historically slow)
+          - Market timing (+10 pts if in optimal bet window)
+          - Prop correlation (+15 pts if correlated props confirm)
+          - Peak timing (+10 pts if edge is at peak in lifecycle)
+
+        Returns (score 0-100, context dict).
+        """
+        score = 0
+        context = {
+            "is_stale_line": False,
+            "stale_tip": "",
+            "slow_book": False,
+            "optimal_window": False,
+            "timing_tip": "",
+            "has_correlation": False,
+            "correlation_tip": "",
+        }
+
+        if self._db is None:
+            return score, context
+
+        # 1. Stale line check: is this opportunity on a book with a stale line?
+        try:
+            stale_lines = self._db._get(
+                "stale_line_alerts",
+                select="stale_book,edge_percentage,stale_type",
+                filters={
+                    "game_id": f"eq.{game_id}",
+                    "market_type": f"eq.{market_type}",
+                    "stale_book": f"eq.{sportsbook}",
+                    "status": "eq.active",
+                },
+                limit=1,
+            )
+            if stale_lines:
+                score += 30
+                context["is_stale_line"] = True
+                sl = stale_lines[0]
+                context["stale_tip"] = (
+                    f"{sportsbook.replace('_', ' ')} hasn't caught up "
+                    f"({sl.get('stale_type', 'stale')})"
+                )
+        except Exception:
+            pass
+
+        # 2. Book profiling: is this book historically slow for this sport?
+        try:
+            reactions = self._db._get(
+                "book_reaction_times",
+                select="reaction_seconds",
+                filters={
+                    "soft_book": f"eq.{sportsbook}",
+                    "sport": f"eq.{sport}",
+                },
+                limit=20,
+            )
+            if reactions:
+                times = [
+                    r["reaction_seconds"]
+                    for r in reactions
+                    if r.get("reaction_seconds") is not None
+                ]
+                if times:
+                    avg_time = sum(times) / len(times)
+                    if avg_time > 180:  # > 3 min average = slow book
+                        score += 15
+                        context["slow_book"] = True
+        except Exception:
+            pass
+
+        # 3. Market timing: is the current time in the optimal bet window?
+        try:
+            from intelligence.market_timing import MarketTimingEngine
+            timing = MarketTimingEngine(self._db)
+            timing_ctx = timing.get_timing_context_for_signal(
+                sport, market_type, hours_until_start
+            )
+            bonus = timing_ctx.get("score_bonus", 0)
+            if bonus > 0:
+                score += bonus
+                context["optimal_window"] = True
+                context["timing_tip"] = timing_ctx.get("context", "")
+        except Exception:
+            pass
+
+        # 4. Prop correlation: if this is a prop, check for confirming correlations.
+        if market_type.startswith("player_"):
+            try:
+                from intelligence.correlation_engine import PropCorrelationEngine
+                corr_engine = PropCorrelationEngine()
+                # Extract player name from side.
+                m = re.match(r"^(.+?)\s+(over|under)", side, re.IGNORECASE)
+                if m:
+                    player = m.group(1).strip()
+                    direction = m.group(2).lower()
+                    corr = corr_engine.get_correlated_props(
+                        player, market_type, direction
+                    )
+                    pos = corr.get("positively_correlated", [])
+                    if any(c["strength"] in ("strong", "moderate") for c in pos):
+                        score += 15
+                        context["has_correlation"] = True
+                        top_corr = pos[0] if pos else None
+                        if top_corr:
+                            context["correlation_tip"] = (
+                                f"Correlated with {top_corr['stat']} "
+                                f"(r={top_corr['correlation']})"
+                            )
+            except Exception:
+                pass
+
+        # 5. Peak timing: is the edge at peak in the line lifecycle?
+        if hours_until_start is not None and 2 <= hours_until_start <= 8:
+            score += 10  # Sweet spot for most sports
+
+        # Cap at 100.
+        return min(100, score), context
+
     def market_consensus_score(
         self,
         game_id: str,
@@ -340,6 +475,16 @@ class RTMSignal:
 
         consensus = self.market_consensus_score(game_id, side, market_type)
 
+        # Intelligence score (stale lines, book profiling, timing, correlations).
+        intel, intel_context = self.intelligence_score(
+            game_id=game_id,
+            sport=sport,
+            market_type=market_type,
+            side=side,
+            sportsbook=sportsbook,
+            hours_until_start=opportunity.get("hours_until_start"),
+        )
+
         # Select sport-adaptive weights.
         weights = _get_weights(sport, is_prop)
 
@@ -349,6 +494,7 @@ class RTMSignal:
             + steam * weights["steam"]
             + proj * weights["projection"]
             + consensus * weights["consensus"]
+            + intel * weights["intelligence"]
         )
         signal_strength = round(signal_strength, 1)
 
@@ -396,6 +542,8 @@ class RTMSignal:
             "steam_score": steam,
             "projection_score": proj,
             "consensus_score": consensus,
+            "intelligence_score": intel,
+            "intelligence_context": intel_context,
             "fair_odds": None,  # Set if projection available
             "edge_percentage": ev_pct,
             "kelly_size": round(kelly * 100, 2),
@@ -593,6 +741,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "steam_score": s["steam_score"],
             "projection_score": s.get("projection_score", 0),
             "consensus_score": s["consensus_score"],
+            "intelligence_score": s.get("intelligence_score", 0),
+            "intelligence_context": s.get("intelligence_context"),
             "fair_odds": s.get("fair_odds"),
             "edge_percentage": s["edge_percentage"],
             "kelly_size": s.get("kelly_size"),
@@ -622,11 +772,24 @@ def format_signal_for_console(signal: dict) -> str:
         time_tag = " | LIVE"
     else:
         time_tag = ""
+    intel = signal.get("intelligence_score", 0)
+    intel_ctx = signal.get("intelligence_context", {})
+    intel_tags = []
+    if intel_ctx.get("is_stale_line"):
+        intel_tags.append("\U0001f3af STALE")
+    if intel_ctx.get("optimal_window"):
+        intel_tags.append("\u23f0 WINDOW")
+    if intel_ctx.get("has_correlation"):
+        intel_tags.append("\U0001f517 CORR")
+    intel_str = " ".join(intel_tags) if intel_tags else ""
+
     return (
         f"\u26a1 RTM {tier} {stars} | "
         f"{signal['side']} at {signal['sportsbook']} {signal['book_odds']:+d} | "
         f"Strength: {signal['signal_strength']:.0f} | "
         f"EV:{signal['ev_score']} Steam:{signal['steam_score']} "
-        f"Proj:{signal['projection_score']} Cons:{signal['consensus_score']}"
+        f"Proj:{signal['projection_score']} Cons:{signal['consensus_score']} "
+        f"Intel:{intel}"
         f"{time_tag}"
+        f"{' | ' + intel_str if intel_str else ''}"
     )

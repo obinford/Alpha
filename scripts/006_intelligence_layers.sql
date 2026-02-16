@@ -80,3 +80,12 @@ CREATE INDEX IF NOT EXISTS idx_line_lifecycle_game_start
     ON line_lifecycle (game_start_time);
 CREATE INDEX IF NOT EXISTS idx_line_lifecycle_game
     ON line_lifecycle (game_id);
+
+
+-- ─── Add intelligence columns to rtm_signals ─────────────────────────────
+
+ALTER TABLE rtm_signals
+    ADD COLUMN IF NOT EXISTS intelligence_score NUMERIC DEFAULT 0;
+
+ALTER TABLE rtm_signals
+    ADD COLUMN IF NOT EXISTS intelligence_context JSONB;

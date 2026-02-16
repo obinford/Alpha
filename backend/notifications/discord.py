@@ -335,7 +335,24 @@ def send_signal_alert(signal: dict) -> bool:
         {"name": "Steam Score", "value": str(signal.get("steam_score", 0)), "inline": True},
         {"name": "Proj Score", "value": str(signal.get("projection_score", 0)), "inline": True},
         {"name": "Consensus", "value": str(signal.get("consensus_score", 0)), "inline": True},
+        {"name": "Intel", "value": str(signal.get("intelligence_score", 0)), "inline": True},
     ]
+
+    # Intelligence context badges.
+    intel_ctx = signal.get("intelligence_context", {}) or {}
+    intel_tags = []
+    if intel_ctx.get("is_stale_line"):
+        intel_tags.append(f"\U0001f3af STALE LINE \u2014 {intel_ctx.get('stale_tip', '')}")
+    if intel_ctx.get("optimal_window"):
+        intel_tags.append(f"\u23f0 OPTIMAL WINDOW \u2014 {intel_ctx.get('timing_tip', '')}")
+    if intel_ctx.get("has_correlation"):
+        intel_tags.append(f"\U0001f517 CORRELATED \u2014 {intel_ctx.get('correlation_tip', '')}")
+    if intel_tags:
+        fields.append({
+            "name": "\u200b",
+            "value": "**Intelligence**\n" + "\n".join(intel_tags),
+            "inline": False,
+        })
 
     if kelly > 0:
         fields.append({"name": "Kelly Size", "value": f"{kelly:.1f}%", "inline": True})
