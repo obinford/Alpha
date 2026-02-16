@@ -680,6 +680,12 @@ def store_ev_opportunities(
         # with mismatched keys (PGRST102).  Use None for absent values.
         # NOTE: commence_time and sport are NOT columns in
         # ev_opportunities — omit them to avoid bulk insert failures.
+        # NOTE: devig_confidence is a numeric column in the DB —
+        # map the string label to a numeric score.
+        _CONFIDENCE_MAP = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "CAUTION": 0}
+        confidence_val = _CONFIDENCE_MAP.get(
+            (opp.devig_confidence or "").upper()
+        )
         row_data: dict = {
             "game_id": opp.game_id,
             "sportsbook": opp.book_key,
@@ -696,7 +702,7 @@ def store_ev_opportunities(
             "status": "open",
             "timestamp": scan_ts,
             "devig_source": opp.devig_source or None,
-            "devig_confidence": opp.devig_confidence or None,
+            "devig_confidence": confidence_val,
             "devig_method": opp.devig_method or None,
         }
         rows.append(row_data)
@@ -1174,7 +1180,17 @@ def run_scan(sport_keys: list[str]) -> int:
                     merge_prop_data(games, prop_games)
                     print(f"  Props merged for {display}.")
             except Exception as e:
-                print(f"  Warning: Prop fetch failed for {display} ({e}).")
+                # API may reject unsupported markets (422) for some sports.
+                # Fall back to fetching each market individually.
+                print(f"  Warning: Bulk prop fetch failed for {display} ({e}), trying per-market...")
+                for mkt_name in sport_props:
+                    try:
+                        mkt_games = fetch_odds(sport_key, markets=[mkt_name], regions=_FETCH_REGIONS)
+                        if mkt_games:
+                            _filter_non_whitelisted_books(mkt_games)
+                            merge_prop_data(games, mkt_games)
+                    except Exception:
+                        pass  # Silently skip unsupported markets
             print(f"  [TIMING] {display} props API fetch: {time.time() - t0:.1f}s")
         elif near_games:
             print(f"  Skipping props for {display} — no prop markets configured for this sport.")

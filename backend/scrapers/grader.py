@@ -188,6 +188,12 @@ def grade_opportunities(db_client: object) -> dict:
     total_units = 0.0
     graded_count = 0
 
+    # Collect rows/IDs for batched DB operations.
+    bet_result_rows: list[dict] = []
+    graded_opp_ids: list = []
+    below_threshold_ids: list = []
+    graded_at = datetime.now(timezone.utc).isoformat()
+
     for opp in open_opps:
         opp_id = opp.get("id")
         if opp_id in graded_ids:
@@ -201,18 +207,7 @@ def grade_opportunities(db_client: object) -> dict:
         ev_pct = float(opp.get("ev_percentage", 0) or 0)
         if ev_pct < MIN_GRADE_EV_THRESHOLD:
             below_threshold += 1
-            # Still mark as graded so we don't keep re-checking.
-            try:
-                resp = client._http.patch(
-                    f"{client.base_url}/ev_opportunities",
-                    headers={**client.headers, "Prefer": "return=minimal"},
-                    params={"id": f"eq.{opp_id}"},
-                    json={"status": "graded"},
-                    timeout=10,
-                )
-                resp.raise_for_status()
-            except Exception:
-                pass
+            below_threshold_ids.append(opp_id)
             continue
 
         result = grade_opportunity(opp, game)
@@ -221,19 +216,16 @@ def grade_opportunities(db_client: object) -> dict:
             continue
 
         book_odds = int(opp.get("book_odds", 0))
-        # Use kelly-based sizing: recommended_units or fall back to kelly_fraction.
-        # 1 unit = 1% of bankroll.  kelly_fraction × 100 = units.
         rec_units = opp.get("recommended_units")
         if rec_units is not None:
             units = float(rec_units)
         else:
             kelly = opp.get("kelly_fraction")
             if kelly is not None:
-                units = float(kelly) * 100  # kelly_fraction 0.0365 → 3.65 units
+                units = float(kelly) * 100
             else:
-                units = 1.0  # fallback
+                units = 1.0
 
-        # No edge → no bet.
         if units <= 0:
             units = 0.0
 
@@ -247,31 +239,31 @@ def grade_opportunities(db_client: object) -> dict:
         else:
             pushes += 1
 
-        # Insert bet_result.
-        try:
-            client._post("bet_results", {
-                "ev_opportunity_id": opp_id,
-                "result": result,
-                "profit_loss": round(profit, 4),
-                "graded_at": datetime.now(timezone.utc).isoformat(),
-            })
-            graded_count += 1
-        except Exception as e:
-            print(f"  Warning: Failed to insert bet_result for opp {opp_id}: {e}")
-            continue
+        bet_result_rows.append({
+            "ev_opportunity_id": opp_id,
+            "result": result,
+            "profit_loss": round(profit, 4),
+            "graded_at": graded_at,
+        })
+        graded_opp_ids.append(opp_id)
+        graded_count += 1
 
-        # Update EV opportunity status.
+    # Bulk-insert bet results.
+    if bet_result_rows:
         try:
-            resp = client._http.patch(
-                f"{client.base_url}/ev_opportunities",
-                headers={**client.headers, "Prefer": "return=minimal"},
-                params={"id": f"eq.{opp_id}"},
-                json={"status": "graded"},
-                timeout=10,
+            client._post_many("bet_results", bet_result_rows)
+        except Exception as e:
+            print(f"  Warning: Bulk bet_results insert failed ({e}).")
+
+    # Bulk-update graded + below-threshold opportunities to "graded" status.
+    all_graded_ids = graded_opp_ids + below_threshold_ids
+    if all_graded_ids:
+        try:
+            client._patch_by_ids(
+                "ev_opportunities", "id", all_graded_ids, {"status": "graded"}
             )
-            resp.raise_for_status()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  Warning: Bulk ev_opportunities patch failed ({e}).")
 
     summary = {
         "graded": graded_count,

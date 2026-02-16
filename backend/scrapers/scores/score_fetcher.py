@@ -53,6 +53,7 @@ def fetch_scores(sport_key: str, days_from: int = 1) -> list[dict]:
 def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) -> int:
     """Fetch scores and update the games table for completed games.
 
+    Batched: collects all score updates then upserts in one bulk call.
     Returns the number of games updated to 'final'.
     """
     from db import SupabaseClient
@@ -62,7 +63,7 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
     if not scores:
         return 0
 
-    updated = 0
+    rows: list[dict] = []
     for game in scores:
         if not game.get("completed", False):
             continue
@@ -72,7 +73,6 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
         if not scores_list or len(scores_list) < 2:
             continue
 
-        # Parse home and away scores.
         home_team = game.get("home_team", "")
         away_team = game.get("away_team", "")
         home_score = None
@@ -87,25 +87,20 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
         if home_score is None or away_score is None:
             continue
 
-        # Update the game in Supabase.
-        try:
-            resp = client._http.patch(
-                f"{client.base_url}/games",
-                headers={**client.headers, "Prefer": "return=minimal"},
-                params={"game_id": f"eq.{game_id}"},
-                json={
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "status": "final",
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
-            updated += 1
-        except Exception:
-            pass
+        rows.append({
+            "game_id": game_id,
+            "home_score": home_score,
+            "away_score": away_score,
+            "status": "final",
+        })
 
-    return updated
+    if rows:
+        try:
+            client._upsert_many("games", rows, on_conflict="game_id")
+        except Exception as e:
+            print(f"  Warning: Bulk score update failed ({e}).")
+
+    return len(rows)
 
 
 def fetch_and_update_scores(db_client: object, sport_keys: list[str]) -> int:

@@ -116,6 +116,9 @@ class RTMSignal:
         self._movements_cache: dict[str, list[dict]] | None = None
         # EV consensus: (game_id, market_type, normalized_side) -> set of sportsbooks
         self._consensus_map: dict[tuple[str, str, str], set[str]] | None = None
+        # Intelligence caches (populated by load_cache).
+        self._stale_cache: dict[str, list[dict]] | None = None
+        self._reaction_cache: dict[str, list[dict]] | None = None
 
     # ------------------------------------------------------------------
     # Individual scoring components
@@ -266,10 +269,13 @@ class RTMSignal:
           - Prop correlation (+15 pts if correlated props confirm)
           - Peak timing (+10 pts if edge is at peak in lifecycle)
 
+        Uses pre-loaded caches from load_cache() to avoid per-opportunity
+        DB queries (N+1 fix).
+
         Returns (score 0-100, context dict).
         """
         score = 0
-        context = {
+        context: dict[str, Any] = {
             "is_stale_line": False,
             "stale_tip": "",
             "slow_book": False,
@@ -282,41 +288,49 @@ class RTMSignal:
         if self._db is None:
             return score, context
 
-        # 1. Stale line check: is this opportunity on a book with a stale line?
-        try:
-            stale_lines = self._db._get(
-                "stale_line_alerts",
-                select="stale_book,edge_percentage,stale_type",
-                filters={
-                    "game_id": f"eq.{game_id}",
-                    "market_type": f"eq.{market_type}",
-                    "stale_book": f"eq.{sportsbook}",
-                    "status": "eq.active",
-                },
-                limit=1,
-            )
-            if stale_lines:
-                score += 30
-                context["is_stale_line"] = True
-                sl = stale_lines[0]
-                context["stale_tip"] = (
-                    f"{sportsbook.replace('_', ' ')} hasn't caught up "
-                    f"({sl.get('stale_type', 'stale')})"
+        # 1. Stale line check — use cache if available.
+        if self._stale_cache is not None:
+            for sl in self._stale_cache.get(game_id, []):
+                if (
+                    sl.get("market_type") == market_type
+                    and sl.get("stale_book") == sportsbook
+                    and sl.get("status") == "active"
+                ):
+                    score += 30
+                    context["is_stale_line"] = True
+                    context["stale_tip"] = (
+                        f"{sportsbook.replace('_', ' ')} hasn't caught up "
+                        f"({sl.get('stale_type', 'stale')})"
+                    )
+                    break
+        else:
+            try:
+                stale_lines = self._db._get(
+                    "stale_line_alerts",
+                    select="stale_book,edge_percentage,stale_type",
+                    filters={
+                        "game_id": f"eq.{game_id}",
+                        "market_type": f"eq.{market_type}",
+                        "stale_book": f"eq.{sportsbook}",
+                        "status": "eq.active",
+                    },
+                    limit=1,
                 )
-        except Exception:
-            pass
+                if stale_lines:
+                    score += 30
+                    context["is_stale_line"] = True
+                    sl = stale_lines[0]
+                    context["stale_tip"] = (
+                        f"{sportsbook.replace('_', ' ')} hasn't caught up "
+                        f"({sl.get('stale_type', 'stale')})"
+                    )
+            except Exception:
+                pass
 
-        # 2. Book profiling: is this book historically slow for this sport?
-        try:
-            reactions = self._db._get(
-                "book_reaction_times",
-                select="reaction_seconds",
-                filters={
-                    "soft_book": f"eq.{sportsbook}",
-                    "sport": f"eq.{sport}",
-                },
-                limit=20,
-            )
+        # 2. Book profiling — use cache if available.
+        if self._reaction_cache is not None:
+            book_key = f"{sportsbook}:{sport}"
+            reactions = self._reaction_cache.get(book_key, [])
             if reactions:
                 times = [
                     r["reaction_seconds"]
@@ -325,11 +339,33 @@ class RTMSignal:
                 ]
                 if times:
                     avg_time = sum(times) / len(times)
-                    if avg_time > 180:  # > 3 min average = slow book
+                    if avg_time > 180:
                         score += 15
                         context["slow_book"] = True
-        except Exception:
-            pass
+        else:
+            try:
+                reactions = self._db._get(
+                    "book_reaction_times",
+                    select="reaction_seconds",
+                    filters={
+                        "soft_book": f"eq.{sportsbook}",
+                        "sport": f"eq.{sport}",
+                    },
+                    limit=20,
+                )
+                if reactions:
+                    times = [
+                        r["reaction_seconds"]
+                        for r in reactions
+                        if r.get("reaction_seconds") is not None
+                    ]
+                    if times:
+                        avg_time = sum(times) / len(times)
+                        if avg_time > 180:
+                            score += 15
+                            context["slow_book"] = True
+            except Exception:
+                pass
 
         # 3. Market timing: is the current time in the optimal bet window?
         try:
@@ -351,7 +387,6 @@ class RTMSignal:
             try:
                 from intelligence.correlation_engine import PropCorrelationEngine
                 corr_engine = PropCorrelationEngine()
-                # Extract player name from side.
                 m = re.match(r"^(.+?)\s+(over|under)", side, re.IGNORECASE)
                 if m:
                     player = m.group(1).strip()
@@ -688,18 +723,22 @@ class RTMSignal:
             return []
 
     def load_cache(self, game_ids: list[str]) -> None:
-        """Bulk-load steam and movement data for multiple games.
+        """Bulk-load steam, movement, stale-line, and reaction data.
 
-        Uses IN filters to fetch all games in 1-2 queries instead of
-        2 queries per game (N+1 fix).
+        Uses IN filters to fetch all games in a handful of queries instead
+        of 2+ queries per game/opportunity (N+1 fix).
         """
         if self._db is None:
             self._steam_cache = {}
             self._movements_cache = {}
+            self._stale_cache = {}
+            self._reaction_cache = {}
             return
 
         self._steam_cache = {gid: [] for gid in game_ids}
         self._movements_cache = {gid: [] for gid in game_ids}
+        self._stale_cache = {gid: [] for gid in game_ids}
+        self._reaction_cache = {}
 
         if not game_ids:
             return
@@ -733,6 +772,38 @@ class RTMSignal:
                     self._movements_cache.setdefault(gid, []).append(r)
             except Exception:
                 pass
+
+        # Batch-fetch stale line alerts for all games at once.
+        for i in range(0, len(game_ids), 50):
+            chunk = game_ids[i : i + 50]
+            id_list = ",".join(chunk)
+            try:
+                rows = self._db._get(
+                    "stale_line_alerts",
+                    select="game_id,market_type,stale_book,status,stale_type,edge_percentage",
+                    filters={
+                        "game_id": f"in.({id_list})",
+                        "status": "eq.active",
+                    },
+                )
+                for r in rows:
+                    gid = r.get("game_id", "")
+                    self._stale_cache.setdefault(gid, []).append(r)
+            except Exception:
+                pass
+
+        # Batch-fetch ALL book reaction times in one query (not per-game).
+        # Keyed by "soft_book:sport" for quick lookup.
+        try:
+            rows = self._db._get(
+                "book_reaction_times",
+                select="soft_book,sport,reaction_seconds",
+            )
+            for r in rows:
+                key = f"{r.get('soft_book', '')}:{r.get('sport', '')}"
+                self._reaction_cache.setdefault(key, []).append(r)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -774,8 +845,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
 
     rows = []
     for s in signals:
-        # NOTE: away_team is NOT a column in rtm_signals — omit to
-        # avoid bulk insert failures.
+        # NOTE: away_team and commence_time are NOT columns in
+        # rtm_signals — omit to avoid bulk insert failures.
         rows.append({
             "game_id": s["game_id"],
             "sport": s["sport"],
@@ -799,7 +870,6 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "edge_percentage": s["edge_percentage"],
             "kelly_size": s.get("kelly_size"),
             "home_team": s.get("home_team", ""),
-            "commence_time": s.get("commence_time"),
             "other_books": _json.dumps(s.get("other_books", [])),
             "status": "active",
         })

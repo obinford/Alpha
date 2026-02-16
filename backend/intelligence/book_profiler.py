@@ -42,23 +42,8 @@ class BookProfiler:
     ) -> dict | None:
         """Record how long a soft book takes to match a sharp book movement.
 
-        Args:
-            game_id: The game this movement is for.
-            sport: Sport key (e.g. basketball_nba).
-            market_type: h2h, spreads, totals, or player_* prop.
-            side: The side that moved (e.g. "Lakers -3.5").
-            sharp_book: Which sharp book moved first.
-            sharp_move_time: ISO timestamp of sharp book movement.
-            soft_book: Which soft book we're tracking.
-            soft_move_time: ISO timestamp when soft book matched (None = still stale).
-            edge_at_stale: EV% available while the book was stale.
-
-        Returns:
-            The inserted row dict, or None on failure.
+        Returns the row dict (does NOT insert — see bulk_store_reactions).
         """
-        if self._db is None:
-            return None
-
         reaction_seconds = None
         was_stale = soft_move_time is None
 
@@ -70,7 +55,7 @@ class BookProfiler:
             except Exception:
                 pass
 
-        row = {
+        return {
             "game_id": game_id,
             "sport": sport,
             "market_type": market_type,
@@ -84,12 +69,19 @@ class BookProfiler:
             "edge_at_stale": edge_at_stale,
         }
 
+    def bulk_store_reactions(self, rows: list[dict]) -> int:
+        """Bulk-insert reaction time rows in one request.
+
+        Returns count of rows stored.
+        """
+        if not rows or self._db is None:
+            return 0
         try:
-            result = self._db._post("book_reaction_times", row)
-            return result
+            self._db._post_many("book_reaction_times", rows)
+            return len(rows)
         except Exception as e:
-            print(f"Warning: Failed to store book reaction time: {e}")
-            return None
+            print(f"Warning: Failed to bulk-store book reaction times: {e}")
+            return 0
 
     # ------------------------------------------------------------------
     # Analysis
@@ -463,6 +455,7 @@ def track_reactions_from_movements(
     """Analyze recent line movements to detect sharp book moves and track soft book reactions.
 
     Called during each scan cycle after storing line movements.
+    Collects all reaction rows and bulk-inserts them in one DB call.
 
     Args:
         db_client: Supabase client.
@@ -481,7 +474,7 @@ def track_reactions_from_movements(
         key = (mv.get("game_id", ""), mv.get("market_type", ""), mv.get("side", ""))
         groups.setdefault(key, []).append(mv)
 
-    count = 0
+    rows: list[dict] = []
     for (game_id, market_type, side), moves in groups.items():
         # Find sharp book moves.
         sharp_moves = [m for m in moves if m.get("bookmaker") in SHARP_BOOKS]
@@ -500,10 +493,9 @@ def track_reactions_from_movements(
         # Track soft book reactions.
         soft_moves = [m for m in moves if m.get("bookmaker") not in SHARP_BOOKS]
 
-        # Books that moved (have reaction time).
         for sm in soft_moves:
             soft_time = sm.get("timestamp")
-            profiler.track_book_reaction_time(
+            row = profiler.track_book_reaction_time(
                 game_id=game_id,
                 sport=sport,
                 market_type=market_type,
@@ -513,6 +505,9 @@ def track_reactions_from_movements(
                 soft_book=sm.get("bookmaker", ""),
                 soft_move_time=soft_time,
             )
-            count += 1
+            if row:
+                rows.append(row)
 
-    return count
+    if rows:
+        return profiler.bulk_store_reactions(rows)
+    return 0

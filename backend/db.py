@@ -149,6 +149,32 @@ class SupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _patch_by_ids(
+        self,
+        table: str,
+        id_column: str,
+        ids: list,
+        data: dict[str, Any],
+    ) -> None:
+        """Batch-PATCH rows matching an IN filter on *id_column*.
+
+        Sends one PATCH per chunk of 100 IDs, applying the same *data*
+        update to all matching rows.
+        """
+        if not ids:
+            return
+        for i in range(0, len(ids), 100):
+            chunk = ids[i : i + 100]
+            id_list = ",".join(str(x) for x in chunk)
+            resp = self._http.patch(
+                f"{self.base_url}/{table}",
+                headers={**self.headers, "Prefer": "return=minimal"},
+                params={id_column: f"in.({id_list})"},
+                json=data,
+                timeout=30,
+            )
+            resp.raise_for_status()
+
 
 def get_supabase() -> SupabaseClient:
     """Create and return a Supabase client using service-role credentials."""
