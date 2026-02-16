@@ -1229,14 +1229,14 @@ def run_scan(sport_keys: list[str]) -> int:
             for opp in game_opps:
                 src = opp.devig_source or "none"
                 # Simplify source label for summary.
-                if src.startswith("exchange:"):
+                if src.startswith("sharp_avg"):
+                    src_label = src  # e.g. "sharp_avg (3)"
+                elif src.startswith("exchange:"):
                     src_label = "exchange_consensus"
-                elif src.startswith("sharp:"):
-                    src_label = "sharp_consensus"
                 elif src.startswith("market_avg:"):
                     src_label = "market_average"
-                elif src == "pinnacle":
-                    src_label = "pinnacle"
+                elif src in ("pinnacle", "circa", "bookmaker"):
+                    src_label = src  # single sharp book
                 else:
                     src_label = src
                 devig_source_counts[src_label] = devig_source_counts.get(src_label, 0) + 1

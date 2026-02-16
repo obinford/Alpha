@@ -163,7 +163,33 @@ class TestDevigBest:
 # ---------------------------------------------------------------------------
 
 class TestSourceHierarchy:
-    def test_pinnacle_is_top_priority(self) -> None:
+    def test_three_sharps_avg(self) -> None:
+        """All three sharp books → sharp_avg (3), HIGH confidence."""
+        books = {
+            "pinnacle": (-150, 130),
+            "circa": (-152, 128),
+            "bookmaker": (-148, 126),
+            "draftkings": (-155, 125),
+        }
+        selected, source, confidence = select_devig_source(books)
+        assert source == "sharp_avg (3)"
+        assert confidence == "HIGH"
+        assert len(selected) == 3
+
+    def test_two_sharps_avg(self) -> None:
+        """Two sharp books → sharp_avg (2), HIGH confidence."""
+        books = {
+            "pinnacle": (-150, 130),
+            "circa": (-152, 128),
+            "draftkings": (-155, 125),
+        }
+        selected, source, confidence = select_devig_source(books)
+        assert source == "sharp_avg (2)"
+        assert confidence == "HIGH"
+        assert len(selected) == 2
+
+    def test_single_sharp_pinnacle(self) -> None:
+        """Only Pinnacle → source='pinnacle', MEDIUM confidence."""
         books = {
             "pinnacle": (-150, 130),
             "novig": (-152, 128),
@@ -171,29 +197,31 @@ class TestSourceHierarchy:
         }
         selected, source, confidence = select_devig_source(books)
         assert source == "pinnacle"
-        assert confidence == "HIGH"
+        assert confidence == "MEDIUM"
         assert len(selected) == 1
 
-    def test_exchanges_when_no_pinnacle(self) -> None:
+    def test_single_sharp_circa(self) -> None:
+        """Only Circa → source='circa', MEDIUM confidence."""
+        books = {
+            "circa": (-153, 129),
+            "novig": (-152, 128),
+            "draftkings": (-155, 125),
+        }
+        selected, source, confidence = select_devig_source(books)
+        assert source == "circa"
+        assert confidence == "MEDIUM"
+        assert len(selected) == 1
+
+    def test_exchanges_when_no_sharps(self) -> None:
         books = {
             "novig": (-152, 128),
             "betfair_ex_eu": (-148, 126),
             "draftkings": (-155, 125),
         }
         selected, source, confidence = select_devig_source(books)
-        assert confidence == "MEDIUM"
+        assert confidence == "LOW"
         assert source.startswith("exchange:")
         assert len(selected) >= 2
-
-    def test_sharps_when_no_exchanges(self) -> None:
-        books = {
-            "circa": (-153, 129),
-            "betonlineag": (-151, 127),
-            "draftkings": (-155, 125),
-        }
-        selected, source, confidence = select_devig_source(books)
-        assert confidence == "LOW"
-        assert source.startswith("sharp:")
 
     def test_market_avg_last_resort(self) -> None:
         books = {
@@ -202,13 +230,13 @@ class TestSourceHierarchy:
             "espnbet": (-158, 130),
         }
         selected, source, confidence = select_devig_source(books)
-        assert confidence == "CAUTION"
+        assert confidence == "LOW"
         assert source.startswith("market_avg:")
 
     def test_empty_books(self) -> None:
         selected, source, confidence = select_devig_source({})
         assert selected == []
-        assert confidence == "CAUTION"
+        assert confidence == "LOW"
 
 
 # ---------------------------------------------------------------------------
@@ -216,11 +244,24 @@ class TestSourceHierarchy:
 # ---------------------------------------------------------------------------
 
 class TestDevigMarket:
-    def test_pinnacle_result(self) -> None:
-        books = {"pinnacle": (-150, 130), "draftkings": (-155, 125)}
+    def test_sharp_avg_result(self) -> None:
+        books = {
+            "pinnacle": (-150, 130),
+            "circa": (-152, 128),
+            "draftkings": (-155, 125),
+        }
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "HIGH"
+        assert result.source == "sharp_avg (2)"
+        assert_sums_to_one(result.true_prob_a, result.true_prob_b)
+        assert result.overround > 1.0
+
+    def test_single_sharp_result(self) -> None:
+        books = {"pinnacle": (-150, 130), "draftkings": (-155, 125)}
+        result = devig_market(books)
+        assert result is not None
+        assert result.confidence == "MEDIUM"
         assert result.source == "pinnacle"
         assert_sums_to_one(result.true_prob_a, result.true_prob_b)
         assert result.overround > 1.0
@@ -232,7 +273,7 @@ class TestDevigMarket:
         }
         result = devig_market(books)
         assert result is not None
-        assert result.confidence == "CAUTION"
+        assert result.confidence == "LOW"
         assert_sums_to_one(result.true_prob_a, result.true_prob_b)
 
     def test_empty_returns_none(self) -> None:

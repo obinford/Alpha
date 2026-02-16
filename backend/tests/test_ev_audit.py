@@ -111,7 +111,7 @@ class TestFullPipeline:
         }
         result = devig_market(books)
         assert result is not None
-        assert result.confidence == "HIGH"
+        assert result.confidence == "MEDIUM"  # single sharp book
 
         # true_prob_b should be around 0.37
         assert 0.30 < result.true_prob_b < 0.45
@@ -139,29 +139,35 @@ class TestFullPipeline:
 class TestEdgeConfidence:
     """Test edge confidence classification."""
 
-    def test_pinnacle_high_confidence(self) -> None:
+    def test_single_sharp_medium_confidence(self) -> None:
         books = {"pinnacle": (-150, 130)}
-        result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "HIGH"
-
-    def test_exchange_medium_confidence(self) -> None:
-        books = {"novig": (-150, 130)}
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "MEDIUM"
 
-    def test_sharp_consensus_low_confidence(self) -> None:
+    def test_two_sharps_high_confidence(self) -> None:
+        books = {"pinnacle": (-150, 130), "circa": (-148, 128)}
+        result = devig_market(books)
+        assert result is not None
+        assert result.confidence == "HIGH"
+
+    def test_sharp_circa_only_medium(self) -> None:
         books = {"circa": (-150, 130), "betonlineag": (-148, 128)}
+        result = devig_market(books)
+        assert result is not None
+        assert result.confidence == "MEDIUM"  # single sharp (circa)
+
+    def test_exchange_low_confidence(self) -> None:
+        books = {"novig": (-150, 130)}
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "LOW"
 
-    def test_market_avg_caution(self) -> None:
+    def test_market_avg_low_confidence(self) -> None:
         books = {"draftkings": (-155, 125), "fanduel": (-160, 135)}
         result = devig_market(books)
         assert result is not None
-        assert result.confidence == "CAUTION"
+        assert result.confidence == "LOW"
 
 
 # ---------------------------------------------------------------------------

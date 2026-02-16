@@ -4,10 +4,10 @@ This is the most important calculation in the platform. Accurate devigging
 = accurate true probabilities = accurate EV = profitable betting.
 
 Source hierarchy (highest confidence first):
-  1. Pinnacle — gold standard sharp book (devig_confidence = HIGH)
-  2. Exchange consensus — Novig, Betfair, Matchbook (MEDIUM)
-  3. Sharp book weighted average — Circa, BetOnline, Bovada (LOW)
-  4. Market average of all books — last resort (CAUTION)
+  1. Sharp book average — mean of devigged probs from Pinnacle, Circa,
+     Bookmaker.  2-3 sharps = HIGH, 1 sharp = MEDIUM.
+  2. Exchange consensus — Novig, Betfair, Matchbook (LOW)
+  3. Market average of all books — last resort (LOW)
 
 Devig methods:
   - Multiplicative: divide each implied prob by the overround
@@ -20,7 +20,7 @@ Usage:
 
     result = devig_game_market(game, "h2h")
     # result.true_probs = {("TeamA", None): 0.55, ("TeamB", None): 0.45}
-    # result.source = "pinnacle"
+    # result.source = "sharp_avg (2)"
     # result.method = "multiplicative"
     # result.confidence = "HIGH"
 """
@@ -290,10 +290,10 @@ def select_devig_source(
     """Select the best devig source from available bookmakers.
 
     Hierarchy:
-      1. Pinnacle → HIGH confidence
-      2. Exchange consensus → MEDIUM
-      3. Sharp book weighted average → LOW
-      4. Market average → CAUTION
+      1. Sharp book average (Pinnacle, Circa, Bookmaker)
+         - 2-3 sharps → HIGH, 1 sharp → MEDIUM
+      2. Exchange consensus → LOW
+      3. Market average → LOW
 
     Args:
         available_books: {book_key: (odds_a, odds_b)} for all books in a market.
@@ -301,15 +301,24 @@ def select_devig_source(
     Returns:
         (selected_books, source_label, confidence)
     """
-    # 1. Pinnacle
-    for key in _PINNACLE_KEYS:
+    # 1. Sharp book average (Pinnacle, Circa, Bookmaker).
+    sharp_books = []
+    for key in _SHARP_KEYS:
         if key in available_books:
             odds_a, odds_b = available_books[key]
-            return (
-                [BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 1.0))],
-                key,
-                "HIGH",
+            sharp_books.append(
+                BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.8))
             )
+    if sharp_books:
+        n = len(sharp_books)
+        if n >= 2:
+            source = f"sharp_avg ({n})"
+            confidence: Confidence = "HIGH"
+        else:
+            # Single sharp — use its name directly.
+            source = sharp_books[0].key
+            confidence = "MEDIUM"
+        return sharp_books, source, confidence
 
     # 2. Exchange consensus
     exchange_books = []
@@ -321,29 +330,17 @@ def select_devig_source(
             )
     if exchange_books:
         source = "exchange:" + ",".join(bo.key for bo in exchange_books)
-        return exchange_books, source, "MEDIUM"
+        return exchange_books, source, "LOW"
 
-    # 3. Sharp book weighted average
-    sharp_books = []
-    for key in _SHARP_KEYS:
-        if key in available_books:
-            odds_a, odds_b = available_books[key]
-            sharp_books.append(
-                BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.7))
-            )
-    if sharp_books:
-        source = "sharp:" + ",".join(bo.key for bo in sharp_books)
-        return sharp_books, source, "LOW"
-
-    # 4. Market average — all books
+    # 3. Market average — all books
     all_books = []
     for key, (odds_a, odds_b) in available_books.items():
         all_books.append(BookOdds(key, odds_a, odds_b, 0.3))
     if all_books:
         source = f"market_avg:{len(all_books)}_books"
-        return all_books, source, "CAUTION"
+        return all_books, source, "LOW"
 
-    return [], "none", "CAUTION"
+    return [], "none", "LOW"
 
 
 def devig_market(
