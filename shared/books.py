@@ -29,10 +29,14 @@ BOOK_REGISTRY: dict[str, BookInfo] = {
     # SHARP BOOKS — set the market.  Primary devig sources.
     # ---------------------------------------------------------------
     "pinnacle": {"name": "Pinnacle", "tier": "sharp", "region": "eu", "weight": 1.0},
-    "betonlineag": {"name": "BetOnline", "tier": "sharp", "region": "us", "weight": 0.8},
-    "bovada": {"name": "Bovada", "tier": "sharp", "region": "us", "weight": 0.7},
-    "lowvig": {"name": "LowVig", "tier": "sharp", "region": "us", "weight": 0.7},
-    "circa": {"name": "Circa", "tier": "sharp", "region": "us", "weight": 0.75},
+    "circa": {"name": "Circa", "tier": "sharp", "region": "us", "weight": 0.85},
+    "bookmaker": {"name": "Bookmaker", "tier": "sharp", "region": "us", "weight": 0.8},
+
+    # ---------------------------------------------------------------
+    # US BOOKS — not sharp enough for devig but still useful lines.
+    # ---------------------------------------------------------------
+    "betonlineag": {"name": "BetOnline", "tier": "market_maker", "region": "us", "weight": 0.5},
+    "bovada": {"name": "Bovada", "tier": "market_maker", "region": "us", "weight": 0.5},
 
     # ---------------------------------------------------------------
     # EXCHANGES — near-zero vig, discover true prices.

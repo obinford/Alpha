@@ -38,7 +38,7 @@ export const ODDS_API_SPORT_KEYS: Record<Sport, string> = {
   WTA_US_OPEN: "tennis_wta_us_open",
 };
 
-export const SHARP_BOOKS = ["pinnacle", "circa"] as const;
+export const SHARP_BOOKS = ["pinnacle", "circa", "bookmaker"] as const;
 
 export const MARKETS = ["h2h", "spreads", "totals"] as const;
 

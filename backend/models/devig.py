@@ -231,15 +231,13 @@ def devig_pair(
 # Order matters — first match wins within each tier.
 _PINNACLE_KEYS = {"pinnacle"}
 _EXCHANGE_KEYS = {"novig", "betfair_ex_uk", "betfair_ex_eu", "smarkets", "matchbook"}
-_SHARP_KEYS = {"pinnacle", "circa", "betonlineag", "bovada", "lowvig"}
+_SHARP_KEYS = {"pinnacle", "circa", "bookmaker"}
 
 # Weights for weighted average (when doing sharp consensus).
 _SHARP_WEIGHTS: dict[str, float] = {
     "pinnacle": 1.0,
-    "circa": 0.75,
-    "betonlineag": 0.8,
-    "bovada": 0.7,
-    "lowvig": 0.7,
+    "circa": 0.85,
+    "bookmaker": 0.8,
     "novig": 0.9,
     "betfair_ex_uk": 0.9,
     "betfair_ex_eu": 0.9,

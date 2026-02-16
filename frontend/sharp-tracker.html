@@ -364,9 +364,9 @@ let currentChartData = null; // stored for time range filtering
 let currentChartRange = 24; // default time range in hours (0 = all)
 
 // Sharp books — the only ones we chart
-const SHARP_BOOKS = ['pinnacle','betonlineag','circa','bovada'];
-const SHARP_BOOK_LABELS = {pinnacle:'Pinnacle',betonlineag:'BetOnline',circa:'Circa',bovada:'Bovada'};
-const SHARP_BOOK_COLORS = {pinnacle:'#ffd700',betonlineag:'#42a5f5',circa:'#00e676',bovada:'#ff7043'};
+const SHARP_BOOKS = ['pinnacle','circa','bookmaker'];
+const SHARP_BOOK_LABELS = {pinnacle:'Pinnacle',circa:'Circa',bookmaker:'Bookmaker'};
+const SHARP_BOOK_COLORS = {pinnacle:'#ffd700',circa:'#00e676',bookmaker:'#42a5f5'};
 
 function isSharpBook(book) {
   if (!book) return false;

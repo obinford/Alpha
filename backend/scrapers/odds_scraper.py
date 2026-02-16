@@ -51,18 +51,18 @@ from books import get_book_tier, get_book_name, get_book_info
 # fetching to reduce payload size and avoid false +EV noise.
 # ---------------------------------------------------------------------------
 ALLOWED_BOOKS: set[str] = {
-    # US sharp
-    "betonlineag", "bovada", "lowvig",
+    # Sharp reference (needed for devig)
+    "pinnacle", "circa", "bookmaker",
+    # US books
+    "betonlineag", "bovada",
     # US market makers
-    "betmgm", "betrivers", "williamhill_us", "draftkings", "fanatics", "fanduel",
+    "betmgm", "betrivers", "draftkings", "fanatics", "fanduel",
     # US soft
     "betus", "mybookieag",
     # US2 soft
-    "ballybet", "betanysports", "betparx", "espnbet", "fliff", "hardrockbet", "rebet",
+    "ballybet", "betparx", "espnbet", "fliff", "hardrockbet", "rebet",
     # US exchanges
     "betopenly", "kalshi", "novig", "polymarket", "prophetx",
-    # Sharp reference (EU region, needed for devig)
-    "pinnacle",
 }
 
 # Build fetch regions: base regions + eu (for Pinnacle).
