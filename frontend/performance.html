@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RTM Picks — Performance Analytics</title>
+<title>RTM Picks — Performance Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -14,21 +14,16 @@
   }
   a{color:#42a5f5;text-decoration:none}
   a:hover{text-decoration:underline}
-  .container{max-width:1440px;margin:0 auto;padding:16px 24px}
-
-  /* Nav */
-  nav{
-    display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
-    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;overflow-x:auto;
-  }
-  nav a{color:#5a6378;padding:4px 0;border-bottom:2px solid transparent;white-space:nowrap}
-  nav a:hover{color:#c8cdd6;text-decoration:none}
-  nav a.active{color:#00e676;border-bottom-color:#00e676}
+  .container{max-width:1400px;margin:0 auto;padding:16px 24px}
 
   /* Header */
   header{
     display:flex;align-items:center;justify-content:space-between;
-    padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;flex-wrap:wrap;gap:8px;
+    padding:12px 0;margin-bottom:4px;position:relative;
+  }
+  header::after{
+    content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+    background:linear-gradient(90deg,#00e676,#42a5f5,#ce93d8,#ff5252);opacity:.5;
   }
   .brand{display:flex;align-items:baseline;gap:10px}
   .brand h1{font-size:20px;font-weight:700;color:#e1e5eb;letter-spacing:1px}
@@ -37,41 +32,68 @@
   .status-bar{display:flex;align-items:center;gap:16px;font-size:11px;color:#5a6378}
   .status-bar .dot{
     width:7px;height:7px;border-radius:50%;display:inline-block;
-    background:#00e676;box-shadow:0 0 6px #00e67680;
+    background:#00e676;box-shadow:0 0 6px #00e67680;animation:pulse 2s ease-in-out infinite;
   }
-  .status-bar .dot.error{background:#ff5252;box-shadow:0 0 6px #ff525280}
+  .status-bar .dot.error{background:#ff5252;box-shadow:0 0 6px #ff525280;animation:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
-  /* Summary stats */
-  .stats{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
-  .stat-card{
-    background:#111827;border:1px solid #1a2035;border-radius:6px;
-    padding:10px 16px;min-width:120px;flex:1;
+  /* Nav */
+  nav{
+    display:flex;gap:24px;padding:10px 0;border-bottom:1px solid #1a2035;margin-bottom:20px;
+    font-size:12px;text-transform:uppercase;letter-spacing:1.5px;overflow-x:auto;
   }
-  .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378;margin-bottom:2px}
-  .stat-card .value{font-size:22px;font-weight:700;color:#e1e5eb}
+  nav a{color:#5a6378;padding:4px 0;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s}
+  nav a:hover{color:#c8cdd6;text-decoration:none}
+  nav a.active{color:#00e676;border-bottom-color:#00e676}
+
+  /* Stats bar */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+  .stat-card{
+    background:linear-gradient(135deg,#111827 0%,#0f1521 100%);
+    border:1px solid #1a2035;border-radius:8px;
+    padding:14px 18px;transition:border-color .2s;
+  }
+  .stat-card:hover{border-color:#2a3555}
+  .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378;margin-bottom:4px}
+  .stat-card .value{font-size:24px;font-weight:700;color:#e1e5eb}
   .stat-card .value.red{color:#ff5252}
   .stat-card .value.blue{color:#42a5f5}
   .stat-card .value.green{color:#00e676}
-  .stat-card .value.gold{color:#ffd700}
+  .stat-card .value.yellow{color:#ffc107}
   .stat-card .sub{font-size:10px;color:#5a6378;margin-top:2px}
 
-  /* Section headers */
-  .section-title{
-    font-size:13px;font-weight:700;color:#e1e5eb;text-transform:uppercase;
-    letter-spacing:1.5px;margin:20px 0 10px;padding-bottom:6px;
-    border-bottom:1px solid #1a2035;display:flex;align-items:center;gap:12px;
-  }
-  .section-count{font-size:11px;color:#5a6378;font-weight:400;letter-spacing:0;text-transform:none}
-
   /* Filters */
-  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+  .filters{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;align-items:center}
   .filter-group{display:flex;flex-direction:column;gap:2px}
   .filter-group label{font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378}
   .filter-group select{
-    background:#111827;color:#c8cdd6;border:1px solid #1a2035;border-radius:4px;
-    padding:6px 10px;font-family:inherit;font-size:12px;min-width:120px;
+    background:#111827;color:#c8cdd6;border:1px solid #1a2035;border-radius:6px;
+    padding:7px 12px;font-family:inherit;font-size:12px;min-width:130px;cursor:pointer;
   }
   .filter-group select:focus{outline:none;border-color:#2a3555}
+
+  /* Section headers */
+  .section-header{
+    display:flex;align-items:center;justify-content:space-between;
+    margin:28px 0 14px;padding-bottom:8px;border-bottom:1px solid #1a2035;
+  }
+  .section-title{font-size:14px;font-weight:700;color:#e1e5eb;text-transform:uppercase;letter-spacing:1.5px}
+
+  /* Chart containers */
+  .chart-card{
+    background:linear-gradient(135deg,#111827 0%,#0d1220 100%);
+    border:1px solid #1a2035;border-radius:8px;padding:20px;
+    margin-bottom:20px;
+  }
+  .chart-card h3{font-size:14px;color:#e1e5eb;font-weight:700;margin-bottom:14px}
+  .chart-card .chart-wrap{position:relative;height:320px}
+  .chart-card .chart-wrap canvas{width:100%!important;height:100%!important}
+  .charts-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+
+  /* Lead time table */
+  .lead-time-section{margin-bottom:24px}
+  .lead-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .lead-time-grid .chart-card{margin-bottom:0}
 
   /* Sport badge */
   .sport-badge{
@@ -86,63 +108,9 @@
   .sport-cbb{background:#2a1a2a;color:#ba68c8;border:1px solid #4a2e4a}
   .sport-default{background:#1a1a1a;color:#8892a4;border:1px solid #2a2a2a}
 
-  /* Tier cards */
-  .tier-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px}
-  .tier-card{
-    background:#111827;border:1px solid #1a2035;border-radius:6px;padding:14px 16px;
-    position:relative;overflow:hidden;
-  }
-  .tier-card .tier-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-  .tier-card .tier-label{font-size:12px;font-weight:700;color:#e1e5eb;display:flex;align-items:center;gap:6px}
-  .tier-card .tier-total{font-size:10px;color:#5a6378}
-  .tier-card .tier-record{font-size:18px;font-weight:700;color:#e1e5eb;margin-bottom:4px}
-  .tier-card .tier-stats{display:flex;gap:12px;font-size:11px;color:#5a6378}
-  .tier-card .tier-stats .pos{color:#00e676}
-  .tier-card .tier-stats .neg{color:#ff5252}
-  .tier-card .tier-bar{
-    position:absolute;bottom:0;left:0;height:3px;border-radius:0 0 6px 6px;
-  }
-  .stars{color:#ffd700;letter-spacing:1px}
-
-  /* Breakdown cards */
-  .breakdown-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:20px}
-  .breakdown-card{
-    background:#111827;border:1px solid #1a2035;border-radius:6px;padding:14px 16px;
-  }
-  .breakdown-card .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-  .breakdown-card .card-name{font-size:12px;font-weight:700;color:#e1e5eb;text-transform:uppercase}
-  .breakdown-card .card-total{font-size:10px;color:#5a6378}
-  .breakdown-card .card-record{font-size:16px;font-weight:700;color:#e1e5eb;margin-bottom:4px}
-  .breakdown-card .card-stats{display:flex;gap:10px;font-size:11px;color:#5a6378;flex-wrap:wrap}
-  .breakdown-card .card-bar{
-    height:4px;border-radius:2px;margin-top:8px;background:#1a2035;position:relative;overflow:hidden;
-  }
-  .breakdown-card .card-bar-fill{height:100%;border-radius:2px}
-
-  /* EV buckets */
-  .ev-buckets{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:20px}
-  .ev-bucket{
-    background:#111827;border:1px solid #1a2035;border-radius:6px;padding:12px 14px;
-    text-align:center;
-  }
-  .ev-bucket .bucket-range{font-size:11px;font-weight:700;color:#ffc107;margin-bottom:4px;letter-spacing:0.5px}
-  .ev-bucket .bucket-record{font-size:16px;font-weight:700;color:#e1e5eb;margin-bottom:2px}
-  .ev-bucket .bucket-stats{font-size:10px;color:#5a6378}
-  .ev-bucket .bucket-stats .pos{color:#00e676}
-  .ev-bucket .bucket-stats .neg{color:#ff5252}
-
-  /* Charts */
-  .charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-  .chart-section{
-    background:#111827;border:1px solid #1a2035;border-radius:6px;padding:16px;
-  }
-  .chart-section h3{font-size:13px;color:#e1e5eb;font-weight:600;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
-  .chart-section canvas{max-height:300px}
-
   /* Table */
   .table-wrap{
-    background:#111827;border:1px solid #1a2035;border-radius:6px;overflow:auto;
-    margin-bottom:20px;
+    background:#111827;border:1px solid #1a2035;border-radius:8px;overflow:auto;margin-bottom:20px;
   }
   table{width:100%;border-collapse:collapse;white-space:nowrap}
   thead th{
@@ -152,10 +120,8 @@
     position:sticky;top:0;
   }
   tbody td{padding:9px 14px;border-bottom:1px solid #131b2e}
-  tbody tr{transition:background .1s}
   tbody tr:hover{background:#151e30}
   tbody tr:last-child td{border-bottom:none}
-
   .result-win{color:#00e676;font-weight:700}
   .result-loss{color:#ff5252;font-weight:700}
   .result-push{color:#5a6378;font-weight:700}
@@ -164,9 +130,24 @@
   .pnl-pos{color:#00e676;font-weight:700}
   .pnl-neg{color:#ff5252;font-weight:700}
   .pnl-zero{color:#5a6378;font-weight:700}
-  .book-name{font-size:11px;color:#ce93d8;font-weight:600;text-transform:uppercase}
 
-  /* Loading / error */
+  /* Sportsbook cards grid */
+  .book-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:24px}
+  .book-card{
+    background:linear-gradient(135deg,#111827 0%,#0f1521 100%);
+    border:1px solid #1a2035;border-radius:8px;padding:16px;
+    transition:border-color .2s;
+  }
+  .book-card:hover{border-color:#2a3555}
+  .book-card .book-name{font-size:13px;font-weight:700;color:#ce93d8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+  .book-card .book-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .book-stat{display:flex;flex-direction:column}
+  .book-stat .bs-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#5a6378}
+  .book-stat .bs-value{font-size:15px;font-weight:700;color:#e1e5eb}
+  .book-stat .bs-value.green{color:#00e676}
+  .book-stat .bs-value.red{color:#ff5252}
+
+  /* Loading / empty */
   .message{text-align:center;padding:40px 20px;color:#5a6378}
   .message.error{color:#ff5252}
   .spinner{
@@ -174,19 +155,21 @@
     border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px;
   }
   @keyframes spin{to{transform:rotate(360deg)}}
+  .empty-state{
+    text-align:center;padding:48px 20px;color:#5a6378;
+    background:#111827;border:1px solid #1a2035;border-radius:8px;
+  }
+  .empty-state .empty-title{font-size:14px;color:#8892a4;font-weight:600;margin-bottom:4px}
 
-  /* Responsive */
   @media(max-width:768px){
     .container{padding:10px 12px}
-    .charts-grid{grid-template-columns:1fr}
+    .charts-row,.lead-time-grid{grid-template-columns:1fr}
+    .book-grid{grid-template-columns:1fr 1fr}
     table{font-size:12px}
     thead th,tbody td{padding:7px 8px}
-    .stats{gap:6px}
-    .stat-card{min-width:auto;padding:8px 12px}
+    .stats{grid-template-columns:repeat(3,1fr)}
     .stat-card .value{font-size:18px}
-    .tier-grid{grid-template-columns:1fr 1fr}
-    .breakdown-grid{grid-template-columns:1fr 1fr}
-    .ev-buckets{grid-template-columns:1fr 1fr}
+    .chart-card .chart-wrap{height:250px}
   }
 </style>
 </head>
@@ -195,36 +178,37 @@
   <header>
     <div class="brand">
       <h1>RTM <span>Picks</span></h1>
-      <span class="tagline">Performance Analytics</span>
+      <span class="tagline">Performance Dashboard</span>
     </div>
     <div class="status-bar">
       <span id="status-dot" class="dot"></span>
       <span id="status-text">Connecting...</span>
-      <span id="refresh-timer" style="color:#5a6378"></span>
+      <span class="count" id="refresh-timer"></span>
     </div>
   </header>
 
   <nav>
     <a href="dashboard.html">Dashboard</a>
     <a href="signal.html">Signal</a>
+    <a href="intelligence.html">Intelligence</a>
     <a href="sharp-tracker.html">Sharp Tracker</a>
     <a href="props.html">Props</a>
     <a href="odds-screen.html">Odds Screen</a>
     <a href="performance.html" class="active">Performance</a>
+    <a href="book-profiles.html">Book Intel</a>
     <a href="clv-report.html">CLV Report</a>
     <a href="daily-recap.html">Daily Recap</a>
     <a href="bankroll.html">Bankroll</a>
   </nav>
 
-  <!-- Top Stats -->
-  <div class="stats" id="stats-row">
-    <div class="stat-card"><div class="label">Record</div><div class="value" id="stat-record">&mdash;</div></div>
-    <div class="stat-card"><div class="label">Win Rate</div><div class="value green" id="stat-winrate">&mdash;</div></div>
-    <div class="stat-card"><div class="label">Units P/L</div><div class="value green" id="stat-units">&mdash;</div></div>
-    <div class="stat-card"><div class="label">ROI</div><div class="value green" id="stat-roi">&mdash;</div></div>
-    <div class="stat-card"><div class="label">Avg EV%</div><div class="value gold" id="stat-avg-ev">&mdash;</div></div>
-    <div class="stat-card"><div class="label">Avg Lead Time</div><div class="value blue" id="stat-lead-time">&mdash;</div><div class="sub">Signal to game start</div></div>
-    <div class="stat-card"><div class="label">Total Graded</div><div class="value" id="stat-total">&mdash;</div><div class="sub" id="stat-pending-sub"></div></div>
+  <!-- 1. Stats Bar -->
+  <div class="stats">
+    <div class="stat-card"><div class="label">Total Bets</div><div class="value blue" id="stat-total">0</div></div>
+    <div class="stat-card"><div class="label">Record</div><div class="value" id="stat-record">0-0-0</div></div>
+    <div class="stat-card"><div class="label">Win Rate</div><div class="value green" id="stat-winrate">—</div></div>
+    <div class="stat-card"><div class="label">Profit / Loss</div><div class="value green" id="stat-units">0.00u</div></div>
+    <div class="stat-card"><div class="label">ROI</div><div class="value green" id="stat-roi">—</div></div>
+    <div class="stat-card"><div class="label">Avg EV%</div><div class="value yellow" id="stat-avg-ev">—</div></div>
   </div>
 
   <!-- Filters -->
@@ -238,7 +222,7 @@
       <select id="filter-book"><option value="">All Books</option></select>
     </div>
     <div class="filter-group">
-      <label>Date Range</label>
+      <label>Time Period</label>
       <select id="filter-range">
         <option value="today">Today</option>
         <option value="7d">Last 7 Days</option>
@@ -248,58 +232,58 @@
     </div>
   </div>
 
-  <!-- Signal Tier Performance -->
-  <div class="section-title">
-    Performance by Star Rating
-    <span class="section-count" id="tier-count"></span>
-  </div>
-  <div class="tier-grid" id="tier-grid">
-    <div class="message">Loading tier data...</div>
+  <!-- 2. Cumulative P&L Chart -->
+  <div class="chart-card">
+    <h3>Cumulative Profit & Loss</h3>
+    <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
   </div>
 
-  <!-- EV Bucket Analysis -->
-  <div class="section-title">
-    EV Bucket Analysis
-    <span class="section-count">Win rate by edge size</span>
+  <!-- 3. Lead Time Breakdown -->
+  <div class="section-header">
+    <div class="section-title">Lead Time Breakdown</div>
   </div>
-  <div class="ev-buckets" id="ev-buckets">
-    <div class="message">Loading...</div>
-  </div>
-
-  <!-- Charts -->
-  <div class="charts-grid">
-    <div class="chart-section">
-      <h3>Cumulative Units Profit</h3>
-      <canvas id="profitChart"></canvas>
+  <div class="lead-time-grid">
+    <div class="chart-card">
+      <h3>Performance by Lead Time</h3>
+      <div class="chart-wrap"><canvas id="leadTimeChart"></canvas></div>
     </div>
-    <div class="chart-section">
-      <h3>ROI by Sport</h3>
-      <canvas id="sportRoiChart"></canvas>
+    <div class="chart-card" style="overflow:auto">
+      <h3>Lead Time Details</h3>
+      <table id="lead-time-table">
+        <thead><tr><th>Bucket</th><th>Bets</th><th>Record</th><th>Win %</th><th>ROI</th><th>P/L</th></tr></thead>
+        <tbody id="lead-time-body">
+          <tr><td colspan="6" class="message">Loading...</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
-  <!-- By Sport Cards -->
-  <div class="section-title">
-    By Sport
-    <span class="section-count" id="sport-count"></span>
+  <!-- 4. EV vs Actual Performance -->
+  <div class="section-header">
+    <div class="section-title">EV vs Actual Performance</div>
   </div>
-  <div class="breakdown-grid" id="sport-grid">
-    <div class="message">Loading...</div>
-  </div>
-
-  <!-- By Sportsbook Cards -->
-  <div class="section-title">
-    By Sportsbook
-    <span class="section-count" id="book-count"></span>
-  </div>
-  <div class="breakdown-grid" id="book-grid">
-    <div class="message">Loading...</div>
+  <div class="charts-row">
+    <div class="chart-card">
+      <h3>Actual ROI vs Expected ROI by EV Bucket</h3>
+      <div class="chart-wrap"><canvas id="evRoiChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Win Rate by EV Bucket</h3>
+      <div class="chart-wrap"><canvas id="evWinChart"></canvas></div>
+    </div>
   </div>
 
-  <!-- Results Table -->
-  <div class="section-title">
-    Pick Results
-    <span class="section-count" id="results-count"></span>
+  <!-- 5. By Sportsbook -->
+  <div class="section-header">
+    <div class="section-title">Performance by Sportsbook</div>
+  </div>
+  <div class="book-grid" id="book-grid">
+    <div class="message"><div class="spinner"></div>Loading...</div>
+  </div>
+
+  <!-- 6. Results Table -->
+  <div class="section-header">
+    <div class="section-title">Pick History</div>
   </div>
   <div class="table-wrap">
     <table>
@@ -313,7 +297,7 @@
           <th>Odds</th>
           <th>EV%</th>
           <th>Result</th>
-          <th>P&amp;L</th>
+          <th>P&L</th>
         </tr>
       </thead>
       <tbody id="results-body">
@@ -329,561 +313,493 @@ const API = (window.location.hostname === '127.0.0.1' || window.location.hostnam
 const REFRESH_INTERVAL = 120;
 let countdown = REFRESH_INTERVAL;
 let timerInterval = null;
-let profitChartInstance = null;
-let sportRoiChartInstance = null;
+
+// Chart instances
+let pnlChartInst = null;
+let leadTimeChartInst = null;
+let evRoiChartInst = null;
+let evWinChartInst = null;
 
 function sportKey(raw) {
-  if (!raw) return 'default';
+  if (!raw) return "default";
   const s = raw.toLowerCase();
-  if (s.includes('mlb') || s.includes('baseball')) return 'mlb';
-  if (s.includes('nba') || s.includes('basketball_nba')) return 'nba';
-  if (s.includes('nfl') || s.includes('football_nfl')) return 'nfl';
-  if (s.includes('nhl') || s.includes('hockey')) return 'nhl';
-  if (s.includes('ncaaf') || s.includes('football_ncaa')) return 'cfb';
-  if (s.includes('ncaab') || s.includes('basketball_ncaa')) return 'cbb';
-  return 'default';
+  if (s.includes("mlb") || s.includes("baseball")) return "mlb";
+  if (s.includes("nba") || s.includes("basketball_nba")) return "nba";
+  if (s.includes("nfl") || s.includes("football_nfl")) return "nfl";
+  if (s.includes("nhl") || s.includes("hockey")) return "nhl";
+  if (s.includes("ncaaf") || s.includes("football_ncaa")) return "cfb";
+  if (s.includes("ncaab") || s.includes("basketball_ncaa")) return "cbb";
+  return "default";
 }
 
 function sportLabel(raw) {
-  const map = {mlb:'MLB', nba:'NBA', nfl:'NFL', nhl:'NHL', cfb:'CFB', cbb:'CBB'};
-  return map[sportKey(raw)] || raw || '\u2014';
+  const map = {mlb:"MLB",nba:"NBA",nfl:"NFL",nhl:"NHL",cfb:"CFB",cbb:"CBB"};
+  return map[sportKey(raw)] || raw || "\u2014";
 }
 
-const SPORT_COLORS = {
-  mlb: { bg: '#4caf5040', border: '#4caf50', fill: '#4caf50' },
-  nba: { bg: '#5c6bc040', border: '#5c6bc0', fill: '#5c6bc0' },
-  nfl: { bg: '#a1887f40', border: '#a1887f', fill: '#a1887f' },
-  nhl: { bg: '#4dd0e140', border: '#4dd0e1', fill: '#4dd0e1' },
-  cfb: { bg: '#ffb74d40', border: '#ffb74d', fill: '#ffb74d' },
-  cbb: { bg: '#ba68c840', border: '#ba68c8', fill: '#ba68c8' },
-  default: { bg: '#8892a440', border: '#8892a4', fill: '#8892a4' },
+function fmtOdds(v) { const n=Number(v); return isNaN(n)?String(v):n>0?"+"+n:String(n); }
+function fmtPct(v) { const n=Number(v); return isNaN(n)?"\u2014":n.toFixed(2)+"%"; }
+function fmtUnits(v) { const n=Number(v); if(isNaN(n)) return "\u2014"; return (n>0?"+":"")+n.toFixed(2)+"u"; }
+function fmtDate(ts) {
+  if(!ts) return "\u2014";
+  const d=new Date(ts);
+  return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"America/New_York"});
+}
+
+function setStatus(ok,text) {
+  document.getElementById("status-dot").className = ok?"dot":"dot error";
+  document.getElementById("status-text").textContent = text;
+}
+
+// Shared chart config
+const CHART_FONT = { family: 'monospace', size: 10 };
+const CHART_GRID = { color: '#131b2e', lineWidth: 0.5 };
+const CHART_TOOLTIP = {
+  backgroundColor:"#0d1220",borderColor:"#2a3555",borderWidth:1,
+  titleColor:"#e1e5eb",bodyColor:"#c8cdd6",
+  bodyFont:{family:"monospace",size:11},titleFont:{family:"monospace",size:11},
+  padding:10,cornerRadius:6,
 };
 
-function fmtOdds(v) {
-  const n = Number(v);
-  if (isNaN(n)) return String(v);
-  return n > 0 ? '+' + n : String(n);
-}
+// ==== 1. Stats Bar ====
+function renderStats(summary) {
+  const w = summary.wins||0, l = summary.losses||0, p = summary.pushes||0;
+  const total = summary.total_bets || (w+l+p);
+  const wr = (w+l)>0 ? (w/(w+l)*100) : 0;
+  const roi = summary.roi||0;
+  const units = summary.units_profit||0;
+  const avgEv = summary.avg_ev||0;
 
-function fmtPct(v) {
-  const n = Number(v);
-  return isNaN(n) ? '\u2014' : n.toFixed(2) + '%';
-}
+  document.getElementById("stat-total").textContent = total;
+  document.getElementById("stat-record").textContent = `${w}-${l}-${p}`;
 
-function fmtUnits(v) {
-  const n = Number(v);
-  if (isNaN(n)) return '\u2014';
-  return (n > 0 ? '+' : '') + n.toFixed(2) + 'u';
-}
+  const wrEl = document.getElementById("stat-winrate");
+  wrEl.textContent = (w+l)>0 ? wr.toFixed(1)+"%" : "\u2014";
+  wrEl.className = "value " + (wr>=50?"green":"red");
 
-function fmtDate(ts) {
-  if (!ts) return '\u2014';
-  try {
-    return new Date(ts).toLocaleDateString('en-US', {
-      timeZone: 'America/New_York', month: 'short', day: 'numeric'
-    });
-  } catch { return '\u2014'; }
-}
-
-function setStatus(ok, text) {
-  document.getElementById('status-dot').className = ok ? 'dot' : 'dot error';
-  document.getElementById('status-text').textContent = text;
-}
-
-function colorClass(v) { return v >= 0 ? 'pos' : 'neg'; }
-function colorStyle(v) { return v >= 0 ? 'color:#00e676' : 'color:#ff5252'; }
-
-// --- Render Summary Stats ---
-function renderSummary(summary, signalData) {
-  const wins = summary.wins || 0;
-  const losses = summary.losses || 0;
-  const pushes = summary.pushes || 0;
-  const decided = wins + losses;
-  const winRate = decided > 0 ? (wins / decided * 100) : 0;
-  const roi = summary.roi || 0;
-  const units = summary.units_profit || 0;
-  const avgEv = summary.avg_ev || 0;
-
-  document.getElementById('stat-record').textContent =
-    wins + '-' + losses + (pushes ? '-' + pushes : '');
-
-  const winRateEl = document.getElementById('stat-winrate');
-  winRateEl.textContent = decided > 0 ? winRate.toFixed(1) + '%' : '\u2014';
-  winRateEl.className = 'value ' + (winRate >= 52 ? 'green' : winRate >= 50 ? '' : 'red');
-
-  const unitsEl = document.getElementById('stat-units');
+  const unitsEl = document.getElementById("stat-units");
   unitsEl.textContent = fmtUnits(units);
-  unitsEl.className = 'value ' + (units >= 0 ? 'green' : 'red');
+  unitsEl.className = "value " + (units>=0?"green":"red");
 
-  const roiEl = document.getElementById('stat-roi');
-  roiEl.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
-  roiEl.className = 'value ' + (roi >= 0 ? 'green' : 'red');
+  const roiEl = document.getElementById("stat-roi");
+  roiEl.textContent = roi>=0 ? "+"+roi.toFixed(1)+"%" : roi.toFixed(1)+"%";
+  roiEl.className = "value " + (roi>=0?"green":"red");
 
-  const avgEvEl = document.getElementById('stat-avg-ev');
-  avgEvEl.textContent = avgEv > 0 ? '+' + avgEv.toFixed(2) + '%' : fmtPct(avgEv);
+  document.getElementById("stat-avg-ev").textContent = avgEv>0 ? "+"+avgEv.toFixed(2)+"%" : fmtPct(avgEv);
+}
 
-  document.getElementById('stat-total').textContent = summary.total_bets || 0;
+// ==== 2. Cumulative P&L Chart ====
+function renderPnlChart(results) {
+  if(pnlChartInst){pnlChartInst.destroy();pnlChartInst=null;}
+  const canvas = document.getElementById("pnlChart");
 
-  // Signal performance extras
-  if (signalData) {
-    const leadEl = document.getElementById('stat-lead-time');
-    const avg = signalData.avg_lead_time_hours;
-    if (avg != null && avg > 0) {
-      if (avg >= 24) {
-        const d = Math.floor(avg / 24);
-        const h = Math.round(avg % 24);
-        leadEl.textContent = d + 'd ' + h + 'h';
-      } else {
-        leadEl.textContent = avg.toFixed(1) + 'h';
+  if(!results||!results.length) {
+    const ctx = canvas.getContext("2d");
+    // Draw empty state message
+    pnlChartInst = new Chart(ctx, {
+      type:"line",data:{labels:["No data"],datasets:[{label:"P/L",data:[0],borderColor:"#00e676",backgroundColor:"#00e67610",fill:true,borderWidth:2,pointRadius:0}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},
+        scales:{x:{ticks:{color:"#5a6378",font:CHART_FONT},grid:CHART_GRID},y:{ticks:{color:"#5a6378",font:CHART_FONT,callback:v=>v+"u"},grid:CHART_GRID}}
       }
-    } else {
-      leadEl.textContent = '\u2014';
-    }
-
-    const pending = signalData.pending_signals || 0;
-    document.getElementById('stat-pending-sub').textContent = pending ? pending + ' pending' : '';
-  }
-}
-
-// --- Render Tier Performance ---
-function renderTiers(signalData) {
-  const grid = document.getElementById('tier-grid');
-  const byTier = signalData && signalData.by_tier ? signalData.by_tier : {};
-  const tiers = Object.keys(byTier).sort().reverse();
-
-  if (!tiers.length) {
-    grid.innerHTML = '<div class="message">No graded signals yet. Tier performance will appear once signals are graded.</div>';
-    document.getElementById('tier-count').textContent = '';
-    return;
-  }
-
-  document.getElementById('tier-count').textContent = '(' + tiers.length + ' tiers)';
-  const tierColors = { '5_star': '#ffd700', '4_star': '#00e676', '3_star': '#42a5f5' };
-  const starStr = n => { const count = parseInt(n); return '\u2605'.repeat(count); };
-
-  grid.innerHTML = tiers.map(tier => {
-    const t = byTier[tier];
-    const color = tierColors[tier] || '#8892a4';
-    const wr = t.win_rate || 0;
-    const barW = Math.min(Math.max(wr, 5), 100);
-    return `<div class="tier-card">
-      <div class="tier-header">
-        <span class="tier-label"><span class="stars">${starStr(tier)}</span> ${tier.replace('_', ' ').toUpperCase()}</span>
-        <span class="tier-total">${t.total || 0} picks</span>
-      </div>
-      <div class="tier-record">${t.record || '0-0'}</div>
-      <div class="tier-stats">
-        <span>WR: <strong style="${colorStyle(wr - 50)}">${wr.toFixed(1)}%</strong></span>
-        <span>Units: <strong class="${colorClass(t.units)}" style="${colorStyle(t.units)}">${fmtUnits(t.units || 0)}</strong></span>
-        <span>ROI: <strong style="${colorStyle(t.roi)}">${(t.roi >= 0 ? '+' : '') + (t.roi || 0).toFixed(1)}%</strong></span>
-      </div>
-      <div class="tier-bar" style="width:${barW}%;background:${color}"></div>
-    </div>`;
-  }).join('');
-}
-
-// --- Render EV Buckets ---
-function renderEvBuckets(results) {
-  const container = document.getElementById('ev-buckets');
-  if (!results || !results.length) {
-    container.innerHTML = '<div class="message">No results with EV data yet.</div>';
-    return;
-  }
-
-  // Define EV buckets
-  const buckets = [
-    { label: '2-5% EV', min: 2, max: 5 },
-    { label: '5-8% EV', min: 5, max: 8 },
-    { label: '8-12% EV', min: 8, max: 12 },
-    { label: '12-20% EV', min: 12, max: 20 },
-    { label: '20%+ EV', min: 20, max: 999 },
-  ];
-
-  const bucketData = buckets.map(b => {
-    const inBucket = results.filter(r => {
-      const ev = Number(r.ev_pct);
-      return !isNaN(ev) && ev >= b.min && ev < b.max;
     });
-    const wins = inBucket.filter(r => r.result === 'win').length;
-    const losses = inBucket.filter(r => r.result === 'loss').length;
-    const decided = wins + losses;
-    const units = inBucket.reduce((s, r) => s + (Number(r.pnl) || 0), 0);
-    return { ...b, count: inBucket.length, wins, losses, decided, units,
-      winRate: decided > 0 ? (wins / decided * 100) : 0 };
-  });
-
-  container.innerHTML = bucketData.map(b => {
-    if (b.count === 0) return `<div class="ev-bucket" style="opacity:0.4">
-      <div class="bucket-range">${b.label}</div>
-      <div class="bucket-record" style="font-size:12px;color:#5a6378">No data</div>
-    </div>`;
-    return `<div class="ev-bucket">
-      <div class="bucket-range">${b.label}</div>
-      <div class="bucket-record">${b.wins}-${b.losses}</div>
-      <div class="bucket-stats">
-        WR: <strong style="${colorStyle(b.winRate - 50)}">${b.winRate.toFixed(1)}%</strong>
-        &middot; <span style="${colorStyle(b.units)}">${fmtUnits(b.units)}</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-// --- Render By-Sport Cards ---
-function renderSportCards(bySport) {
-  const grid = document.getElementById('sport-grid');
-  const entries = Object.entries(bySport || {}).sort((a, b) => (b[1].units || 0) - (a[1].units || 0));
-
-  if (!entries.length) {
-    grid.innerHTML = '<div class="message">No results by sport yet.</div>';
-    document.getElementById('sport-count').textContent = '';
     return;
   }
 
-  document.getElementById('sport-count').textContent = '(' + entries.length + ' sports)';
-
-  grid.innerHTML = entries.map(([sport, s]) => {
-    const sk = sportKey(sport);
-    const colors = SPORT_COLORS[sk] || SPORT_COLORS.default;
-    const wr = s.win_rate || 0;
-    const barW = Math.min(Math.max(wr, 5), 100);
-    return `<div class="breakdown-card">
-      <div class="card-header">
-        <span class="sport-badge sport-${sk}">${sportLabel(sport)}</span>
-        <span class="card-total">${s.total_bets || 0} picks</span>
-      </div>
-      <div class="card-record">${s.record || '0-0'}</div>
-      <div class="card-stats">
-        <span>WR: <strong style="${colorStyle(wr - 50)}">${wr.toFixed(1)}%</strong></span>
-        <span>Units: <strong style="${colorStyle(s.units)}">${fmtUnits(s.units || 0)}</strong></span>
-        <span>ROI: <strong style="${colorStyle(s.roi)}">${(s.roi >= 0 ? '+' : '') + (s.roi || 0).toFixed(1)}%</strong></span>
-      </div>
-      <div class="card-bar"><div class="card-bar-fill" style="width:${barW}%;background:${colors.fill}"></div></div>
-    </div>`;
-  }).join('');
-}
-
-// --- Render By-Book Cards ---
-function renderBookCards(breakdown) {
-  const grid = document.getElementById('book-grid');
-  if (!breakdown || !breakdown.length) {
-    grid.innerHTML = '<div class="message">No results by sportsbook yet.</div>';
-    document.getElementById('book-count').textContent = '';
-    return;
-  }
-
-  const sorted = [...breakdown].sort((a, b) => (b.units || 0) - (a.units || 0));
-  document.getElementById('book-count').textContent = '(' + sorted.length + ' books)';
-
-  const bookColors = {
-    draftkings: '#53b94e', fanduel: '#1493ff', betmgm: '#c5a55a',
-    caesars: '#2d6b4f', pointsbetus: '#e44532', betrivers: '#1c4587',
-    pinnacle: '#ffd700', circa: '#ffab00', betonlineag: '#ff8f00',
-  };
-
-  grid.innerHTML = sorted.map(b => {
-    const color = bookColors[(b.sportsbook || '').toLowerCase()] || '#8892a4';
-    const wr = b.win_rate || 0;
-    const barW = Math.min(Math.max(wr, 5), 100);
-    const displayName = b.sportsbook || 'Unknown';
-    return `<div class="breakdown-card" style="border-top:2px solid ${color}">
-      <div class="card-header">
-        <span class="card-name" style="color:${color}">${displayName}</span>
-        <span class="card-total">${b.total_bets || 0} picks</span>
-      </div>
-      <div class="card-record">${b.record || '0-0'}</div>
-      <div class="card-stats">
-        <span>WR: <strong style="${colorStyle(wr - 50)}">${wr.toFixed(1)}%</strong></span>
-        <span>Units: <strong style="${colorStyle(b.units)}">${fmtUnits(b.units || 0)}</strong></span>
-        <span>ROI: <strong style="${colorStyle(b.roi)}">${(b.roi >= 0 ? '+' : '') + (b.roi || 0).toFixed(1)}%</strong></span>
-      </div>
-      <div class="card-bar"><div class="card-bar-fill" style="width:${barW}%;background:${color}"></div></div>
-    </div>`;
-  }).join('');
-}
-
-// --- Render Results Table ---
-function renderResults(results) {
-  const tbody = document.getElementById('results-body');
-
-  if (!results || !results.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="message">No results yet. Picks will appear here once games are graded.</td></tr>';
-    document.getElementById('results-count').textContent = '';
-    return;
-  }
-
-  document.getElementById('results-count').textContent = '(' + results.length + ')';
-
-  tbody.innerHTML = results.map(r => {
-    const sk = sportKey(r.sport);
-    const result = (r.result || '').toUpperCase();
-    let resultClass = 'result-push';
-    if (result === 'WIN') resultClass = 'result-win';
-    else if (result === 'LOSS') resultClass = 'result-loss';
-
-    const pnl = Number(r.pnl) || 0;
-    let pnlClass = 'pnl-zero';
-    if (pnl > 0) pnlClass = 'pnl-pos';
-    else if (pnl < 0) pnlClass = 'pnl-neg';
-
-    const game = r.game || ((r.away_team || 'Away') + ' @ ' + (r.home_team || 'Home'));
-
-    return `<tr>
-      <td>${fmtDate(r.date || r.timestamp)}</td>
-      <td><span class="sport-badge sport-${sk}">${sportLabel(r.sport)}</span></td>
-      <td style="color:#e1e5eb">${game}</td>
-      <td>${r.pick || r.side || '\u2014'}</td>
-      <td class="book-name">${r.sportsbook || '\u2014'}</td>
-      <td class="odds-val">${fmtOdds(r.odds)}</td>
-      <td class="ev-val">${r.ev_pct != null ? '+' + Number(r.ev_pct).toFixed(1) + '%' : '\u2014'}</td>
-      <td class="${resultClass}">${result || '\u2014'}</td>
-      <td class="${pnlClass}">${fmtUnits(pnl)}</td>
-    </tr>`;
-  }).join('');
-}
-
-// --- Render Cumulative Profit Chart ---
-function renderProfitChart(results) {
-  if (profitChartInstance) { profitChartInstance.destroy(); profitChartInstance = null; }
-  if (!results || !results.length) return;
-
-  const sorted = [...results].sort((a, b) => new Date(a.date || a.timestamp) - new Date(b.date || b.timestamp));
-
-  let cumulative = 0;
+  const sorted = [...results].sort((a,b) => new Date(a.date||a.timestamp) - new Date(b.date||b.timestamp));
+  let cum = 0;
   const labels = [];
   const data = [];
-  const colors = [];
-
   sorted.forEach(r => {
-    cumulative += (Number(r.pnl) || 0);
-    labels.push(fmtDate(r.date || r.timestamp));
-    data.push(parseFloat(cumulative.toFixed(2)));
-    colors.push(cumulative >= 0 ? '#00e676' : '#ff5252');
+    cum += (Number(r.pnl)||0);
+    labels.push(fmtDate(r.date||r.timestamp));
+    data.push(parseFloat(cum.toFixed(2)));
   });
 
-  const ctx = document.getElementById('profitChart').getContext('2d');
-  profitChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'Cumulative Units',
-        data: data,
-        borderColor: cumulative >= 0 ? '#00e676' : '#ff5252',
-        backgroundColor: cumulative >= 0 ? '#00e67618' : '#ff525218',
-        borderWidth: 2,
-        pointRadius: results.length > 50 ? 0 : 3,
-        pointBackgroundColor: cumulative >= 0 ? '#00e676' : '#ff5252',
-        fill: true,
-        tension: 0.3,
+  // Gradient fill
+  const ctx = canvas.getContext("2d");
+  const gradient = ctx.createLinearGradient(0,0,0,320);
+  const lastVal = data[data.length-1]||0;
+  if(lastVal >= 0) {
+    gradient.addColorStop(0,"rgba(0,230,118,0.25)");
+    gradient.addColorStop(1,"rgba(0,230,118,0.02)");
+  } else {
+    gradient.addColorStop(0,"rgba(255,82,82,0.25)");
+    gradient.addColorStop(1,"rgba(255,82,82,0.02)");
+  }
+
+  pnlChartInst = new Chart(ctx, {
+    type:"line",
+    data:{
+      labels,
+      datasets:[{
+        label:"Cumulative P/L",
+        data,
+        borderColor: lastVal>=0?"#00e676":"#ff5252",
+        backgroundColor: gradient,
+        borderWidth:2.5,
+        pointRadius: results.length>50?0:3,
+        pointBackgroundColor: lastVal>=0?"#00e676":"#ff5252",
+        fill:true,
+        tension:0.3,
       }]
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 300 },
-      interaction: { mode: 'nearest', intersect: false },
-      plugins: {
-        legend: { labels: { color: '#8892a4', font: { family: 'monospace', size: 11 } } },
-        tooltip: {
-          backgroundColor: '#0d1220', borderColor: '#2a3555', borderWidth: 1,
-          titleColor: '#e1e5eb', bodyColor: '#c8cdd6',
-          bodyFont: { family: 'monospace' },
-          callbacks: {
-            label: ctx => 'Units: ' + (ctx.parsed.y >= 0 ? '+' : '') + ctx.parsed.y.toFixed(2)
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:"nearest",intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          ...CHART_TOOLTIP,
+          callbacks:{
+            label: ctx => "P/L: " + (ctx.parsed.y>=0?"+":"") + ctx.parsed.y.toFixed(2) + "u"
           }
         },
       },
-      scales: {
-        x: {
-          ticks: { color: '#5a6378', font: { family: 'monospace', size: 10 }, maxTicksLimit: 10 },
-          grid: { color: '#131b2e' },
-        },
-        y: {
-          ticks: {
-            color: '#5a6378', font: { family: 'monospace', size: 10 },
-            callback: v => (v >= 0 ? '+' : '') + v + 'u',
-          },
-          grid: { color: '#131b2e' },
+      scales:{
+        x:{ticks:{color:"#5a6378",font:CHART_FONT,maxTicksLimit:10},grid:CHART_GRID},
+        y:{
+          ticks:{color:"#5a6378",font:CHART_FONT,callback:v=>(v>=0?"+":"")+v+"u"},
+          grid:CHART_GRID,
         },
       },
     },
   });
 }
 
-// --- Render ROI by Sport Chart ---
-function renderSportRoiChart(bySport) {
-  if (sportRoiChartInstance) { sportRoiChartInstance.destroy(); sportRoiChartInstance = null; }
-  if (!bySport || !Object.keys(bySport).length) return;
+// ==== 3. Lead Time Breakdown ====
+function computeLeadTimeBuckets(results) {
+  const buckets = {
+    '<1h': {bets:0,wins:0,losses:0,pushes:0,units:0},
+    '1-3h': {bets:0,wins:0,losses:0,pushes:0,units:0},
+    '3-6h': {bets:0,wins:0,losses:0,pushes:0,units:0},
+    '6-12h': {bets:0,wins:0,losses:0,pushes:0,units:0},
+    '12-24h': {bets:0,wins:0,losses:0,pushes:0,units:0},
+    '24h+': {bets:0,wins:0,losses:0,pushes:0,units:0},
+  };
 
-  const entries = Object.entries(bySport).sort((a, b) => (b[1].roi || 0) - (a[1].roi || 0));
-  const labels = [], data = [], bgColors = [], borderColors = [];
+  results.forEach(r => {
+    // Estimate lead time from signal to game
+    const signalTime = new Date(r.date||r.timestamp);
+    const gameTime = r.commence_time ? new Date(r.commence_time) : null;
+    let leadHours = null;
+    if(gameTime && !isNaN(gameTime)) {
+      leadHours = (gameTime - signalTime) / 3600000;
+    }
+    if(leadHours === null || leadHours < 0) leadHours = 3; // default bucket
 
-  entries.forEach(([sport, stats]) => {
-    const sk = sportKey(sport);
-    const colors = SPORT_COLORS[sk] || SPORT_COLORS.default;
-    labels.push(sportLabel(sport));
-    data.push(Number(stats.roi) || 0);
-    bgColors.push(colors.bg);
-    borderColors.push(colors.border);
+    let key;
+    if(leadHours < 1) key = '<1h';
+    else if(leadHours < 3) key = '1-3h';
+    else if(leadHours < 6) key = '3-6h';
+    else if(leadHours < 12) key = '6-12h';
+    else if(leadHours < 24) key = '12-24h';
+    else key = '24h+';
+
+    const b = buckets[key];
+    b.bets++;
+    const res = (r.result||'').toUpperCase();
+    if(res==='WIN') b.wins++;
+    else if(res==='LOSS') b.losses++;
+    else b.pushes++;
+    b.units += Number(r.pnl)||0;
   });
 
-  const ctx = document.getElementById('sportRoiChart').getContext('2d');
-  sportRoiChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'ROI %',
-        data: data,
-        backgroundColor: bgColors,
-        borderColor: borderColors,
-        borderWidth: 1,
-      }]
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 300 },
-      plugins: {
-        legend: { labels: { color: '#8892a4', font: { family: 'monospace', size: 11 } } },
-        tooltip: {
-          backgroundColor: '#0d1220', borderColor: '#2a3555', borderWidth: 1,
-          titleColor: '#e1e5eb', bodyColor: '#c8cdd6',
-          bodyFont: { family: 'monospace' },
-          callbacks: {
-            label: ctx => 'ROI: ' + (ctx.parsed.x >= 0 ? '+' : '') + ctx.parsed.x.toFixed(1) + '%'
-          }
-        },
-      },
-      scales: {
-        x: {
-          ticks: {
-            color: '#5a6378', font: { family: 'monospace', size: 10 },
-            callback: v => (v >= 0 ? '+' : '') + v + '%',
-          },
-          grid: { color: '#131b2e' },
-        },
-        y: {
-          ticks: { color: '#c8cdd6', font: { family: 'monospace', size: 11 } },
-          grid: { color: '#131b2e' },
-        },
+  return buckets;
+}
+
+function renderLeadTimeChart(buckets) {
+  if(leadTimeChartInst){leadTimeChartInst.destroy();leadTimeChartInst=null;}
+  const labels = Object.keys(buckets);
+  const rois = labels.map(k => {
+    const b = buckets[k];
+    return b.bets>0 ? (b.units/b.bets)*100 : 0;
+  });
+  const colors = rois.map(r => r>=0 ? '#00e67680' : '#ff525280');
+  const borders = rois.map(r => r>=0 ? '#00e676' : '#ff5252');
+
+  const ctx = document.getElementById("leadTimeChart").getContext("2d");
+  leadTimeChartInst = new Chart(ctx, {
+    type:"bar",
+    data:{labels, datasets:[{label:"ROI %",data:rois,backgroundColor:colors,borderColor:borders,borderWidth:1}]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{...CHART_TOOLTIP,callbacks:{label:ctx=>"ROI: "+(ctx.parsed.y>=0?"+":"")+ctx.parsed.y.toFixed(1)+"%"}}},
+      scales:{
+        x:{ticks:{color:"#c8cdd6",font:CHART_FONT},grid:CHART_GRID},
+        y:{ticks:{color:"#5a6378",font:CHART_FONT,callback:v=>(v>=0?"+":"")+v+"%"},grid:CHART_GRID},
       },
     },
   });
 }
 
-// --- Populate Filter Dropdowns ---
-function populateFilters(results, bySport) {
-  const sportSel = document.getElementById('filter-sport');
-  const curSport = sportSel.value;
+function renderLeadTimeTable(buckets) {
+  const tbody = document.getElementById("lead-time-body");
+  const keys = Object.keys(buckets);
+  if(!keys.some(k=>buckets[k].bets>0)) {
+    tbody.innerHTML = '<tr><td colspan="6" class="message">No graded results yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = keys.map(k => {
+    const b = buckets[k];
+    if(b.bets===0) return `<tr><td>${k}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+    const wr = (b.wins+b.losses)>0 ? (b.wins/(b.wins+b.losses)*100) : 0;
+    const roi = b.bets>0 ? (b.units/b.bets)*100 : 0;
+    const pnlClass = b.units>=0?"pnl-pos":"pnl-neg";
+    const roiClass = roi>=0?"pnl-pos":"pnl-neg";
+    return `<tr>
+      <td style="font-weight:600;color:#e1e5eb">${k}</td>
+      <td>${b.bets}</td>
+      <td>${b.wins}-${b.losses}-${b.pushes}</td>
+      <td>${(b.wins+b.losses)>0?wr.toFixed(1)+"%":"—"}</td>
+      <td class="${roiClass}">${roi>=0?"+":""}${roi.toFixed(1)}%</td>
+      <td class="${pnlClass}">${fmtUnits(b.units)}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ==== 4. EV vs Actual Performance ====
+function computeEvBuckets(results) {
+  const buckets = {
+    '1-2%': {ev:1.5,bets:0,wins:0,losses:0,units:0,sumEv:0},
+    '2-3%': {ev:2.5,bets:0,wins:0,losses:0,units:0,sumEv:0},
+    '3-5%': {ev:4.0,bets:0,wins:0,losses:0,units:0,sumEv:0},
+    '5-8%': {ev:6.5,bets:0,wins:0,losses:0,units:0,sumEv:0},
+    '8%+':  {ev:10, bets:0,wins:0,losses:0,units:0,sumEv:0},
+  };
+
+  results.forEach(r => {
+    const ev = Number(r.ev_pct)||0;
+    let key;
+    if(ev<2) key='1-2%';
+    else if(ev<3) key='2-3%';
+    else if(ev<5) key='3-5%';
+    else if(ev<8) key='5-8%';
+    else key='8%+';
+    const b = buckets[key];
+    b.bets++;
+    b.sumEv += ev;
+    const res = (r.result||'').toUpperCase();
+    if(res==='WIN') b.wins++;
+    else if(res==='LOSS') b.losses++;
+    b.units += Number(r.pnl)||0;
+  });
+
+  return buckets;
+}
+
+function renderEvCharts(buckets) {
+  if(evRoiChartInst){evRoiChartInst.destroy();evRoiChartInst=null;}
+  if(evWinChartInst){evWinChartInst.destroy();evWinChartInst=null;}
+
+  const labels = Object.keys(buckets);
+  const actualRois = labels.map(k => {
+    const b=buckets[k]; return b.bets>0 ? (b.units/b.bets)*100 : 0;
+  });
+  const expectedRois = labels.map(k => {
+    const b=buckets[k]; return b.bets>0 ? (b.sumEv/b.bets) : b.ev;
+  });
+  const winRates = labels.map(k => {
+    const b=buckets[k]; return (b.wins+b.losses)>0 ? (b.wins/(b.wins+b.losses)*100) : 0;
+  });
+
+  // ROI chart
+  const ctx1 = document.getElementById("evRoiChart").getContext("2d");
+  evRoiChartInst = new Chart(ctx1, {
+    type:"bar",
+    data:{
+      labels,
+      datasets:[
+        {label:"Actual ROI",data:actualRois,backgroundColor:"#00e67680",borderColor:"#00e676",borderWidth:1},
+        {label:"Expected ROI",data:expectedRois,backgroundColor:"#ffc10740",borderColor:"#ffc107",borderWidth:1},
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{labels:{color:"#8892a4",font:CHART_FONT}},
+        tooltip:{...CHART_TOOLTIP,callbacks:{label:ctx=>(ctx.dataset.label||"")+": "+(ctx.parsed.y>=0?"+":"")+ctx.parsed.y.toFixed(1)+"%"}},
+      },
+      scales:{
+        x:{ticks:{color:"#c8cdd6",font:CHART_FONT},grid:CHART_GRID},
+        y:{ticks:{color:"#5a6378",font:CHART_FONT,callback:v=>(v>=0?"+":"")+v+"%"},grid:CHART_GRID},
+      },
+    },
+  });
+
+  // Win rate chart
+  const ctx2 = document.getElementById("evWinChart").getContext("2d");
+  evWinChartInst = new Chart(ctx2, {
+    type:"bar",
+    data:{
+      labels,
+      datasets:[{label:"Win Rate",data:winRates,backgroundColor:"#42a5f580",borderColor:"#42a5f5",borderWidth:1}]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{...CHART_TOOLTIP,callbacks:{label:ctx=>"Win Rate: "+ctx.parsed.y.toFixed(1)+"%"}},
+      },
+      scales:{
+        x:{ticks:{color:"#c8cdd6",font:CHART_FONT},grid:CHART_GRID},
+        y:{ticks:{color:"#5a6378",font:CHART_FONT,callback:v=>v+"%"},grid:CHART_GRID,min:0,max:100},
+      },
+    },
+  });
+}
+
+// ==== 5. By Sportsbook ====
+function renderBookGrid(breakdown) {
+  const grid = document.getElementById("book-grid");
+  if(!breakdown||!breakdown.length) {
+    grid.innerHTML = `<div class="empty-state"><div class="empty-title">No sportsbook data yet</div><div>Results will populate as picks are graded.</div></div>`;
+    return;
+  }
+  grid.innerHTML = breakdown.map(b => {
+    const roi = Number(b.roi)||0;
+    const units = Number(b.units)||0;
+    const wr = Number(b.win_rate)||0;
+    return `<div class="book-card">
+      <div class="book-name">${b.sportsbook||"Unknown"}</div>
+      <div class="book-stats">
+        <div class="book-stat"><span class="bs-label">Record</span><span class="bs-value">${b.record||"0-0"}</span></div>
+        <div class="book-stat"><span class="bs-label">Win Rate</span><span class="bs-value ${wr>=50?'green':'red'}">${wr>0?wr.toFixed(1)+"%":"—"}</span></div>
+        <div class="book-stat"><span class="bs-label">ROI</span><span class="bs-value ${roi>=0?'green':'red'}">${roi>=0?"+":""}${roi.toFixed(1)}%</span></div>
+        <div class="book-stat"><span class="bs-label">Profit</span><span class="bs-value ${units>=0?'green':'red'}">${fmtUnits(units)}</span></div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ==== 6. Results Table ====
+function renderResults(results) {
+  const tbody = document.getElementById("results-body");
+  if(!results||!results.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="message">No results yet. Picks will appear here once games are graded.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = results.map(r => {
+    const sk = sportKey(r.sport);
+    const result = (r.result||"").toUpperCase();
+    let resultClass = "result-push";
+    if(result==="WIN") resultClass="result-win";
+    else if(result==="LOSS") resultClass="result-loss";
+    const pnl = Number(r.pnl)||0;
+    let pnlClass = pnl>0?"pnl-pos":pnl<0?"pnl-neg":"pnl-zero";
+    const game = r.game || ((r.away_team||"Away")+" @ "+(r.home_team||"Home"));
+    return `<tr>
+      <td>${fmtDate(r.date||r.timestamp)}</td>
+      <td><span class="sport-badge sport-${sk}">${sportLabel(r.sport)}</span></td>
+      <td>${game}</td>
+      <td>${r.pick||r.side||"\u2014"}</td>
+      <td style="color:#ce93d8;font-weight:600;text-transform:uppercase;font-size:11px">${r.sportsbook||"\u2014"}</td>
+      <td class="odds-val">${fmtOdds(r.odds)}</td>
+      <td class="ev-val">${r.ev_pct!=null?fmtPct(r.ev_pct):"\u2014"}</td>
+      <td class="${resultClass}">${result||"PENDING"}</td>
+      <td class="${pnlClass}">${result?fmtUnits(pnl):"—"}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ==== Populate Filters ====
+function populateFilters(results) {
+  const sportSel = document.getElementById("filter-sport");
+  const cur = sportSel.value;
   const sports = new Set();
-  if (bySport) Object.keys(bySport).forEach(s => sports.add(s));
-  if (results) results.forEach(r => { if (r.sport) sports.add(r.sport); });
+  if(results) results.forEach(r=>{if(r.sport)sports.add(r.sport);});
   sportSel.innerHTML = '<option value="">All Sports</option>';
-  [...sports].sort().forEach(s => {
-    sportSel.innerHTML += '<option value="' + s + '">' + sportLabel(s) + '</option>';
+  [...sports].sort().forEach(s=>{
+    sportSel.innerHTML += `<option value="${s}">${sportLabel(s)}</option>`;
   });
-  sportSel.value = curSport;
+  sportSel.value = cur;
 
-  const bookSel = document.getElementById('filter-book');
-  const curBook = bookSel.value;
+  const bookSel = document.getElementById("filter-book");
+  const curB = bookSel.value;
   const books = new Set();
-  if (results) results.forEach(r => { if (r.sportsbook) books.add(r.sportsbook); });
+  if(results) results.forEach(r=>{if(r.sportsbook)books.add(r.sportsbook);});
   bookSel.innerHTML = '<option value="">All Books</option>';
-  [...books].sort().forEach(b => {
-    bookSel.innerHTML += '<option value="' + b + '">' + b + '</option>';
+  [...books].sort().forEach(b=>{
+    bookSel.innerHTML += `<option value="${b}">${b}</option>`;
   });
-  bookSel.value = curBook;
+  bookSel.value = curB;
 }
 
-// --- Build Query Params ---
+// ==== Build Query ====
 function getQueryParams() {
   const params = new URLSearchParams();
-  const sport = document.getElementById('filter-sport').value;
-  const book = document.getElementById('filter-book').value;
-  const range = document.getElementById('filter-range').value;
-  if (sport) params.set('sport', sport);
-  if (book) params.set('sportsbook', book);
-  if (range && range !== 'all') params.set('range', range);
+  const sport = document.getElementById("filter-sport").value;
+  const book = document.getElementById("filter-book").value;
+  const range = document.getElementById("filter-range").value;
+  if(sport) params.set("sport",sport);
+  if(book) params.set("sportsbook",book);
+  if(range&&range!=="all") params.set("range",range);
   const qs = params.toString();
-  return qs ? '?' + qs : '';
+  return qs ? "?"+qs : "";
 }
 
-// --- Fetch All Data ---
+// ==== Fetch All ====
 async function fetchData() {
-  const queryParams = getQueryParams();
-
+  const qp = getQueryParams();
   try {
-    const [summaryRes, resultsRes, bySportRes, byBookRes, signalRes] = await Promise.all([
-      fetch(API + '/performance/summary' + queryParams),
-      fetch(API + '/performance/results' + queryParams),
-      fetch(API + '/performance/by-sport' + queryParams),
-      fetch(API + '/performance/by-book').catch(() => null),
-      fetch(API + '/signals/performance?days=30').catch(() => null),
+    const [summaryRes, resultsRes, byBookRes] = await Promise.all([
+      fetch(API+"/performance/summary"+qp),
+      fetch(API+"/performance/results"+qp),
+      fetch(API+"/performance/by-book"+qp).catch(()=>null),
     ]);
 
-    if (!summaryRes.ok) throw new Error('Summary HTTP ' + summaryRes.status);
-    if (!resultsRes.ok) throw new Error('Results HTTP ' + resultsRes.status);
-    if (!bySportRes.ok) throw new Error('By-sport HTTP ' + bySportRes.status);
+    if(!summaryRes.ok) throw new Error("Summary HTTP "+summaryRes.status);
+    if(!resultsRes.ok) throw new Error("Results HTTP "+resultsRes.status);
 
     const summary = await summaryRes.json();
     const resultsData = await resultsRes.json();
-    const bySportData = await bySportRes.json();
-
     const results = resultsData.results || resultsData || [];
-    const bySport = bySportData.by_sport || bySportData || {};
 
-    // Signal performance data
-    let signalData = null;
-    if (signalRes && signalRes.ok) {
-      try { signalData = await signalRes.json(); } catch {}
-    }
-
-    // By-book data
     let bookBreakdown = [];
-    if (byBookRes && byBookRes.ok) {
+    if(byBookRes && byBookRes.ok) {
       try {
-        const bookData = await byBookRes.json();
-        bookBreakdown = bookData.breakdown || [];
-      } catch {}
+        const bd = await byBookRes.json();
+        bookBreakdown = bd.breakdown || bd || [];
+      } catch{}
     }
 
-    renderSummary(summary, signalData);
-    renderTiers(signalData);
-    renderEvBuckets(results);
+    // Render everything
+    renderStats(summary);
+    renderPnlChart(results);
     renderResults(results);
-    renderProfitChart(results);
-    renderSportRoiChart(bySport);
-    renderSportCards(bySport);
-    renderBookCards(bookBreakdown);
-    populateFilters(results, bySport);
+    populateFilters(results);
+    renderBookGrid(bookBreakdown);
 
-    const now = new Date().toLocaleTimeString('en-US', {
-      timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true
-    });
-    setStatus(true, 'Live \u00b7 ' + now + ' ET');
-  } catch (e) {
-    setStatus(false, 'Error: ' + e.message);
-    document.getElementById('results-body').innerHTML =
-      '<tr><td colspan="9" class="message error">Failed to fetch data. Is the API running?</td></tr>';
+    // Lead time
+    const ltBuckets = computeLeadTimeBuckets(results);
+    renderLeadTimeChart(ltBuckets);
+    renderLeadTimeTable(ltBuckets);
+
+    // EV buckets
+    const evBuckets = computeEvBuckets(results);
+    renderEvCharts(evBuckets);
+
+    const now = new Date().toLocaleTimeString('en-US',{timeZone:'America/New_York'});
+    setStatus(true, "Live \u00b7 updated "+now+" ET");
+  } catch(e) {
+    setStatus(false, "Error: "+e.message);
+    document.getElementById("results-body").innerHTML =
+      '<tr><td colspan="9" class="message error">Failed to load data. Is the API running?</td></tr>';
   }
   countdown = REFRESH_INTERVAL;
 }
 
-// --- Filter Change Handlers ---
-['filter-sport', 'filter-book', 'filter-range'].forEach(id => {
-  document.getElementById(id).addEventListener('change', fetchData);
+// Filter handlers
+["filter-sport","filter-book","filter-range"].forEach(id=>{
+  document.getElementById(id).addEventListener("change",fetchData);
 });
 
-// --- Refresh Timer ---
 function startTimer() {
   clearInterval(timerInterval);
-  timerInterval = setInterval(() => {
+  timerInterval = setInterval(()=>{
     countdown--;
-    document.getElementById('refresh-timer').textContent = countdown + 's';
-    if (countdown <= 0) fetchData();
-  }, 1000);
+    document.getElementById("refresh-timer").textContent = "refresh in "+countdown+"s";
+    if(countdown<=0) fetchData();
+  },1000);
 }
 
 fetchData();

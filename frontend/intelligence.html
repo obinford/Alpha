@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTM Intelligence Center</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#0a0e17;color:#c8cdd6;
+    font-family:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+    font-size:13px;line-height:1.5;
+  }
+  a{color:#42a5f5;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .container{max-width:1400px;margin:0 auto;padding:16px 24px}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+    position:relative;
+  }
+  header::after{
+    content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;
+    background:linear-gradient(90deg,#ff5252,#ff9800,#ffd700,#42a5f5,#ce93d8,#ff5252);
+    background-size:300% 100%;
+    animation:hdr 10s linear infinite;
+  }
+  @keyframes hdr{0%{background-position:0 0}100%{background-position:300% 0}}
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{font-size:20px;font-weight:700;color:#e1e5eb;letter-spacing:1px}
+  .brand h1 span{
+    background:linear-gradient(90deg,#ff5252,#ff9800,#ffd700);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    background-clip:text;
+  }
+  .brand .tagline{font-size:11px;color:#5a6378;text-transform:uppercase;letter-spacing:2px}
+  .status-bar{display:flex;align-items:center;gap:16px;font-size:11px;color:#5a6378}
+  .status-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:#00e676;box-shadow:0 0 6px #00e67680}
+
+  nav{display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;font-size:12px;text-transform:uppercase;letter-spacing:1.5px;flex-wrap:wrap}
+  nav a{color:#5a6378;text-decoration:none;padding:4px 0;border-bottom:2px solid transparent}
+  nav a:hover{color:#c8cdd6}
+  nav a.active{color:#ff9800;border-bottom-color:#ff9800}
+
+  .stats{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .stat-card{background:#111827;border:1px solid #1a2035;border-radius:6px;padding:10px 18px;min-width:130px}
+  .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378;margin-bottom:2px}
+  .stat-card .value{font-size:22px;font-weight:700;color:#e1e5eb}
+  .stat-card .value.green{color:#00e676}
+  .stat-card .value.red{color:#ff5252}
+  .stat-card .value.gold{color:#ffd700}
+  .stat-card .value.blue{color:#42a5f5}
+  .stat-card .value.orange{color:#ff9800}
+
+  .section{margin-bottom:28px}
+  .section-header{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #1a2035;
+  }
+  .section-title{font-size:14px;font-weight:700;color:#e1e5eb;letter-spacing:1px;text-transform:uppercase}
+  .section-subtitle{font-size:11px;color:#5a6378}
+  .section-badge{display:inline-block;padding:2px 10px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:1px}
+  .badge-live{background:#ff525220;color:#ff5252;border:1px solid #ff525240;animation:pulse 1.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}
+
+  /* Stale line cards */
+  .stale-grid{display:grid;gap:10px}
+  .stale-card{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;padding:14px 18px;
+    display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
+    transition:transform 0.15s ease;
+  }
+  .stale-card:hover{transform:translateY(-1px)}
+  .stale-card.high-edge{border-left:3px solid #ff5252}
+  .stale-card.med-edge{border-left:3px solid #ff9800}
+  .stale-card .stale-play{font-size:15px;font-weight:700;color:#e1e5eb}
+  .stale-card .stale-meta{font-size:11px;color:#5a6378;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap}
+  .stale-card .stale-meta .book{color:#ce93d8;font-weight:600;text-transform:uppercase}
+  .stale-card .stale-meta .type{color:#ff9800;font-weight:600}
+  .stale-card .stale-right{text-align:right}
+  .stale-card .stale-edge{font-size:20px;font-weight:700;color:#00e676}
+  .stale-card .stale-odds{font-size:11px;color:#8892a4;margin-top:2px}
+  .stale-card .stale-action{
+    display:inline-block;margin-top:4px;padding:3px 10px;border-radius:3px;
+    font-size:10px;font-weight:700;letter-spacing:1px;
+    background:#ff525220;color:#ff5252;border:1px solid #ff525240;
+  }
+
+  /* Book profile cards */
+  .book-mini-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+  .book-mini{
+    background:#111827;border:1px solid #1a2035;border-radius:6px;padding:12px;
+    cursor:pointer;transition:transform 0.15s ease;
+  }
+  .book-mini:hover{transform:translateY(-1px);border-color:#2a3555}
+  .book-mini .bm-name{font-size:14px;font-weight:700;color:#e1e5eb;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
+  .book-mini .bm-stats{display:flex;gap:14px;font-size:11px;color:#5a6378}
+  .book-mini .bm-stats span{display:flex;flex-direction:column}
+  .book-mini .bm-stats .bm-val{font-size:13px;font-weight:700;color:#e1e5eb}
+
+  /* Timing cards */
+  .timing-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+  .timing-card{background:#111827;border:1px solid #1a2035;border-radius:6px;padding:14px}
+  .timing-card .tc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .timing-card .tc-sport{font-size:12px;font-weight:700;color:#e1e5eb;text-transform:uppercase}
+  .timing-card .tc-status{font-size:10px;font-weight:700;padding:2px 8px;border-radius:3px}
+  .tc-status.in-window{background:#00e67620;color:#00e676;border:1px solid #00e67640}
+  .tc-status.upcoming{background:#ff980020;color:#ff9800;border:1px solid #ff980040}
+  .tc-status.off-peak{background:#1a2035;color:#5a6378}
+  .timing-card .tc-body{font-size:12px;color:#8892a4;line-height:1.8}
+  .timing-card .tc-peak{color:#ffd700;font-weight:600}
+  .timing-card .tc-decay{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .timing-card .tc-decay span{padding:2px 6px;background:#0d1220;border:1px solid #1a2035;border-radius:3px;font-size:10px}
+
+  /* Correlation cards */
+  .corr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+  .corr-card{background:#111827;border:1px solid #1a2035;border-radius:6px;padding:14px}
+  .corr-card .cc-title{font-size:13px;font-weight:700;color:#e1e5eb;margin-bottom:6px}
+  .corr-card .cc-desc{font-size:11px;color:#8892a4;margin-bottom:8px;line-height:1.6}
+  .corr-card .cc-stats{display:flex;gap:8px;flex-wrap:wrap}
+  .corr-card .cc-tag{padding:2px 8px;background:#0d1220;border:1px solid #1a2035;border-radius:3px;font-size:10px}
+  .corr-card .cc-tag.strong{border-color:#00e67640;color:#00e676}
+  .corr-card .cc-tag.moderate{border-color:#ffd70040;color:#ffd700}
+
+  .sport-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+  .sport-mlb{background:#1a2a1a;color:#4caf50;border:1px solid #2e4a2e}
+  .sport-nba{background:#1a1a2e;color:#5c6bc0;border:1px solid #2e2e5c}
+  .sport-nfl{background:#2a1a1a;color:#a1887f;border:1px solid #4a2e2e}
+  .sport-nhl{background:#1a2a2a;color:#4dd0e1;border:1px solid #2e4a4a}
+  .sport-cfb{background:#2a2a1a;color:#ffb74d;border:1px solid #4a4a2e}
+  .sport-cbb{background:#2a1a2a;color:#ba68c8;border:1px solid #4a2e4a}
+  .sport-default{background:#1a1a1a;color:#8892a4;border:1px solid #2a2a2a}
+
+  .message{text-align:center;padding:40px 20px;color:#5a6378}
+  .spinner{width:28px;height:28px;border:3px solid #1a2035;border-top-color:#ff9800;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media(max-width:768px){
+    .container{padding:10px 12px}
+    .stat-card{min-width:90px;padding:8px 12px}
+    .stat-card .value{font-size:18px}
+    .book-mini-grid{grid-template-columns:1fr}
+    .timing-grid{grid-template-columns:1fr}
+    .corr-grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="brand">
+      <h1>RTM <span>Intelligence Center</span></h1>
+      <span class="tagline">Private EV Systems</span>
+    </div>
+    <div class="status-bar">
+      <span class="dot"></span>
+      <span id="status-text">Loading...</span>
+      <span id="refresh-timer"></span>
+    </div>
+  </header>
+
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="signal.html">Signal</a>
+    <a href="intelligence.html" class="active">Intelligence</a>
+    <a href="sharp-tracker.html">Sharp Tracker</a>
+    <a href="props.html">Props</a>
+    <a href="odds-screen.html">Odds Screen</a>
+    <a href="performance.html">Performance</a>
+    <a href="book-profiles.html">Book Intel</a>
+    <a href="clv-report.html">CLV Report</a>
+    <a href="daily-recap.html">Daily Recap</a>
+    <a href="bankroll.html">Bankroll</a>
+  </nav>
+
+  <!-- Stats bar -->
+  <div class="stats">
+    <div class="stat-card"><div class="label">Active Stale Lines</div><div class="value red" id="stat-stale">--</div></div>
+    <div class="stat-card"><div class="label">Books Profiled</div><div class="value blue" id="stat-books">--</div></div>
+    <div class="stat-card"><div class="label">Avg Stale Edge</div><div class="value green" id="stat-edge">--</div></div>
+    <div class="stat-card"><div class="label">Avg Book Reaction</div><div class="value orange" id="stat-reaction">--</div></div>
+  </div>
+
+  <!-- Section 1: Stale Lines (Real-Time) -->
+  <div class="section" id="section-stale">
+    <div class="section-header">
+      <div>
+        <span class="section-title">Stale Lines</span>
+        <span class="section-badge badge-live">REAL-TIME</span>
+      </div>
+      <span class="section-subtitle">Books that haven't caught up to sharp consensus — structural edge</span>
+    </div>
+    <div class="stale-grid" id="stale-grid">
+      <div class="message"><div class="spinner"></div>Loading stale lines...</div>
+    </div>
+  </div>
+
+  <!-- Section 2: Book Profiles -->
+  <div class="section" id="section-books">
+    <div class="section-header">
+      <span class="section-title">Book Profiles — Target These Books</span>
+      <a href="book-profiles.html" style="font-size:11px;color:#42a5f5">Full Analysis &rarr;</a>
+    </div>
+    <div class="book-mini-grid" id="book-grid">
+      <div class="message"><div class="spinner"></div>Loading...</div>
+    </div>
+  </div>
+
+  <!-- Section 3: Market Timing -->
+  <div class="section" id="section-timing">
+    <div class="section-header">
+      <span class="section-title">Market Timing</span>
+      <span class="section-subtitle">When to bet for maximum edge</span>
+    </div>
+    <div class="timing-grid" id="timing-grid">
+      <div class="message"><div class="spinner"></div>Loading...</div>
+    </div>
+  </div>
+
+  <!-- Section 4: Prop Correlations -->
+  <div class="section" id="section-corr">
+    <div class="section-header">
+      <span class="section-title">Prop Correlations</span>
+      <span class="section-subtitle">Today's best correlated parlay opportunities</span>
+    </div>
+    <div class="corr-grid" id="corr-grid">
+      <div class="message"><div class="spinner"></div>Loading...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let refreshInterval;
+let countdownSecs = 30;
+
+const sportLabels = {
+  baseball_mlb:'MLB', basketball_nba:'NBA', americanfootball_nfl:'NFL',
+  icehockey_nhl:'NHL', americanfootball_ncaaf:'CFB', basketball_ncaab:'CBB',
+};
+const marketLabels = {
+  h2h:'Moneyline', spreads:'Spread', totals:'Total',
+  player_points:'Points', player_rebounds:'Rebounds', player_assists:'Assists',
+  player_threes:'Threes',
+};
+
+function sportLabel(s) { return sportLabels[s] || s || '\u2014'; }
+function marketLabel(m) { return marketLabels[m] || m || '\u2014'; }
+function sportClass(s) {
+  const m = {baseball_mlb:'mlb',basketball_nba:'nba',americanfootball_nfl:'nfl',
+    icehockey_nhl:'nhl',americanfootball_ncaaf:'cfb',basketball_ncaab:'cbb'};
+  return 'sport-'+(m[s]||'default');
+}
+function fmtOdds(o) { o=parseInt(o); return o>0?'+'+o:''+o; }
+function fmtSeconds(s) {
+  if (s === null || s === undefined) return '\u2014';
+  if (s >= 3600) return (s/3600).toFixed(1) + 'h';
+  if (s >= 60) return Math.round(s/60) + 'm';
+  return Math.round(s) + 's';
+}
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  if (diff < 0) return '';
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  return Math.floor(hours / 24) + 'd ago';
+}
+
+// ─── Stale Lines ───
+async function loadStaleLines() {
+  try {
+    const resp = await fetch(`${API}/api/intelligence/stale-lines`);
+    const data = await resp.json();
+    const lines = data.stale_lines || [];
+
+    document.getElementById('stat-stale').textContent = lines.length;
+
+    const grid = document.getElementById('stale-grid');
+    if (lines.length === 0) {
+      grid.innerHTML = `<div class="message">
+        <div style="font-size:14px;color:#e1e5eb;margin-bottom:8px">No active stale lines right now</div>
+        <div>Stale lines appear when a book hasn't matched sharp consensus. Check back after the next scan cycle.</div>
+      </div>`;
+      return;
+    }
+
+    const avgEdge = lines.reduce((s, l) => s + (l.edge_percentage || 0), 0) / lines.length;
+    document.getElementById('stat-edge').textContent = '+' + avgEdge.toFixed(1) + '%';
+
+    grid.innerHTML = lines.map(sl => {
+      const edgeClass = sl.edge_percentage >= 5 ? 'high-edge' : sl.edge_percentage >= 3 ? 'med-edge' : '';
+      return `
+        <div class="stale-card ${edgeClass}">
+          <div>
+            <div class="stale-play">${sl.side || '\u2014'}</div>
+            <div class="stale-meta">
+              <span class="book">${(sl.stale_book || '').replace(/_/g,' ')}</span>
+              <span class="sport-badge ${sportClass(sl.sport)}">${sportLabel(sl.sport)}</span>
+              <span>${marketLabel(sl.market_type)}</span>
+              <span class="type">${sl.stale_type || ''}</span>
+              <span>${timeAgo(sl.detected_at)} stale</span>
+            </div>
+          </div>
+          <div class="stale-right">
+            <div class="stale-edge">+${(sl.edge_percentage || 0).toFixed(1)}%</div>
+            <div class="stale-odds">${fmtOdds(sl.stale_odds)} vs ${fmtOdds(sl.consensus_odds)} consensus</div>
+            ${sl.edge_percentage >= 5 ? '<span class="stale-action">BET NOW</span>' : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    document.getElementById('stale-grid').innerHTML = `<div class="message" style="color:#ff5252">Error: ${e.message}</div>`;
+  }
+}
+
+// ─── Book Profiles ───
+async function loadBookProfiles() {
+  try {
+    const resp = await fetch(`${API}/api/intelligence/book-profiles`);
+    const data = await resp.json();
+    const profiles = data.profiles || [];
+
+    document.getElementById('stat-books').textContent = profiles.length;
+
+    const reactions = profiles.filter(p => p.avg_reaction_seconds != null).map(p => p.avg_reaction_seconds);
+    if (reactions.length) {
+      const avg = reactions.reduce((a,b) => a+b, 0) / reactions.length;
+      document.getElementById('stat-reaction').textContent = fmtSeconds(avg);
+    }
+
+    const grid = document.getElementById('book-grid');
+    if (profiles.length === 0) {
+      grid.innerHTML = '<div class="message">No book profiles yet — data accumulates over scan cycles.</div>';
+      return;
+    }
+
+    grid.innerHTML = profiles.slice(0, 8).map((p, i) => {
+      const name = (p.sportsbook || '').replace(/_/g, ' ');
+      return `
+        <div class="book-mini" onclick="window.location.href='book-profiles.html'">
+          <div class="bm-name">#${i+1} ${name}</div>
+          <div class="bm-stats">
+            <span>Reaction<br><span class="bm-val" style="color:${p.avg_reaction_seconds > 300 ? '#ff5252' : p.avg_reaction_seconds > 120 ? '#ff9800' : '#00e676'}">${fmtSeconds(p.avg_reaction_seconds)}</span></span>
+            <span>Stale Rate<br><span class="bm-val">${(p.stale_frequency_pct || 0).toFixed(0)}%</span></span>
+            <span>Avg Edge<br><span class="bm-val" style="color:#00e676">${p.avg_edge_when_stale != null ? '+'+p.avg_edge_when_stale.toFixed(1)+'%' : '\u2014'}</span></span>
+            ${p.best_sport ? `<span>Target<br><span class="bm-val"><span class="sport-badge ${sportClass(p.best_sport)}" style="font-size:9px">${sportLabel(p.best_sport)}</span></span></span>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    document.getElementById('book-grid').innerHTML = `<div class="message" style="color:#ff5252">Error: ${e.message}</div>`;
+  }
+}
+
+// ─── Market Timing ───
+async function loadTiming() {
+  try {
+    const resp = await fetch(`${API}/api/intelligence/timing/optimal-windows`);
+    const data = await resp.json();
+
+    const recs = data.recommendations || [];
+    const tips = data.timing_tips || [];
+    const decay = data.edge_decay || [];
+
+    const grid = document.getElementById('timing-grid');
+
+    if (!recs.length && !tips.length) {
+      // Show edge decay defaults.
+      let decayHTML = '';
+      if (decay.length) {
+        decayHTML = '<div class="timing-card"><div class="tc-header"><span class="tc-sport">Edge Decay</span></div><div class="tc-body">How fast edges disappear after detection:</div><div class="tc-decay">' +
+          decay.map(d => `<span>${d.window}: <strong>${d.avg_edge_remaining_pct}%</strong> remaining</span>`).join('') +
+          '</div></div>';
+      }
+      grid.innerHTML = decayHTML || '<div class="message">Timing data builds over scan cycles. Check back after a few hours of scanning.</div>';
+      return;
+    }
+
+    let html = '';
+
+    // Current time check for each sport.
+    const now = new Date();
+    const utcHour = now.getUTCHours();
+
+    recs.forEach(r => {
+      const peakHour = parseInt(r.peak_time_et) || 0;
+      const isNearPeak = Math.abs(utcHour - ((peakHour + 5) % 24)) <= 2;
+      const statusClass = isNearPeak ? 'in-window' : 'off-peak';
+      const statusText = isNearPeak ? 'IN WINDOW' : 'OFF PEAK';
+
+      html += `
+        <div class="timing-card">
+          <div class="tc-header">
+            <span class="tc-sport"><span class="sport-badge ${sportClass(r.sport)}">${sportLabel(r.sport)}</span> ${marketLabel(r.market)}</span>
+            <span class="tc-status ${statusClass}">${statusText}</span>
+          </div>
+          <div class="tc-body">
+            Peak edge time: <span class="tc-peak">${r.peak_time_et} ET</span><br>
+            Avg EV at peak: <span style="color:#00e676;font-weight:700">+${r.avg_ev.toFixed(1)}%</span><br>
+            <span style="color:#5a6378">${r.observations} observations</span>
+          </div>
+        </div>
+      `;
+    });
+
+    tips.forEach(t => {
+      const bestHrs = t.best_hours_before_game;
+      html += `
+        <div class="timing-card">
+          <div class="tc-header">
+            <span class="tc-sport"><span class="sport-badge ${sportClass(t.sport)}">${sportLabel(t.sport)}</span> Best Timing</span>
+          </div>
+          <div class="tc-body">
+            Best edge: <span class="tc-peak">${bestHrs}h before game</span><br>
+            Avg EV at peak: <span style="color:#00e676;font-weight:700">+${t.avg_ev_at_peak.toFixed(1)}%</span>
+          </div>
+        </div>
+      `;
+    });
+
+    // Edge decay card.
+    if (decay.length) {
+      html += `
+        <div class="timing-card">
+          <div class="tc-header">
+            <span class="tc-sport">Edge Decay</span>
+          </div>
+          <div class="tc-body">How fast edges disappear:</div>
+          <div class="tc-decay">
+            ${decay.map(d => `<span>${d.window}: <strong style="color:${d.avg_edge_remaining_pct > 50 ? '#00e676' : d.avg_edge_remaining_pct > 25 ? '#ff9800' : '#ff5252'}">${d.avg_edge_remaining_pct}%</strong></span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    grid.innerHTML = html;
+  } catch (e) {
+    document.getElementById('timing-grid').innerHTML = `<div class="message" style="color:#ff5252">Error: ${e.message}</div>`;
+  }
+}
+
+// ─── Prop Correlations ───
+async function loadCorrelations() {
+  try {
+    const resp = await fetch(`${API}/api/intelligence/parlay-edges`);
+    const data = await resp.json();
+    const edges = data.parlay_edges || [];
+
+    const grid = document.getElementById('corr-grid');
+    if (edges.length === 0) {
+      grid.innerHTML = '<div class="message">No parlay edges detected. Correlation analysis runs across all active prop markets.</div>';
+      return;
+    }
+
+    grid.innerHTML = edges.map(e => {
+      const strengthClass = e.correlation >= 0.5 ? 'strong' : 'moderate';
+      return `
+        <div class="corr-card">
+          <div class="cc-title">${e.stat1.charAt(0).toUpperCase()+e.stat1.slice(1)} + ${e.stat2.charAt(0).toUpperCase()+e.stat2.slice(1)}</div>
+          <div class="cc-desc">${e.description}</div>
+          <div class="cc-stats">
+            <span class="cc-tag ${strengthClass}">r = ${e.correlation.toFixed(2)}</span>
+            <span class="cc-tag">${e.direction.replace('_', ' ')}</span>
+            <span class="cc-tag">${e.edge_type.replace(/_/g, ' ')}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    document.getElementById('corr-grid').innerHTML = `<div class="message" style="color:#ff5252">Error: ${e.message}</div>`;
+  }
+}
+
+// ─── Load All ───
+async function loadAll() {
+  await Promise.all([
+    loadStaleLines(),
+    loadBookProfiles(),
+    loadTiming(),
+    loadCorrelations(),
+  ]);
+  document.getElementById('status-text').textContent = 'Live';
+  countdownSecs = 30;
+}
+
+function startCountdown() {
+  clearInterval(refreshInterval);
+  countdownSecs = 30;
+  refreshInterval = setInterval(() => {
+    countdownSecs--;
+    document.getElementById('refresh-timer').textContent = `${countdownSecs}s`;
+    if (countdownSecs <= 0) {
+      loadAll();
+    }
+  }, 1000);
+}
+
+loadAll();
+startCountdown();
+</script>
+</body>
+</html>

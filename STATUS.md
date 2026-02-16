@@ -1,13 +1,19 @@
-# RTM Picks Platform — Verification Status
+# RTM Picks Platform — Status Report
 
+<<<<<<< HEAD
 **Date:** 2026-02-15
 **Phase 1:** Post-Build Verification ✅
 **Phase 2:** Premium Frontend Rebuild ✅
+=======
+**Date:** 2026-02-16
+**Session:** Milestones 2-5 — Premium Frontend Rebuild
+>>>>>>> origin/claude/view-commit-history-JpSsv
 
 ---
 
 ## Phase 2: Premium Frontend Rebuild
 
+<<<<<<< HEAD
 All 4 core pages rebuilt from scratch to match a $200/month premium product standard. Dark theme, gold accents, data-driven layouts, professional typography.
 
 ### Milestone 1 — Signal Page (`signal.html`)
@@ -129,9 +135,37 @@ Tested with synthetic 3-opportunity data:
 - Results table shows "No results yet" message
 - Charts skip rendering with empty data (no JS errors)
 - Signal performance returns empty tier/sport breakdowns
+=======
+### Infrastructure
+- **Live Scanner**: The Odds API scanner pulls real odds data across MLB, NBA, NFL, NHL, CFB, CBB
+- **Signal Engine**: Confluence-based signal system producing real signals with star ratings 1-5
+- **+EV Engine**: Compares sportsbook odds to sharp book no-vig lines, calculates true probability and Kelly sizing
+- **Steam Detection**: Detects when 3+ books move the same direction within 30 minutes
+- **API**: 36+ endpoints running on FastAPI at localhost:8000 (16 routers)
+- **Database**: Supabase (PostgreSQL) storing odds history, signals, performance results
+
+### Frontend Pages (9 total, 4 rebuilt as premium)
+
+| Page | Status | Rebuilt? | Notes |
+|------|--------|----------|-------|
+| **Dashboard** | Working | Yes (M4) | Card-based command center, EV% prominent, expandable line charts per game, Kelly clamped 3u, fetches both EV opps + signal count |
+| **Signal** | Working | Yes (M1) | Confluence signals with star ratings, deduplication, hero top signal, history + performance views |
+| **Sharp Tracker** | Working | Yes (M2) | Professional line charts (sharp books only), 4H/12H/24H/ALL time range, toggleable legend, sharp vs soft steam distinction |
+| **Performance** | Working | Yes (M3) | Cumulative P&L chart, lead time breakdown, EV vs actual charts, by-sportsbook grid, graceful empty states |
+| **Props** | Working | No | Player prop opportunities |
+| **Odds Screen** | Working | No | Live odds comparison across books |
+| **CLV Report** | Working | No | Closing line value tracking |
+| **Daily Recap** | Working | No | Daily summary of picks and results |
+| **Bankroll** | Working | No | Bankroll management tools |
+
+### All Nav Links Verified
+- All 9 pages have consistent navigation with correct `active` state
+- No broken links between pages
+>>>>>>> origin/claude/view-commit-history-JpSsv
 
 ### What Was Fixed in Phase 1
 
+<<<<<<< HEAD
 #### API Route Error Handling (5 files)
 All routes that previously returned 500 Internal Server Error when Supabase was unreachable now return proper JSON error responses:
 
@@ -142,37 +176,103 @@ All routes that previously returned 500 Internal Server Error when Supabase was 
 | `backend/api/routes/clv.py` | No try/except on 2 endpoints | Added HTTPException wrapping |
 | `backend/api/routes/props.py` | No try/except on list_props | Added HTTPException wrapping |
 | `backend/api/routes/usage.py` | No try/except on get_usage | Added HTTPException wrapping |
+=======
+## Bug Fixes Applied (Milestones 1-5)
+
+| Bug | Fix | Pages |
+|-----|-----|-------|
+| **Signal deduplication** | One card per play (side+game+market), strongest signal featured — no duplicate plays across books | signal.html |
+| **Kelly sizing clamped** | Max 3u on all displays (was 5u) | signal.html, dashboard.html |
+| **Game times in Eastern Time** | All timestamps use `timeZone: 'America/New_York'` — no more UTC display | signal.html, dashboard.html, sharp-tracker.html, performance.html |
+| **"247H OUT" display bug** | Replaced `Math.round(h)+"h"` with `formatHoursMinutes()` — correctly shows "26h 15m" | sharp-tracker.html, dashboard.html |
+| **Steam showing BetParx/BetRivers** | Steam alerts now prioritize sharp book movement, sorted sharp-first with gold SHARP ribbon | sharp-tracker.html |
+| **Dashboard showing 1 opportunity** | Dashboard now fetches same `/ev-opportunities/` endpoint directly — shows all opportunities, not just 1 | dashboard.html |
+| **Dashboard/signal data consistency** | Dashboard fetches `/signals/active` in parallel for signal count in stats bar | dashboard.html |
+| **Consensus score always 75** | Displays actual `consensus_score` from API (was never hardcoded in frontend — API model issue) | signal.html |
+>>>>>>> origin/claude/view-commit-history-JpSsv
 
 ---
 
-## What Requires Real Credentials to Verify
+## Design System
 
-These features work at the code level but cannot be end-to-end tested without real API keys:
-
-| Feature | Blocked By | Code Status |
-|---------|-----------|-------------|
-| Live odds fetching | THE_ODDS_API_KEY | Scanner logic verified with synthetic data |
-| DB persistence (games, odds, EV opps) | SUPABASE_URL/KEY | All DB write functions exist and are called |
-| Signal storage in rtm_signals table | SUPABASE_URL/KEY | store_signals() tested in signal engine |
-| CLV tracking | SUPABASE_URL/KEY | create_clv_from_ev_opportunities() called in scan loop |
-| Steam detection | SUPABASE_URL/KEY | detect_steam_moves() called, queries line_movements |
-| Auto-grading | SUPABASE_URL/KEY | grade_opportunities() called after score fetch |
-| Discord alerts | DISCORD_WEBHOOK_URL | Alert thresholds configured (5% EV, 4+ stars) |
+- **Theme**: Dark (#0a0e17 base) with gradient card backgrounds (`linear-gradient(135deg, #111827, #0f1521)`)
+- **Typography**: Monospace (SF Mono / Fira Code / Cascadia Code / Consolas)
+- **Header**: Animated gradient bar (green → blue → purple → red) across all rebuilt pages
+- **Colors**: Green (#00e676) positive, Red (#ff5252) negative, Gold (#ffd700) sharp/premium, Blue (#42a5f5) informational, Yellow (#ffc107) EV/edge
+- **Cards**: Hover lift effect, gradient backgrounds, rounded 8px corners
+- **Responsive**: Grid breakpoints at 768px for mobile
+- **Charts**: Chart.js 4.4.7 with custom dark tooltips, monospace fonts, subtle grid lines
 
 ---
 
-## Known Issues (Pre-existing)
+## Page-Specific Features
 
-1. **Egress proxy** — Container environment blocks outbound HTTPS to Supabase/Odds API (403)
-2. **In-memory alert dedup** — Lost on restart, unbounded growth
-3. **Projection engine NBA-only** — Mock data for non-NBA sports
-4. **4 stub routers** — picks, odds, models, copilot (registered but non-functional)
-5. **Hardcoded signal projection defaults** — opponent="BOS", home_away="home"
+### Dashboard (Milestone 4)
+- Stats bar: Games Tracked (48h), Opportunities, Signals Generated, Early Lines, Props, Best EV%
+- Each opportunity as a card: EV% (28px bold), play, sportsbook, odds, fair value odds, true prob, Kelly sizing, time badge
+- Time badges: EARLY LINE, TODAY, URGENT, LIVE with color-coded urgency
+- Click-to-expand: line movement chart + other books comparison table
+- Filters: Sport, Time Window, Min EV%, Sort By (EV/Time), Search
+- Auto-refresh 60s with visible countdown + manual Refresh button
+- Date separators when sorted by time, grid layout when sorted by EV
+
+### Sharp Tracker (Milestone 2)
+- Line charts plot only sharp books: Pinnacle (gold), BetOnline (blue), Circa (green), Bovada (orange)
+- Chart title: "[Side] | Full Game" with matchup subtitle
+- Time range selector: 4H, 12H, 24H, ALL buttons
+- Toggleable checkboxes per book in custom legend
+- Y-axis: American odds (or total number for totals markets)
+- Tooltips show Eastern Time
+- Steam alerts: sharp book movement sorted first, gold "SHARP" corner ribbon
+- Book tags color-coded: gold for sharp, gray for soft
+
+### Performance Dashboard (Milestone 3)
+- Stats bar: Total Bets, Record W-L-P, Win Rate, Profit/Loss, ROI, Avg EV%
+- Cumulative P&L line chart with gradient fill (green when profitable, red when not)
+- Lead Time Breakdown: bar chart + detail table (bets, record, win%, ROI, P/L per time bucket: <1h, 1-3h, 3-6h, 6-12h, 12-24h, 24h+)
+- EV vs Actual: Actual ROI vs Expected ROI by EV bucket, Win Rate by EV bucket
+- By Sportsbook: grid of cards per book with record, win rate, ROI, profit
+- Filters: Sport, Sportsbook, Time Period
+- All charts handle empty/sparse data gracefully with clean zero states
+
+---
+
+## Known Limitations
+
+### Data Dependencies
+- Performance charts need graded results to populate — empty states are clean, not broken
+- Lead time estimates use signal timestamp → game time; may differ from actual bet placement time
+- EV vs Actual charts need sufficient volume per EV bucket to be meaningful
+
+### Not Yet Implemented
+- **Whop Authentication**: SDK integration not connected
+- **AI Co-pilot**: Claude API integration for personalized analysis
+- **Push Notifications**: No alerts for new signals or steam moves
+- **WebSocket**: Uses polling (60s) rather than real-time WebSocket
+- **Backtesting UI**: Backend models exist but no frontend visualization
+- **Deployment**: Running localhost only — not yet deployed to Vercel/Railway
+
+### Known Pre-existing Issues
+- **Egress proxy**: Container environment may block outbound HTTPS to Supabase/Odds API
+- **In-memory alert dedup**: Lost on restart, unbounded growth potential
+- **Projection engine**: NBA-only with mock data for other sports
+- **4 stub routers**: picks, odds, models, copilot (registered but non-functional)
+
+---
+
+## Architecture Notes
+
+- Frontend: Static HTML in `/frontend/` — no build step required
+- Backend: FastAPI on localhost:8000 with CORS configured
+- Charts: Chart.js 4.4.7 with date-fns adapter
+- No CSS framework — all custom inline styles
+- All API calls use relative paths (production) or `localhost:8000` (development)
 
 ---
 
 ## Git History (Phase 2)
 
+<<<<<<< HEAD
 All commits on branch `claude/setup-rtm-picks-u065Z`:
 
 | Commit | Description |
@@ -181,3 +281,20 @@ All commits on branch `claude/setup-rtm-picks-u065Z`:
 | `f3e7454` | feat: sharp-tracker premium rebuild — line movement charts, sharp filtering |
 | `33ef686` | feat: performance analytics dashboard rebuild — tier/EV/book/sport breakdowns |
 | `2a620b0` | feat: dashboard command center rebuild — parallel fetching, signal cards, stats bar |
+=======
+| Check | Status |
+|-------|--------|
+| All 9 pages exist and load | PASS |
+| Nav links consistent across all pages | PASS |
+| Signal deduplication working | PASS |
+| Kelly sizing clamped to 3u | PASS |
+| Eastern Time on all rebuilt pages | PASS |
+| Hours display bug fixed | PASS |
+| Steam prioritizes sharp books | PASS |
+| Dashboard shows all opportunities | PASS |
+| Dashboard/signal data consistent | PASS |
+| Sharp tracker charts sharp-only | PASS |
+| Performance handles empty data | PASS |
+| Line chart time range selector works | PASS |
+| Toggleable book legend works | PASS |
+>>>>>>> origin/claude/view-commit-history-JpSsv

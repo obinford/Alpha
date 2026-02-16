@@ -176,10 +176,12 @@
   <nav>
     <a href="dashboard.html">Dashboard</a>
     <a href="signal.html">Signal</a>
+    <a href="intelligence.html">Intelligence</a>
     <a href="sharp-tracker.html">Sharp Tracker</a>
     <a href="props.html" class="active">Props</a>
     <a href="odds-screen.html">Odds Screen</a>
     <a href="performance.html">Performance</a>
+    <a href="book-profiles.html">Book Intel</a>
     <a href="clv-report.html">CLV Report</a>
     <a href="daily-recap.html">Daily Recap</a>
     <a href="bankroll.html">Bankroll</a>
@@ -364,6 +366,70 @@ function setView(v) {
   renderProps(allProps);
 }
 
+// --- Prop Correlations ---
+async function loadCorrelations(playerName, propType) {
+  try {
+    const resp = await fetch(`${API}/api/intelligence/correlations/${encodeURIComponent(playerName)}?prop_type=${propType}`);
+    return await resp.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function renderCorrelationPanel(corrData) {
+  if (!corrData) return '';
+  const pos = corrData.positively_correlated || [];
+  const neg = corrData.negatively_correlated || [];
+  const game = corrData.game_correlated || [];
+  if (!pos.length && !neg.length && !game.length) return '';
+
+  let html = '<div style="background:#0d1220;border:1px solid #1a2035;border-radius:4px;padding:10px 14px;margin:8px 0;font-size:11px">';
+  html += '<div style="color:#42a5f5;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:10px;margin-bottom:6px">\uD83D\uDD17 Related Props</div>';
+
+  if (pos.length) {
+    html += '<div style="margin-bottom:6px">';
+    pos.slice(0, 3).forEach(c => {
+      const strength = c.strength === 'strong' ? '#00e676' : c.strength === 'moderate' ? '#ffd700' : '#5a6378';
+      html += `<span style="display:inline-block;padding:2px 8px;background:#111827;border:1px solid #1a2035;border-radius:3px;margin:2px 4px 2px 0">`;
+      html += `<span style="color:${strength}">\u2197</span> ${c.stat} (r=${c.correlation})`;
+      html += '</span>';
+    });
+    html += '</div>';
+  }
+  if (neg.length) {
+    html += '<div style="margin-bottom:6px">';
+    neg.slice(0, 3).forEach(c => {
+      html += `<span style="display:inline-block;padding:2px 8px;background:#111827;border:1px solid #1a2035;border-radius:3px;margin:2px 4px 2px 0">`;
+      html += `<span style="color:#ff5252">\u2198</span> ${c.stat} (r=${c.correlation})`;
+      html += '</span>';
+    });
+    html += '</div>';
+  }
+  if (game.length) {
+    game.forEach(g => {
+      html += `<div style="color:#5a6378;margin-top:4px">${g.suggestion}</div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
+async function toggleCorrelation(el, playerName, propType) {
+  const panel = el.nextElementSibling;
+  if (panel && panel.classList.contains('corr-panel')) {
+    panel.remove();
+    return;
+  }
+  const data = await loadCorrelations(playerName, propType);
+  const html = renderCorrelationPanel(data);
+  if (html) {
+    const div = document.createElement('div');
+    div.className = 'corr-panel';
+    div.innerHTML = html;
+    el.parentElement.insertBefore(div, el.nextSibling);
+  }
+}
+
 function renderChips(byType) {
   const container = document.getElementById("chips");
   if (!byType || !Object.keys(byType).length) {
@@ -429,6 +495,7 @@ function renderGroupedView(props) {
         <div style="display:flex;align-items:center;gap:10px">
           <span class="ev-val ${evClass(bestEv)}">${fmtEv(bestEv)} best</span>
           <span class="player-count">${data.props.length} prop${data.props.length > 1 ? "s" : ""}</span>
+          <button onclick="event.stopPropagation();toggleCorrelation(this.closest('.player-group'),'${name.replace(/'/g,"\\'")}','${data.props[0].prop_type||'points'}')" style="background:#0d1220;color:#42a5f5;border:1px solid #1a2035;border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:inherit">\uD83D\uDD17 Correlations</button>
         </div>
       </div>
       <div class="player-props">

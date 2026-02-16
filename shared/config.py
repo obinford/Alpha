@@ -129,3 +129,21 @@ ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4/sports"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 DISCORD_ENABLED = bool(DISCORD_WEBHOOK_URL)
 MIN_ALERT_EV_THRESHOLD = 5.0
+
+# --- Intelligence Layers ---
+# Stale line detection: minimum EV% to qualify as stale.
+STALE_LINE_EV_THRESHOLD = 2.0
+# Minimum sharp books that must agree for stale consensus.
+STALE_MIN_SHARP_AGREEMENT = 2
+# Stale line Discord alert threshold (high-edge stale lines).
+STALE_DISCORD_ALERT_EV = 5.0
+
+# Book profiler: books considered sharp (not profiled).
+# (Uses SHARP_BOOKS from above.)
+
+# Intelligence score weights in signal engine.
+INTEL_STALE_LINE_BONUS = 30
+INTEL_SLOW_BOOK_BONUS = 15
+INTEL_OPTIMAL_WINDOW_BONUS = 10
+INTEL_CORRELATION_BONUS = 15
+INTEL_PEAK_TIMING_BONUS = 10
