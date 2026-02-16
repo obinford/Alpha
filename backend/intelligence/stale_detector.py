@@ -29,6 +29,34 @@ class StaleLineDetector:
 
     def __init__(self, db_client: Any | None = None) -> None:
         self._db = db_client
+        # Cache of avg reaction seconds per (book, sport) — preloaded once.
+        self._reaction_cache: dict[tuple[str, str], float] | None = None
+
+    def _preload_reaction_cache(self, books: set[str], sports: set[str]) -> None:
+        """Batch-load average reaction times for all soft book/sport combos.
+
+        Replaces per-stale-line DB queries in _classify_stale_type with a
+        single query up front.
+        """
+        if self._db is None or self._reaction_cache is not None:
+            return
+        self._reaction_cache = {}
+        try:
+            rows = self._db._get(
+                "book_reaction_times",
+                select="soft_book,sport,reaction_seconds",
+            )
+            # Group by (book, sport) and compute average.
+            totals: dict[tuple[str, str], list[float]] = {}
+            for r in rows:
+                if r.get("reaction_seconds") is None:
+                    continue
+                key = (r["soft_book"], r["sport"])
+                totals.setdefault(key, []).append(float(r["reaction_seconds"]))
+            for key, times in totals.items():
+                self._reaction_cache[key] = sum(times) / len(times)
+        except Exception:
+            self._reaction_cache = {}
 
     def detect_stale_lines(self, current_odds_snapshot: list[dict]) -> list[dict]:
         """Detect stale lines from a current odds snapshot.
@@ -46,6 +74,11 @@ class StaleLineDetector:
         Returns:
             List of stale line dicts.
         """
+        # Preload reaction times so _classify_stale_type doesn't N+1 query.
+        all_books = {s.get("bookmaker", "") for s in current_odds_snapshot}
+        all_sports = {s.get("sport", "") for s in current_odds_snapshot}
+        self._preload_reaction_cache(all_books, all_sports)
+
         # Group by (game_id, market_type, side).
         groups: dict[tuple[str, str, str], list[dict]] = {}
         for snap in current_odds_snapshot:
@@ -148,30 +181,13 @@ class StaleLineDetector:
     ) -> str:
         """Classify why this line is stale.
 
-        Uses book behavior patterns and context to determine the likely cause.
+        Uses cached reaction times (preloaded in detect_stale_lines) to
+        avoid per-line DB queries.
         """
-        # If we have historical data for this book being slow, it's a SLOW_MOVER.
-        if self._db is not None:
-            try:
-                reactions = self._db._get(
-                    "book_reaction_times",
-                    select="reaction_seconds",
-                    filters={
-                        "soft_book": f"eq.{book}",
-                        "sport": f"eq.{sport}",
-                    },
-                    limit=10,
-                )
-                if reactions:
-                    avg_time = sum(
-                        r["reaction_seconds"]
-                        for r in reactions
-                        if r.get("reaction_seconds")
-                    ) / max(1, len([r for r in reactions if r.get("reaction_seconds")]))
-                    if avg_time > 300:  # > 5 min average
-                        return "SLOW_MOVER"
-            except Exception:
-                pass
+        if self._reaction_cache:
+            avg_time = self._reaction_cache.get((book, sport))
+            if avg_time is not None and avg_time > 300:  # > 5 min average
+                return "SLOW_MOVER"
 
         # Default classification based on market type.
         if market_type.startswith("player_"):

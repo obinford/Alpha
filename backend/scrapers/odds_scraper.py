@@ -1313,6 +1313,7 @@ def run_scan(sport_keys: list[str]) -> int:
             odds_snapshot = build_odds_snapshot_from_games(all_games)
 
             # Track book reaction times from recent line movements.
+            t0_sub = time.time()
             try:
                 now_ts = datetime.now(timezone.utc)
                 since = (now_ts - timedelta(minutes=SCAN_INTERVAL_MINUTES + 5)).isoformat()
@@ -1327,8 +1328,10 @@ def run_scan(sport_keys: list[str]) -> int:
                         print(f"  Book profiler: {reactions} reaction(s) tracked.")
             except Exception as e:
                 print(f"  Warning: Book profiler tracking failed ({e}).")
+            print(f"  [TIMING] Book profiler: {time.time() - t0_sub:.1f}s")
 
             # Detect stale lines.
+            t0_sub = time.time()
             try:
                 stale_lines = detector.detect_stale_lines(odds_snapshot)
                 if stale_lines:
@@ -1360,11 +1363,40 @@ def run_scan(sport_keys: list[str]) -> int:
                                 pass
             except Exception as e:
                 print(f"  Warning: Stale line detection failed ({e}).")
+            print(f"  [TIMING] Stale detection: {time.time() - t0_sub:.1f}s")
 
-            # Track line lifecycle (market timing).
+            # Track line lifecycle (market timing) — batched.
+            t0_sub = time.time()
             try:
                 timing = MarketTimingEngine(db)
-                lifecycle_count = 0
+
+                # Collect all game IDs we need to check.
+                game_ids = [g.id for g in all_games]
+
+                # Batch-fetch ALL existing lifecycle keys for these games
+                # in a single DB query instead of one per outcome (N+1 fix).
+                existing_lifecycle_keys: set[tuple[str, str, str, str]] = set()
+                for i in range(0, len(game_ids), 50):
+                    chunk_ids = game_ids[i : i + 50]
+                    # PostgREST IN filter: game_id=in.(id1,id2,...)
+                    id_list = ",".join(chunk_ids)
+                    try:
+                        existing_rows = db._get(
+                            "line_lifecycle",
+                            select="game_id,market_type,side,sportsbook",
+                            filters={"game_id": f"in.({id_list})"},
+                        )
+                        for r in existing_rows:
+                            existing_lifecycle_keys.add((
+                                r["game_id"], r["market_type"],
+                                r["side"], r["sportsbook"],
+                            ))
+                    except Exception:
+                        pass
+
+                # Collect new lifecycle rows to batch-insert.
+                new_lifecycle_rows: list[dict] = []
+                now_iso = datetime.now(timezone.utc).isoformat()
                 for game in all_games:
                     for bk in game.bookmakers:
                         for mkt in bk.markets:
@@ -1376,36 +1408,28 @@ def run_scan(sport_keys: list[str]) -> int:
                                     side = outcome.name + (
                                         f" {outcome.point}" if outcome.point is not None else ""
                                     )
-                                # Check if this line already exists in lifecycle.
-                                try:
-                                    existing = db._get(
-                                        "line_lifecycle",
-                                        select="id",
-                                        filters={
-                                            "game_id": f"eq.{game.id}",
-                                            "market_type": f"eq.{mkt.key}",
-                                            "side": f"eq.{side}",
-                                            "sportsbook": f"eq.{bk.key}",
-                                        },
-                                        limit=1,
-                                    )
-                                    if not existing:
-                                        timing.track_line_first_seen(
-                                            game_id=game.id,
-                                            sport=game.sport_key,
-                                            market_type=mkt.key,
-                                            side=side,
-                                            sportsbook=bk.key,
-                                            opening_odds=outcome.price,
-                                            game_start_time=game.commence_time,
-                                        )
-                                        lifecycle_count += 1
-                                except Exception:
-                                    pass
-                if lifecycle_count:
-                    print(f"  Market timing: {lifecycle_count} new line lifecycle(s) tracked.")
+                                key = (game.id, mkt.key, side, bk.key)
+                                if key not in existing_lifecycle_keys:
+                                    new_lifecycle_rows.append({
+                                        "game_id": game.id,
+                                        "sport": game.sport_key,
+                                        "market_type": mkt.key,
+                                        "side": side,
+                                        "sportsbook": bk.key,
+                                        "first_seen_at": now_iso,
+                                        "opening_odds": outcome.price,
+                                        "game_start_time": game.commence_time,
+                                    })
+                                    # Mark as seen so we don't insert duplicates
+                                    # from the same scan.
+                                    existing_lifecycle_keys.add(key)
+
+                if new_lifecycle_rows:
+                    db._post_many("line_lifecycle", new_lifecycle_rows)
+                    print(f"  Market timing: {len(new_lifecycle_rows)} new line lifecycle(s) tracked.")
             except Exception as e:
                 print(f"  Warning: Market timing tracking failed ({e}).")
+            print(f"  [TIMING] Market timing: {time.time() - t0_sub:.1f}s")
         except Exception as e:
             print(f"Warning: Intelligence layers failed ({e}).")
         print(f"[TIMING] Intelligence layers: {time.time() - t0_intel:.1f}s")
