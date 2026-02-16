@@ -197,6 +197,11 @@
 
   .time-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;margin-left:6px}
   .badge-early{background:#00e67615;color:#00e676;border:1px solid #00e67640}
+  .intel-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:0.5px;margin-left:4px}
+  .badge-stale{background:#ff525220;color:#ff5252;border:1px solid #ff525240}
+  .badge-timing{background:#ff980020;color:#ff9800;border:1px solid #ff980040}
+  .badge-correlation{background:#42a5f520;color:#42a5f5;border:1px solid #42a5f540}
+  .intel-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed #1a2035}
   .badge-urgent{background:#ff525220;color:#ff5252;border:1px solid #ff525240;animation:pulse-urgent 1.5s ease-in-out infinite}
   .badge-game-time{color:#8892a4;font-size:11px;font-weight:600}
 
@@ -498,10 +503,20 @@ function renderSignalCard(sig) {
   const steam = sig.steam_score || 0;
   const proj = sig.projection_score || 0;
   const cons = sig.consensus_score || 0;
+  const intel = sig.intelligence_score || 0;
   const kelly = sig.kelly_size || 0;
   const propLine = sig.prop_line;
   const created = sig.created_at;
   const mt = sig.market_type || '';
+
+  // Intelligence context.
+  const intelCtx = sig.intelligence_context || {};
+  const isStale = intelCtx.is_stale_line || false;
+  const isOptimalWindow = intelCtx.optimal_window || false;
+  const hasCorrelation = intelCtx.has_correlation || false;
+  const staleTip = intelCtx.stale_tip || '';
+  const timingTip = intelCtx.timing_tip || '';
+  const corrTip = intelCtx.correlation_tip || '';
 
   const playDisplay = player ? `${player} \u2014 ${side}` : side;
   const lineDisplay = propLine ? ` (${propLine})` : '';
@@ -534,7 +549,7 @@ function renderSignalCard(sig) {
           </div>
         </div>
         <div class="game-info">${game}${player ? ' \u2014 <span class="player">'+player+'</span>' : ''}${getHoursUntil(sig) !== null ? ' \u2014 Game in '+fmtGameTime(sig) : ''}</div>
-        <div class="scores-grid">
+        <div class="scores-grid" style="grid-template-columns:repeat(5,1fr)">
           <div class="score-item">
             <span class="score-label">EV Score</span>
             <div class="score-bar-bg"><div class="score-bar-fill ev" style="width:${ev}%"></div></div>
@@ -555,7 +570,18 @@ function renderSignalCard(sig) {
             <div class="score-bar-bg"><div class="score-bar-fill cons" style="width:${cons}%"></div></div>
             <span class="score-val">${cons}/100</span>
           </div>
+          <div class="score-item">
+            <span class="score-label">Intel</span>
+            <div class="score-bar-bg"><div class="score-bar-fill" style="width:${intel}%;background:linear-gradient(90deg,#ff5252,#ff9800)" ></div></div>
+            <span class="score-val">${intel}/100</span>
+          </div>
         </div>
+        ${(isStale || isOptimalWindow || hasCorrelation) ? `
+        <div class="intel-row">
+          ${isStale ? '<span class="intel-badge badge-stale">\uD83C\uDFAF STALE LINE' + (staleTip ? ' \u2014 ' + staleTip : '') + '</span>' : ''}
+          ${isOptimalWindow ? '<span class="intel-badge badge-timing">\u23F0 OPTIMAL WINDOW' + (timingTip ? ' \u2014 ' + timingTip : '') + '</span>' : ''}
+          ${hasCorrelation ? '<span class="intel-badge badge-correlation">\uD83D\uDD17 CORRELATED' + (corrTip ? ' \u2014 ' + corrTip : '') + '</span>' : ''}
+        </div>` : ''}
       </div>
       <div class="card-footer">
         <div class="card-footer-left">
