@@ -45,18 +45,32 @@ from config import (
 from books import get_book_tier, get_book_name, get_book_info
 
 # ---------------------------------------------------------------------------
-# EU region filtering — we request the EU region solely for Pinnacle data.
-# All other EU soft books (1xBet, 888sport, Marathon Bet, etc.) are
-# unbettable from the US and add noise to payload + processing.
+# Book whitelist — only process books we can actually bet at (US) plus
+# Pinnacle as our sharp devig reference.  Everything else (EU soft books,
+# regional sportsbooks like betclic_fr, tipico_de, etc.) is dropped after
+# fetching to reduce payload size and avoid false +EV noise.
 # ---------------------------------------------------------------------------
-_EU_BOOKS_KEEP = {"pinnacle"}
+ALLOWED_BOOKS: set[str] = {
+    # US sharp
+    "betonlineag", "bovada", "lowvig",
+    # US market makers
+    "betmgm", "betrivers", "williamhill_us", "draftkings", "fanatics", "fanduel",
+    # US soft
+    "betus", "mybookieag",
+    # US2 soft
+    "ballybet", "betanysports", "betparx", "espnbet", "fliff", "hardrockbet", "rebet",
+    # US exchanges
+    "betopenly", "kalshi", "novig", "polymarket", "prophetx",
+    # Sharp reference (EU region, needed for devig)
+    "pinnacle",
+}
 
 # Build fetch regions: base regions + eu (for Pinnacle).
 _FETCH_REGIONS = ODDS_API_REGIONS if "eu" in ODDS_API_REGIONS else f"{ODDS_API_REGIONS},eu"
 
 
-def _filter_eu_books(games: list[Game]) -> int:
-    """Remove EU-region bookmakers (except Pinnacle) from game data.
+def _filter_non_whitelisted_books(games: list[Game]) -> int:
+    """Remove bookmakers not in ALLOWED_BOOKS from game data.
 
     Mutates game.bookmakers in place.  Returns the total number of
     bookmakers removed across all games.
@@ -65,9 +79,7 @@ def _filter_eu_books(games: list[Game]) -> int:
     for game in games:
         original = len(game.bookmakers)
         game.bookmakers = [
-            bk for bk in game.bookmakers
-            if bk.key in _EU_BOOKS_KEEP
-            or get_book_info(bk.key).get("region") != "eu"
+            bk for bk in game.bookmakers if bk.key in ALLOWED_BOOKS
         ]
         removed += original - len(game.bookmakers)
     return removed
@@ -1062,9 +1074,9 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"  Skipping {sport_display_name(sport_key)}: {e}")
             return sport_key, None, time.time() - t0
         if games:
-            removed = _filter_eu_books(games)
+            removed = _filter_non_whitelisted_books(games)
             if removed:
-                print(f"  [SCAN] {sport_display_name(sport_key)}: filtered {removed} EU soft book entries")
+                print(f"  [SCAN] {sport_display_name(sport_key)}: filtered {removed} non-whitelisted book entries")
         return sport_key, games if games else None, time.time() - t0
 
     print(f"[SCAN] Fetching {len(sport_keys)} sports in parallel from regions: {_FETCH_REGIONS} (EU for Pinnacle only)")
@@ -1145,7 +1157,7 @@ def run_scan(sport_keys: list[str]) -> int:
             try:
                 prop_games = fetch_odds(sport_key, markets=sport_props, regions=_FETCH_REGIONS)
                 if prop_games:
-                    eu_removed = _filter_eu_books(prop_games)
+                    _filter_non_whitelisted_books(prop_games)
                     merge_prop_data(games, prop_games)
                     print(f"  Props merged for {display}.")
             except Exception as e:

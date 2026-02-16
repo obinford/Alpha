@@ -34,7 +34,7 @@ from scrapers.odds_scraper import (
     scan_game_props,
     build_devig_line_map,
     _extract_market_odds_by_book,
-    _filter_eu_books,
+    _filter_non_whitelisted_books,
     _FETCH_REGIONS,
     resolve_sport_keys,
     hours_until_start,
@@ -84,9 +84,9 @@ def run_diagnostic(sport_keys: list[str]) -> None:
         try:
             games = fetch_odds(sport_key, markets=MARKETS, regions=_FETCH_REGIONS)
             if games:
-                eu_removed = _filter_eu_books(games)
-                if eu_removed:
-                    print(f"  Filtered {eu_removed} EU soft book entries (keeping Pinnacle only)")
+                removed = _filter_non_whitelisted_books(games)
+                if removed:
+                    print(f"  Filtered {removed} non-whitelisted book entries")
         except Exception as e:
             print(f"  ✗ Fetch FAILED: {e}")
             continue
