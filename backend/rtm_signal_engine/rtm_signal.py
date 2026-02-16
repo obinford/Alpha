@@ -119,6 +119,8 @@ class RTMSignal:
         # Intelligence caches (populated by load_cache).
         self._stale_cache: dict[str, list[dict]] | None = None
         self._reaction_cache: dict[str, list[dict]] | None = None
+        # Market timing analysis cache — computed once per scan, not per opp.
+        self._timing_analysis_cache: dict[str, dict] | None = None
 
     # ------------------------------------------------------------------
     # Individual scoring components
@@ -367,20 +369,31 @@ class RTMSignal:
             except Exception:
                 pass
 
-        # 3. Market timing: is the current time in the optimal bet window?
-        try:
-            from intelligence.market_timing import MarketTimingEngine
-            timing = MarketTimingEngine(self._db)
-            timing_ctx = timing.get_timing_context_for_signal(
-                sport, market_type, hours_until_start
+        # 3. Market timing: use pre-computed analysis from load_cache.
+        if self._timing_analysis_cache is not None:
+            analysis = self._timing_analysis_cache.get(sport, {})
+            timing_ctx = self._eval_timing_context(
+                analysis, sport, market_type, hours_until_start
             )
             bonus = timing_ctx.get("score_bonus", 0)
             if bonus > 0:
                 score += bonus
                 context["optimal_window"] = True
                 context["timing_tip"] = timing_ctx.get("context", "")
-        except Exception:
-            pass
+        else:
+            try:
+                from intelligence.market_timing import MarketTimingEngine
+                timing = MarketTimingEngine(self._db)
+                timing_ctx = timing.get_timing_context_for_signal(
+                    sport, market_type, hours_until_start
+                )
+                bonus = timing_ctx.get("score_bonus", 0)
+                if bonus > 0:
+                    score += bonus
+                    context["optimal_window"] = True
+                    context["timing_tip"] = timing_ctx.get("context", "")
+            except Exception:
+                pass
 
         # 4. Prop correlation: if this is a prop, check for confirming correlations.
         if market_type.startswith("player_"):
@@ -805,6 +818,71 @@ class RTMSignal:
         except Exception:
             pass
 
+        # Pre-compute market timing analysis ONCE per scan (not per opp).
+        # Keyed by sport so intelligence_score can look up without DB calls.
+        self._timing_analysis_cache = {}
+        try:
+            from intelligence.market_timing import MarketTimingEngine
+            timing = MarketTimingEngine(self._db)
+            # Collect unique sports from game_ids we're scoring.
+            # Pass None to get all sports at once.
+            analysis = timing.analyze_optimal_windows(sport=None)
+            # Index windows by sport for O(1) lookup.
+            for w in analysis.get("windows", []):
+                sport_key = w.get("sport", "")
+                self._timing_analysis_cache.setdefault(sport_key, {
+                    "windows": [],
+                    "hours_before_game": analysis.get("hours_before_game", {}),
+                })
+                self._timing_analysis_cache[sport_key]["windows"].append(w)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _eval_timing_context(
+        analysis: dict,
+        sport: str,
+        market_type: str,
+        hours_until_start: float | None,
+    ) -> dict:
+        """Evaluate timing context from pre-computed analysis (no DB).
+
+        Mirrors MarketTimingEngine.get_timing_context_for_signal logic.
+        """
+        windows = analysis.get("windows", [])
+        matching = None
+        for w in windows:
+            if w.get("sport") == sport and w.get("market_type") == market_type:
+                matching = w
+                break
+
+        context = ""
+        score_bonus = 0
+
+        if matching and matching.get("best_hour_utc") is not None:
+            current_hour = datetime.now(timezone.utc).hour
+            best_hour = matching["best_hour_utc"]
+            diff = abs(current_hour - best_hour)
+            if diff <= 2 or diff >= 22:
+                context = "Optimal bet window — peak edge time for this market"
+                score_bonus = 10
+
+        if hours_until_start is not None:
+            hours_before = analysis.get("hours_before_game", {}).get(sport, {})
+            best_hrs = hours_before.get("best_hours_before_game")
+            if best_hrs is not None:
+                diff = abs((hours_until_start or 0) - best_hrs)
+                if diff <= 2:
+                    if not context:
+                        context = f"Near peak timing — {hours_until_start:.0f}h before game"
+                    score_bonus = max(score_bonus, 8)
+
+        return {
+            "context": context,
+            "score_bonus": score_bonus,
+            "hours_until_start": hours_until_start,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -845,8 +923,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
 
     rows = []
     for s in signals:
-        # NOTE: away_team and commence_time are NOT columns in
-        # rtm_signals — omit to avoid bulk insert failures.
+        # NOTE: away_team, commence_time, consensus_books are NOT
+        # columns in rtm_signals — omit to avoid bulk insert failures.
         rows.append({
             "game_id": s["game_id"],
             "sport": s["sport"],
@@ -862,7 +940,6 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "steam_score": s["steam_score"],
             "projection_score": s.get("projection_score", 0),
             "consensus_score": s["consensus_score"],
-            "consensus_books": s.get("consensus_books", 0),
             "intelligence_score": s.get("intelligence_score", 0),
             "intelligence_context": s.get("intelligence_context"),
             "fair_odds": s.get("fair_odds"),

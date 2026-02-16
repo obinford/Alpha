@@ -53,7 +53,11 @@ def fetch_scores(sport_key: str, days_from: int = 1) -> list[dict]:
 def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) -> int:
     """Fetch scores and update the games table for completed games.
 
-    Batched: collects all score updates then upserts in one bulk call.
+    Uses PATCH (not upsert) so we only update score fields without
+    touching NOT NULL columns like sport.  Batches the status update
+    for all game IDs in one call, then sends score patches per game
+    using the connection-pooled httpx client.
+
     Returns the number of games updated to 'final'.
     """
     from db import SupabaseClient
@@ -63,7 +67,7 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
     if not scores:
         return 0
 
-    rows: list[dict] = []
+    updates: list[dict] = []
     for game in scores:
         if not game.get("completed", False):
             continue
@@ -87,20 +91,40 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
         if home_score is None or away_score is None:
             continue
 
-        rows.append({
+        updates.append({
             "game_id": game_id,
             "home_score": home_score,
             "away_score": away_score,
-            "status": "final",
         })
 
-    if rows:
-        try:
-            client._upsert_many("games", rows, on_conflict="game_id")
-        except Exception as e:
-            print(f"  Warning: Bulk score update failed ({e}).")
+    if not updates:
+        return 0
 
-    return len(rows)
+    # Batch-PATCH status=final for all completed game IDs at once.
+    game_ids = [u["game_id"] for u in updates]
+    try:
+        client._patch_by_ids("games", "game_id", game_ids, {"status": "final"})
+    except Exception as e:
+        print(f"  Warning: Bulk status patch failed ({e}).")
+
+    # PATCH individual scores (each game has different values).
+    # Uses the connection-pooled httpx client so these are fast.
+    for u in updates:
+        try:
+            client._http.patch(
+                f"{client.base_url}/games",
+                headers={**client.headers, "Prefer": "return=minimal"},
+                params={"game_id": f"eq.{u['game_id']}"},
+                json={
+                    "home_score": u["home_score"],
+                    "away_score": u["away_score"],
+                },
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    return len(updates)
 
 
 def fetch_and_update_scores(db_client: object, sport_keys: list[str]) -> int:
