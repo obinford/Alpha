@@ -82,14 +82,9 @@ def grade_signals(db_client) -> dict:
             skipped += 1
             continue
 
-        # Use kelly-based units from signal (1 unit = 1% of bankroll).
-        # kelly_size is quarter-Kelly fraction × 100 (e.g. 3.65u).
-        kelly_size = signal.get("kelly_size")
-        if kelly_size is not None and float(kelly_size) > 0:
-            units = float(kelly_size)
-        else:
-            units = 1.0
-        profit = _calculate_profit(result, book_odds, units)
+        # Flat $100 bet for all signals.
+        bet_amount = float(signal.get("bet_amount", 100))
+        profit = _calculate_profit(result, book_odds, bet_amount)
         total_units += profit
 
         if result == "win":

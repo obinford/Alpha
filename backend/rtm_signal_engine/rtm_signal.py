@@ -26,7 +26,6 @@ from typing import Any
 
 from projections.simulator import PropSimulator, _prop_type_to_key
 from projections.math_utils import american_to_decimal, american_to_implied_prob
-from models.kelly import kelly_units as _kelly_units
 
 # ---------------------------------------------------------------------------
 # Sport-adaptive weights
@@ -66,6 +65,14 @@ TIER_LEAN = 40
 
 # Star ratings.
 STAR_RATINGS = {5: TIER_STRONG, 4: TIER_SIGNAL, 3: TIER_LEAN}
+
+# Odds range for signals: only fire on -160 to +200 (inclusive).
+# Targets ~56% win-rate plays, not longshots.
+SIGNAL_MIN_ODDS = -160
+SIGNAL_MAX_ODDS = 200
+
+# Flat bet amount for all signals ($100).
+SIGNAL_BET_AMOUNT = 100.0
 
 # Sports that have projection support.
 _PROJECTION_SPORTS = {"basketball_nba"}
@@ -571,10 +578,8 @@ class RTMSignal:
                 player_name = m.group(1).strip()
                 prop_line = float(m.group(3))
 
-        # Kelly sizing — use the canonical module (models/kelly.py).
-        # Quarter Kelly, 1 unit = 1% of bankroll. No cap.
+        # Flat $100 bet for all signals (no Kelly sizing).
         true_prob = float(opportunity.get("true_prob", 0.5))
-        kelly_units = _kelly_units(true_prob, book_odds)
 
         # Compute fair value odds from true probability.
         fair_odds = None
@@ -605,7 +610,7 @@ class RTMSignal:
             "fair_odds": fair_odds,
             "true_prob": true_prob,
             "edge_percentage": ev_pct,
-            "kelly_size": round(kelly_units, 2),
+            "bet_amount": SIGNAL_BET_AMOUNT,
             "home_team": home_team,
             "away_team": away_team,
             "game": f"{away_team} @ {home_team}" if home_team else "",
@@ -648,6 +653,15 @@ class RTMSignal:
         all_signals: list[dict] = []
 
         for opp in opportunities:
+            # Filter: only fire signals in the -160 to +200 odds window.
+            odds_val = opp.get("book_odds", 0)
+            try:
+                odds_val = int(odds_val)
+            except (ValueError, TypeError):
+                continue
+            if odds_val < SIGNAL_MIN_ODDS or odds_val > SIGNAL_MAX_ODDS:
+                continue
+
             # Find matching projection for props.
             proj = None
             if opp.get("market_type", "").startswith("player_"):
@@ -686,7 +700,6 @@ class RTMSignal:
                     "sportsbook": alt["sportsbook"],
                     "book_odds": alt["book_odds"],
                     "ev_pct": alt["edge_percentage"],
-                    "kelly_size": alt["kelly_size"],
                 })
             best["other_books"] = other_books
             signals.append(best)
@@ -924,7 +937,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
     rows = []
     for s in signals:
         # Only include columns that exist in the rtm_signals table.
-        # Verified against 005_rtm_signal.sql + 006_intelligence_layers.sql.
+        # Verified against 005_rtm_signal.sql + 006_intelligence_layers.sql
+        # + 007_signal_bet_amount.sql.
         # Omitted: away_team, commence_time, consensus_books, home_team,
         #          other_books, true_prob.
         intel_ctx = s.get("intelligence_context")
@@ -947,7 +961,7 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "intelligence_context": _json.dumps(intel_ctx) if isinstance(intel_ctx, dict) else intel_ctx,
             "fair_odds": s.get("fair_odds"),
             "edge_percentage": s["edge_percentage"],
-            "kelly_size": s.get("kelly_size"),
+            "bet_amount": s.get("bet_amount", SIGNAL_BET_AMOUNT),
             "status": "active",
         })
 

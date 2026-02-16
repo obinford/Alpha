@@ -176,22 +176,64 @@ def _signal_performance_impl(days: int) -> dict:
         "rtm_signals",
         select="*",
         filters={"created_at": f"gte.{cutoff}"},
+        order="created_at.asc",
     )
 
     graded = [r for r in rows if r.get("result") in ("win", "loss", "push")]
-    total = len(graded)
+    pending = [r for r in rows if r.get("result") not in ("win", "loss", "push")]
     wins = sum(1 for r in graded if r["result"] == "win")
     losses = sum(1 for r in graded if r["result"] == "loss")
     pushes = sum(1 for r in graded if r["result"] == "push")
-    units = sum(float(r.get("profit_loss", 0)) for r in graded)
+    total_pnl = sum(float(r.get("profit_loss", 0)) for r in graded)
     decided = wins + losses
+    bet_amount = 100.0
+    total_wagered = len(graded) * bet_amount
+
+    # Streak tracking (most recent first).
+    streak = "—"
+    streak_count = 0
+    streak_type = None
+    for r in sorted(graded, key=lambda x: x.get("graded_at", ""), reverse=True):
+        res = r["result"]
+        if res == "push":
+            continue
+        if streak_type is None:
+            streak_type = res
+            streak_count = 1
+        elif res == streak_type:
+            streak_count += 1
+        else:
+            break
+    if streak_type:
+        streak = f"{streak_count}{'W' if streak_type == 'win' else 'L'}"
+
+    # Best / worst day by P/L.
+    by_day: dict[str, float] = {}
+    for r in graded:
+        day = (r.get("graded_at") or r.get("created_at", ""))[:10]
+        if day:
+            by_day[day] = by_day.get(day, 0) + float(r.get("profit_loss", 0))
+    best_day = None
+    worst_day = None
+    if by_day:
+        best_key = max(by_day, key=by_day.get)  # type: ignore[arg-type]
+        worst_key = min(by_day, key=by_day.get)  # type: ignore[arg-type]
+        best_day = {"date": best_key, "pnl": round(by_day[best_key], 2)}
+        worst_day = {"date": worst_key, "pnl": round(by_day[worst_key], 2)}
+
+    # Running P/L chart data (cumulative by day).
+    running_pnl: list[dict] = []
+    cumulative = 0.0
+    for day in sorted(by_day):
+        cumulative += by_day[day]
+        running_pnl.append({"date": day, "pnl": round(cumulative, 2)})
 
     # By star tier.
     by_tier: dict[int, dict] = {}
     for r in graded:
         tier = int(r.get("star_rating", 3))
         if tier not in by_tier:
-            by_tier[tier] = {"wins": 0, "losses": 0, "pushes": 0, "units": 0.0}
+            by_tier[tier] = {"wins": 0, "losses": 0, "pushes": 0, "pnl": 0.0}
         t = by_tier[tier]
         if r["result"] == "win":
             t["wins"] += 1
@@ -199,17 +241,18 @@ def _signal_performance_impl(days: int) -> dict:
             t["losses"] += 1
         else:
             t["pushes"] += 1
-        t["units"] += float(r.get("profit_loss", 0))
+        t["pnl"] += float(r.get("profit_loss", 0))
 
     tier_breakdown = {}
     for tier, t in sorted(by_tier.items(), reverse=True):
         d = t["wins"] + t["losses"]
         total_t = d + t["pushes"]
+        wagered_t = total_t * bet_amount
         tier_breakdown[f"{tier}_star"] = {
             "record": f"{t['wins']}-{t['losses']}" + (f"-{t['pushes']}" if t["pushes"] else ""),
             "win_rate": round(t["wins"] / d * 100, 1) if d else 0,
-            "units": round(t["units"], 2),
-            "roi": round(t["units"] / total_t * 100, 1) if total_t else 0,
+            "pnl": round(t["pnl"], 2),
+            "roi": round(t["pnl"] / wagered_t * 100, 1) if wagered_t else 0,
             "total": total_t,
         }
 
@@ -218,13 +261,13 @@ def _signal_performance_impl(days: int) -> dict:
     for r in graded:
         sp = r.get("sport", "unknown")
         if sp not in by_sport:
-            by_sport[sp] = {"wins": 0, "losses": 0, "units": 0.0}
+            by_sport[sp] = {"wins": 0, "losses": 0, "pnl": 0.0}
         s = by_sport[sp]
         if r["result"] == "win":
             s["wins"] += 1
         elif r["result"] == "loss":
             s["losses"] += 1
-        s["units"] += float(r.get("profit_loss", 0))
+        s["pnl"] += float(r.get("profit_loss", 0))
 
     sport_breakdown = {}
     for sp, s in sorted(by_sport.items()):
@@ -232,28 +275,8 @@ def _signal_performance_impl(days: int) -> dict:
         sport_breakdown[sp] = {
             "record": f"{s['wins']}-{s['losses']}",
             "win_rate": round(s["wins"] / d * 100, 1) if d else 0,
-            "units": round(s["units"], 2),
+            "pnl": round(s["pnl"], 2),
         }
-
-    # Average signal strength of winners vs losers.
-    winner_strengths = [float(r.get("signal_strength", 0)) for r in graded if r["result"] == "win"]
-    loser_strengths = [float(r.get("signal_strength", 0)) for r in graded if r["result"] == "loss"]
-
-    # Signal lead time: average hours between signal creation and game start.
-    lead_times = []
-    for r in rows:
-        created = r.get("created_at")
-        commence = r.get("commence_time")
-        if created and commence:
-            try:
-                c_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                g_dt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
-                hours = (g_dt - c_dt).total_seconds() / 3600
-                if hours > 0:
-                    lead_times.append(hours)
-            except Exception:
-                pass
-    avg_lead = round(sum(lead_times) / len(lead_times), 1) if lead_times else None
 
     # CLV summary — the gold standard metric.
     clv_data = {}
@@ -265,15 +288,19 @@ def _signal_performance_impl(days: int) -> dict:
 
     return {
         "total_signals": len(rows),
-        "graded_signals": total,
-        "pending_signals": len(rows) - total,
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "pending": len(pending),
         "record": f"{wins}-{losses}" + (f"-{pushes}" if pushes else ""),
         "win_rate": round(wins / decided * 100, 1) if decided else 0,
-        "total_units": round(units, 2),
-        "roi": round(units / total * 100, 1) if total else 0,
-        "avg_winner_strength": round(sum(winner_strengths) / len(winner_strengths), 1) if winner_strengths else 0,
-        "avg_loser_strength": round(sum(loser_strengths) / len(loser_strengths), 1) if loser_strengths else 0,
-        "avg_lead_time_hours": avg_lead,
+        "total_wagered": round(total_wagered, 2),
+        "total_profit_loss": round(total_pnl, 2),
+        "roi_percent": round(total_pnl / total_wagered * 100, 1) if total_wagered else 0,
+        "streak": streak,
+        "best_day": best_day,
+        "worst_day": worst_day,
+        "running_pnl": running_pnl,
         "by_tier": tier_breakdown,
         "by_sport": sport_breakdown,
         "clv": clv_data,
