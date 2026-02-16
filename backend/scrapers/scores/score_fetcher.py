@@ -90,11 +90,18 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
         if home_score is None or away_score is None:
             continue
 
+        # start_time is NOT NULL in the games table — include it from the
+        # API response (commence_time) and skip the game if it's missing.
+        start_time = game.get("commence_time")
+        if not start_time:
+            continue
+
         rows.append({
             "game_id": game_id,
             "sport": sport_key,
             "home_team": home_team,
             "away_team": away_team,
+            "start_time": start_time,
             "home_score": home_score,
             "away_score": away_score,
             "status": "final",

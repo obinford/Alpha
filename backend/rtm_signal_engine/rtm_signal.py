@@ -924,7 +924,7 @@ def store_signals(db_client, signals: list[dict]) -> int:
     rows = []
     for s in signals:
         # Only include columns that exist in the rtm_signals table.
-        # Omitted: away_team, commence_time, consensus_books, home_team.
+        # Omitted: away_team, commence_time, consensus_books, home_team, other_books.
         intel_ctx = s.get("intelligence_context")
         rows.append({
             "game_id": s["game_id"],
@@ -947,7 +947,6 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "true_prob": s.get("true_prob"),
             "edge_percentage": s["edge_percentage"],
             "kelly_size": s.get("kelly_size"),
-            "other_books": _json.dumps(s.get("other_books", [])),
             "status": "active",
         })
 

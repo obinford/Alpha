@@ -475,12 +475,17 @@ def process_open_records(client: object) -> tuple[int, int]:
         closed_updates.append(update_row)
         processed += 1
 
-    # Bulk-upsert all closed CLV records in one call.
+    # PATCH each closed CLV record (id is GENERATED ALWAYS — can't upsert on it).
     if closed_updates:
-        try:
-            db._upsert_many("clv_records", closed_updates, on_conflict="id")
-        except Exception as e:
-            print(f"  Warning: Bulk CLV update failed ({e}).")
+        failed = 0
+        for row in closed_updates:
+            rec_id = row.pop("id")
+            try:
+                db._patch_by_ids("clv_records", "id", [rec_id], row)
+            except Exception:
+                failed += 1
+        if failed:
+            print(f"  Warning: {failed}/{len(closed_updates)} CLV patches failed.")
 
     return processed, len(expired_ids)
 
