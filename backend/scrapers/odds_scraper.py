@@ -1059,6 +1059,52 @@ def run_scan(sport_keys: list[str]) -> int:
                                 pass
             except Exception as e:
                 print(f"  Warning: Stale line detection failed ({e}).")
+
+            # Track line lifecycle (market timing).
+            try:
+                timing = MarketTimingEngine(db)
+                lifecycle_count = 0
+                for game in all_games:
+                    for bk in game.bookmakers:
+                        for mkt in bk.markets:
+                            for outcome in mkt.outcomes:
+                                if outcome.description:
+                                    point_str = f" {outcome.point}" if outcome.point is not None else ""
+                                    side = f"{outcome.description} {outcome.name}{point_str}"
+                                else:
+                                    side = outcome.name + (
+                                        f" {outcome.point}" if outcome.point is not None else ""
+                                    )
+                                # Check if this line already exists in lifecycle.
+                                try:
+                                    existing = db._get(
+                                        "line_lifecycle",
+                                        select="id",
+                                        filters={
+                                            "game_id": f"eq.{game.id}",
+                                            "market_type": f"eq.{mkt.key}",
+                                            "side": f"eq.{side}",
+                                            "sportsbook": f"eq.{bk.key}",
+                                        },
+                                        limit=1,
+                                    )
+                                    if not existing:
+                                        timing.track_line_first_seen(
+                                            game_id=game.id,
+                                            sport=game.sport_key,
+                                            market_type=mkt.key,
+                                            side=side,
+                                            sportsbook=bk.key,
+                                            opening_odds=outcome.price,
+                                            game_start_time=game.commence_time,
+                                        )
+                                        lifecycle_count += 1
+                                except Exception:
+                                    pass
+                if lifecycle_count:
+                    print(f"  Market timing: {lifecycle_count} new line lifecycle(s) tracked.")
+            except Exception as e:
+                print(f"  Warning: Market timing tracking failed ({e}).")
         except Exception as e:
             print(f"Warning: Intelligence layers failed ({e}).")
 
