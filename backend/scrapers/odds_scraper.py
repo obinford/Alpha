@@ -523,6 +523,8 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
                     if prev is not None and prev == current_odds:
                         continue
 
+                    # Every row MUST have the same keys — PostgREST
+                    # rejects batches with mismatched keys (PGRST102).
                     row: dict = {
                         "game_id": game.id,
                         "sport": game.sport_key,
@@ -531,10 +533,9 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
                         "side": side,
                         "odds": current_odds,
                         "timestamp": scan_ts,
+                        "previous_odds": prev if prev is not None else None,
+                        "odds_change": (current_odds - prev) if prev is not None else None,
                     }
-                    if prev is not None:
-                        row["previous_odds"] = prev
-                        row["odds_change"] = current_odds - prev
                     rows.append(row)
 
     if rows:
@@ -619,6 +620,10 @@ def store_ev_opportunities(
     rows = []
     for opp in opportunities:
         recommended_units = round(opp.kelly_pct * DEFAULT_BANKROLL_UNITS, 2)
+        # Every row MUST have the same keys — PostgREST rejects batches
+        # with mismatched keys (PGRST102).  Use None for absent values.
+        # NOTE: commence_time is NOT a column in ev_opportunities — store
+        # it only if the column is added later; for now, omit it.
         row_data: dict = {
             "game_id": opp.game_id,
             "sportsbook": opp.book_key,
@@ -634,19 +639,11 @@ def store_ev_opportunities(
             "recommended_units": recommended_units,
             "status": "open",
             "timestamp": scan_ts,
+            "sport": opp.sport_key or None,
+            "devig_source": opp.devig_source or None,
+            "devig_confidence": opp.devig_confidence or None,
+            "devig_method": opp.devig_method or None,
         }
-        # Include commence_time and sport for time-based filtering.
-        if opp.commence_time:
-            row_data["commence_time"] = opp.commence_time
-        if opp.sport_key:
-            row_data["sport"] = opp.sport_key
-        # Devig metadata for transparency.
-        if opp.devig_source:
-            row_data["devig_source"] = opp.devig_source
-        if opp.devig_confidence:
-            row_data["devig_confidence"] = opp.devig_confidence
-        if opp.devig_method:
-            row_data["devig_method"] = opp.devig_method
         rows.append(row_data)
 
     bulk_insert_ev_opportunities(db_client, rows)
@@ -1065,6 +1062,9 @@ def run_scan(sport_keys: list[str]) -> int:
         if region_counts:
             region_str = ", ".join(f"{r}={c}" for r, c in sorted(region_counts.items()))
             print(f"  [SCAN] Books by region: {region_str}")
+
+        # Full book list — useful for confirming which books the API returns.
+        print(f"  [SCAN] All books: {', '.join(sorted(all_book_keys))}")
 
         # Categorize games by date.
         near_games = [g for g in games if -3 < hours_until_start(g) <= PROP_WINDOW_HOURS]
