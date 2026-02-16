@@ -142,7 +142,9 @@ SHARP_BOOKS = ["pinnacle", "circa", "betonlineag"]
 #
 # Credit cost per API call = 1 request regardless of how many regions.
 # The regions parameter is a comma-separated string.
-ACTIVE_REGIONS = ["us", "us2", "eu", "us_ex"]
+ACTIVE_REGIONS = ["us", "us2", "us_ex"]
+# EU region is added by the scanner specifically for Pinnacle devig data;
+# other EU soft books are filtered out after fetch (see odds_scraper.py).
 # Drop "uk" by default to limit response size.  Add if needed.
 # Set via env var to override: ODDS_API_REGIONS="us,us2,eu,us_ex,uk"
 ODDS_API_REGIONS = os.environ.get(
