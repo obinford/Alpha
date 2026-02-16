@@ -106,7 +106,7 @@ def send_ev_alert(opportunities: list[dict]) -> bool:
         ev = opp.get("ev_pct", 0)
         true_prob = opp.get("true_prob", 0)
         kelly = opp.get("kelly_pct", 0)
-        units = max(0.1, min(round(kelly * 10, 2), 3.0))
+        units = round(kelly * 100, 2)  # 1 unit = 1% of bankroll
 
         fields.append({
             "name": f"{sport} | {game}",
@@ -246,7 +246,7 @@ def build_ev_payload(opportunities: list[dict]) -> dict:
         ev = opp.get("ev_pct", 0)
         true_prob = opp.get("true_prob", 0)
         kelly = opp.get("kelly_pct", 0)
-        units = max(0.1, min(round(kelly * 10, 2), 3.0))
+        units = round(kelly * 100, 2)  # 1 unit = 1% of bankroll
         fields.append({
             "name": f"{sport} | {opp.get('game', '')}",
             "value": (

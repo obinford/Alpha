@@ -155,7 +155,7 @@ def grade_opportunities(db_client: object) -> dict:
     Returns a summary dict with counts and stats.
     """
     from db import SupabaseClient
-    from shared.config import MIN_GRADE_EV_THRESHOLD, MIN_UNIT_SIZE, MAX_UNIT_SIZE
+    from shared.config import MIN_GRADE_EV_THRESHOLD
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
 
@@ -222,18 +222,20 @@ def grade_opportunities(db_client: object) -> dict:
 
         book_odds = int(opp.get("book_odds", 0))
         # Use kelly-based sizing: recommended_units or fall back to kelly_fraction.
+        # 1 unit = 1% of bankroll.  kelly_fraction × 100 = units.
         rec_units = opp.get("recommended_units")
         if rec_units is not None:
             units = float(rec_units)
         else:
             kelly = opp.get("kelly_fraction")
             if kelly is not None:
-                units = float(kelly) * 10  # kelly_fraction is 0.0365 → 0.365 units
+                units = float(kelly) * 100  # kelly_fraction 0.0365 → 3.65 units
             else:
-                units = 0.5  # fallback (conservative default)
+                units = 1.0  # fallback
 
-        # Clamp to reasonable range.
-        units = max(MIN_UNIT_SIZE, min(units, MAX_UNIT_SIZE))
+        # No edge → no bet.
+        if units <= 0:
+            units = 0.0
 
         profit = _calculate_profit(result, book_odds, units)
         total_units += profit
@@ -301,7 +303,7 @@ def recalculate_all_results(db_client: object) -> dict:
     This fixes historical results that were calculated with flat 1-unit sizing.
     """
     from db import SupabaseClient
-    from shared.config import MIN_GRADE_EV_THRESHOLD, MIN_UNIT_SIZE, MAX_UNIT_SIZE
+    from shared.config import MIN_GRADE_EV_THRESHOLD
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
 
@@ -345,18 +347,19 @@ def recalculate_all_results(db_client: object) -> dict:
 
         book_odds = int(opp.get("book_odds", 0))
 
-        # Determine kelly-based units.
+        # Determine kelly-based units (1 unit = 1% of bankroll).
         rec_units = opp.get("recommended_units")
         if rec_units is not None:
             units = float(rec_units)
         else:
             kelly = opp.get("kelly_fraction")
             if kelly is not None:
-                units = float(kelly) * 10  # kelly_fraction × 10 = display units
+                units = float(kelly) * 100  # kelly_fraction × 100 = units
             else:
-                units = 0.5  # conservative default
+                units = 1.0
 
-        units = max(MIN_UNIT_SIZE, min(units, MAX_UNIT_SIZE))
+        if units <= 0:
+            units = 0.0
 
         new_profit = _calculate_profit(result, book_odds, units)
         old_profit = float(r.get("profit_loss", 0))

@@ -98,13 +98,16 @@ def calculate_bet_size(
 
     bet_amount = bankroll * bet_pct
 
-    # Units: quarter-Kelly fraction scaled by 10, clamped to [0.1, 3.0].
-    # e.g. full_kelly=0.146, fraction=0.25 → 0.146*0.25*10 = 0.365u.
+    # Units where 1 unit = 1% of bankroll.
+    # quarter-Kelly fraction × 100 = units.
+    # e.g. full_kelly=0.146, fraction=0.25 → 0.146*0.25*100 = 3.65u.
     if unit_size is not None and unit_size > 0:
         units = bet_amount / unit_size
     else:
-        units = full_kelly * kelly_fraction * 10
-    units = max(0.1, min(units, 3.0))
+        units = full_kelly * kelly_fraction * 100
+    # No edge → no bet.
+    if full_kelly <= 0:
+        units = 0.0
 
     # Expected value.
     profit_if_win = bet_amount * (decimal - 1)

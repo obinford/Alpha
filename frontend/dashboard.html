@@ -469,9 +469,9 @@ function renderOpps(opps) {
     const gameId = o.game_id || '';
     const cardId = 'opp-' + idx;
 
-    // Kelly sizing (clamped to 3u max)
+    // Kelly sizing — 1 unit = 1% of bankroll, no cap
     let kellyRaw = Number(o.kelly_fraction) || 0;
-    let kellyUnits = Math.min(kellyRaw * 10, 3).toFixed(1); // fractional kelly * bankroll factor, max 3u
+    let kellyUnits = (kellyRaw * 100).toFixed(2); // quarter-Kelly fraction × 100 = units
 
     // Fair value odds
     const trueProb = Number(o.true_prob) || 0;

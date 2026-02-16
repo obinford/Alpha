@@ -522,14 +522,14 @@ class RTMSignal:
                 player_name = m.group(1).strip()
                 prop_line = float(m.group(3))
 
-        # Kelly sizing — quarter Kelly, clamped to [0.1, 3.0] units.
-        # f = (b*p - q) / b, then × 0.25 (quarter Kelly) × 10 (unit scale).
+        # Kelly sizing — quarter Kelly, 1 unit = 1% of bankroll.
+        # f = (b*p - q) / b, then × 0.25 (quarter Kelly) × 100 (unit scale).
         true_prob = float(opportunity.get("true_prob", 0.5))
         decimal_odds = american_to_decimal(book_odds)
         b = decimal_odds - 1
         q = 1 - true_prob
         full_kelly = max(0, (true_prob * b - q) / b) if b > 0 else 0
-        kelly_units = max(0.1, min(full_kelly * 0.25 * 10, 3.0))
+        kelly_units = full_kelly * 0.25 * 100  # no cap — let the math speak
 
         # Compute fair value odds from true probability.
         fair_odds = None

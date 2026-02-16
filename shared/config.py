@@ -97,14 +97,13 @@ ALL_MARKETS = MARKETS + PROP_MARKETS
 # Fractional Kelly multiplier (0.25 = quarter Kelly)
 DEFAULT_KELLY_FRACTION = 0.25
 
-# Default bankroll units for recommended-units sizing.
-# kelly_fraction × 10 = display units (e.g. 0.0365 × 10 = 0.365u).
-DEFAULT_BANKROLL_UNITS = 10.0
+# Default bankroll units multiplier for recommended-units sizing.
+# kelly_fraction × 100 = units (1 unit = 1% of bankroll).
+# e.g. quarter-Kelly fraction 0.0365 × 100 = 3.65u.
+DEFAULT_BANKROLL_UNITS = 100.0
 
-# Min/max unit sizing (clamps kelly-based units to a safe range).
-# 1 unit ≈ quarter-Kelly fraction × 10.  Min 0.1u, max 3.0u.
+# Minimum unit sizing — below this there's no meaningful edge.
 MIN_UNIT_SIZE = 0.1
-MAX_UNIT_SIZE = 3.0
 
 # Minimum EV threshold to surface a pick (percentage)
 MIN_EV_THRESHOLD = 1.0
