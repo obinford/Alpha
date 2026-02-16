@@ -6,40 +6,24 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase
+from models.kelly import kelly_units
 
 router = APIRouter()
-
-
-def _american_to_decimal(odds: int | float) -> float:
-    """Convert American odds to decimal odds."""
-    odds = int(odds)
-    if odds > 0:
-        return 1.0 + odds / 100.0
-    elif odds < 0:
-        return 1.0 + 100.0 / abs(odds)
-    return 1.0
 
 
 def _recalc_kelly(signal: dict) -> dict:
     """Recalculate kelly_size from true_prob and book_odds.
 
-    Quarter Kelly: f = (b*p - q) / b * 0.25, units = f * 100.
+    Uses the canonical Kelly module (models/kelly.py).
+    Quarter Kelly, 1 unit = 1% of bankroll. No cap.
     Always recomputes to ensure correctness regardless of stored value.
     """
     true_prob = signal.get("true_prob")
     book_odds = signal.get("book_odds")
     if true_prob is not None and book_odds is not None:
         try:
-            p = float(true_prob)
-            decimal_odds = _american_to_decimal(int(book_odds))
-            b = decimal_odds - 1
-            q = 1 - p
-            if b > 0:
-                full_kelly = (p * b - q) / b
-                if full_kelly > 0:
-                    signal["kelly_size"] = round(full_kelly * 0.25 * 100, 2)
-                else:
-                    signal["kelly_size"] = 0.0
+            units = kelly_units(float(true_prob), int(book_odds))
+            signal["kelly_size"] = round(units, 2)
         except (ValueError, TypeError, ZeroDivisionError):
             pass
     # Also fix other_books kelly if present.
@@ -55,12 +39,9 @@ def _recalc_kelly(signal: dict) -> dict:
             alt_odds = alt.get("book_odds")
             if alt_prob is not None and alt_odds is not None:
                 try:
-                    p = float(alt_prob)
-                    dec = _american_to_decimal(int(alt_odds))
-                    b = dec - 1
-                    if b > 0:
-                        fk = (p * b - (1 - p)) / b
-                        alt["kelly_size"] = round(max(0, fk) * 0.25 * 100, 2)
+                    alt["kelly_size"] = round(
+                        kelly_units(float(alt_prob), int(alt_odds)), 2
+                    )
                 except (ValueError, TypeError, ZeroDivisionError):
                     pass
     return signal

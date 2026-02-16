@@ -2,11 +2,15 @@
 
 Provides bet sizing calculations using full Kelly, fractional Kelly, and
 flat unit strategies. Includes a bankroll simulator for Monte Carlo analysis.
+
+Kelly calculations delegate to models.kelly — the canonical source of truth.
 """
 
 import math
 import random
 from dataclasses import dataclass, field
+
+from models.kelly import kelly_full as _kelly_full, kelly_units as _kelly_units
 
 
 @dataclass
@@ -64,6 +68,9 @@ def kelly_criterion(true_prob: float, decimal_odds: float) -> float:
 
     Returns the fraction of bankroll to bet (0.0 to 1.0).
     Negative values are clamped to 0.0 (no bet).
+
+    Note: This wraps the canonical Kelly formula. For new code,
+    prefer importing from models.kelly directly.
     """
     b = decimal_odds - 1.0  # Net odds
     q = 1.0 - true_prob

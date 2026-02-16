@@ -676,7 +676,7 @@ function renderHero(sig) {
         <span style="color:#e1e5eb;font-weight:600">${fmtOdds(odds)}</span>
         <span class="hero-edge">+${edge.toFixed(1)}% edge</span>
         <span class="sport-badge ${sportClass(sport)}">${sportLabel(sport)}</span>
-        ${kelly > 0 ? `<span class="hero-units">BET ${Math.max(0.1, Math.min(kelly, 3.0)).toFixed(1)}u</span>` : ''}
+        ${kelly > 0 ? `<span class="hero-units">BET ${kelly.toFixed(2)}u</span>` : ''}
         ${game ? '<span style="color:#8892a4">'+game+'</span>' : ''}
       </div>
     </div>
