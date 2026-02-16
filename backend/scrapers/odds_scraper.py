@@ -32,13 +32,14 @@ from scrapers.odds.odds_api import Game, Market, fetch_odds
 
 from config import (
     ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES,
-    ALL_MARKETS, PROP_MARKETS, MARKETS,
+    ALL_MARKETS, PROP_MARKETS, MARKETS, ODDS_API_REGIONS,
     get_prop_markets_for_sport,
     MIN_EV_THRESHOLD, DEFAULT_KELLY_FRACTION,
     DEFAULT_BANKROLL_UNITS, PROP_WINDOW_HOURS,
     STEAM_MIN_BOOKS, STEAM_WINDOW_MINUTES, STEAM_DEDUP_MINUTES,
     SCAN_INTERVAL_MINUTES,
 )
+from books import get_book_tier, get_book_name
 
 
 @dataclass
@@ -870,7 +871,7 @@ def run_scan(sport_keys: list[str]) -> int:
             time.sleep(1)
 
         display = sport_display_name(sport_key)
-        print(f"Fetching {display} mainlines...")
+        print(f"[SCAN] Fetching {display} mainlines from regions: {ODDS_API_REGIONS}")
 
         # Step 1: Fetch mainlines (h2h, spreads, totals) for ALL upcoming games.
         try:
@@ -882,6 +883,23 @@ def run_scan(sport_keys: list[str]) -> int:
         if not games:
             print(f"  {display}: no games available right now.")
             continue
+
+        # Log book discovery by tier.
+        all_book_keys: set[str] = set()
+        for g in games:
+            for bk in g.bookmakers:
+                all_book_keys.add(bk.key)
+        sharp_found = sorted(k for k in all_book_keys if get_book_tier(k) == "sharp")
+        exchange_found = sorted(k for k in all_book_keys if get_book_tier(k) == "exchange")
+        soft_found = sorted(k for k in all_book_keys if get_book_tier(k) in ("soft", "market_maker"))
+        print(f"  [SCAN] {len(all_book_keys)} books across {len(games)} games")
+        if sharp_found:
+            print(f"  [SCAN] Sharp: {', '.join(get_book_name(k) for k in sharp_found)}")
+        if exchange_found:
+            print(f"  [SCAN] Exchanges: {', '.join(get_book_name(k) for k in exchange_found)}")
+        if soft_found:
+            print(f"  [SCAN] Soft/MM: {', '.join(get_book_name(k) for k in soft_found[:10])}"
+                  + (f" +{len(soft_found)-10} more" if len(soft_found) > 10 else ""))
 
         # Categorize games by date.
         near_games = [g for g in games if -3 < hours_until_start(g) <= PROP_WINDOW_HOURS]

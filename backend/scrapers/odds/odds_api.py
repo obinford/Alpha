@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from config import ODDS_API_BASE_URL
+from config import ODDS_API_BASE_URL, ODDS_API_REGIONS
 
 API_BASE = ODDS_API_BASE_URL
 
@@ -89,20 +89,21 @@ def fetch_sports() -> list[SportInfo]:
 def fetch_odds(
     sport: str,
     markets: list[str] | None = None,
-    regions: str = "us,us2",
+    regions: str | None = None,
 ) -> list[Game]:
     """Fetch current odds for a given sport from The Odds API.
 
     Args:
         sport: Sport key (e.g. 'basketball_nba').
         markets: Market types to fetch (default: h2h, spreads, totals).
-        regions: Comma-separated regions (default: 'us,us2').
-            Includes us2 for BetOnline/Bovada. EU region removed
-            as it requires a higher-tier API plan and causes 401.
+        regions: Comma-separated regions.  Defaults to ODDS_API_REGIONS
+            from config (us,us2,eu,us_ex on the $59 plan).
 
     Returns:
         List of Game objects with bookmaker odds attached.
     """
+    if regions is None:
+        regions = ODDS_API_REGIONS
     if markets is None:
         markets = ["h2h", "spreads", "totals"]
 

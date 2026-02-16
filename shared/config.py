@@ -45,8 +45,33 @@ SPORT_DISPLAY_NAMES: dict[str, str] = {
     "tennis_wta_us_open": "WTA US Open",
 }
 
-# Sharp books in preference order - first available is used as the "true" line.
+# Sharp books in preference order — first available is used as the "true" line.
+# Full book registry with tiers/weights is in shared/books.py.
 SHARP_BOOKS = ["pinnacle", "circa", "betonlineag"]
+
+# --- Odds API regions ---
+# Each region includes different sportsbooks.  More regions = more price
+# disagreement = more +EV edges.  Cost: each region in the request is free
+# (single API call can include multiple comma-separated regions).
+#
+# Available regions:
+#   us    — BetOnline, BetMGM, BetRivers, BetUS, Bovada, Caesars,
+#           DraftKings, Fanatics, FanDuel, LowVig, MyBookie
+#   us2   — BallyBet, BetAnySports, BetParx, ESPN Bet, Fliff, Hard Rock, ReBet
+#   eu    — Pinnacle, 1xBet, 888sport, Betfair Exchange, BetVictor, Betway,
+#           Matchbook, Marathon Bet  (requires $59+ plan)
+#   us_ex — Novig, Kalshi, Polymarket, BetOpenly, ProphetX
+#   uk    — Betfair Exchange, Paddy Power, William Hill, Sky Bet, Smarkets
+#
+# Credit cost per API call = 1 request regardless of how many regions.
+# The regions parameter is a comma-separated string.
+ACTIVE_REGIONS = ["us", "us2", "eu", "us_ex"]
+# Drop "uk" by default to limit response size.  Add if needed.
+# Set via env var to override: ODDS_API_REGIONS="us,us2,eu,us_ex,uk"
+ODDS_API_REGIONS = os.environ.get(
+    "ODDS_API_REGIONS",
+    ",".join(ACTIVE_REGIONS),
+)
 
 MARKETS = ["h2h", "spreads", "totals"]
 
@@ -125,6 +150,11 @@ CLV_EXPIRATION_HOURS = 48
 
 # --- API ---
 ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4/sports"
+
+# --- API credit budgeting ($59 plan = 100,000 credits/month) ---
+MONTHLY_API_CREDITS = 100_000
+DAILY_CREDIT_BUDGET = MONTHLY_API_CREDITS // 30    # ~3,333 per day
+CREDIT_WARNING_THRESHOLD = 0.8                     # warn at 80% daily usage
 
 # Discord notifications
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
