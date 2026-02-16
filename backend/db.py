@@ -33,18 +33,40 @@ class SupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
-    def _post_many(self, table: str, rows: list[dict[str, Any]]) -> list[dict]:
-        """Bulk-insert multiple rows in a single POST request."""
+    def _post_many(
+        self, table: str, rows: list[dict[str, Any]], chunk_size: int = 100
+    ) -> list[dict]:
+        """Bulk-insert multiple rows, batched in chunks to avoid 400 errors.
+
+        Supabase/PostgREST rejects very large payloads.  Splitting into
+        chunks of ``chunk_size`` (default 100) keeps each request well
+        within limits while still being far faster than row-by-row.
+        """
         if not rows:
             return []
-        resp = self._http.post(
-            f"{self.base_url}/{table}",
-            headers=self.headers,
-            json=rows,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        results: list[dict] = []
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            resp = self._http.post(
+                f"{self.base_url}/{table}",
+                headers=self.headers,
+                json=chunk,
+                timeout=30,
+            )
+            if resp.status_code >= 400:
+                # Log the actual Supabase error body before raising.
+                try:
+                    body = resp.text
+                except Exception:
+                    body = "<unreadable>"
+                print(
+                    f"  [DB] Supabase error on {table} "
+                    f"(chunk {i // chunk_size + 1}, "
+                    f"{len(chunk)} rows, HTTP {resp.status_code}): {body}"
+                )
+            resp.raise_for_status()
+            results.extend(resp.json())
+        return results
 
     def _upsert(
         self, table: str, data: dict[str, Any], on_conflict: str
