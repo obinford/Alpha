@@ -25,7 +25,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared")
 
 from dotenv import load_dotenv
 
-from config import ODDS_API_SPORT_KEYS, SPORT_DISPLAY_NAMES
+from config import (
+    ODDS_API_SPORT_KEYS, SPORT_DISPLAY_NAMES,
+    MONTHLY_API_CREDITS, DAILY_CREDIT_BUDGET, CREDIT_WARNING_THRESHOLD,
+)
 
 # ---------------------------------------------------------------------------
 # Scheduling tiers — scan interval depends on proximity to game start
@@ -46,10 +49,11 @@ PROXIMITY_TIERS: list[tuple[float, int]] = [
 DEFAULT_INTERVAL_MINUTES = 60
 
 # Base API cost per sport per scan (1 request for odds).
-API_COST_PER_SPORT = 1
+# Props add 1 more request per sport, so effective cost = 2.
+API_COST_PER_SPORT = 2
 
-# Monthly budget (The Odds API free tier = 500 requests/month).
-MONTHLY_API_BUDGET = 500
+# Budget from config ($59 plan = 100,000 credits/month).
+MONTHLY_API_BUDGET = MONTHLY_API_CREDITS
 
 # Usage tracking file.
 USAGE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", ".api_usage.json")
@@ -71,16 +75,20 @@ class SportSchedule:
 
 @dataclass
 class UsageTracker:
-    """Tracks API usage for budget management."""
-    month: str = ""  # e.g. "2026-02"
-    requests_used: int = 0
+    """Tracks API usage for budget management (monthly + daily)."""
+    month: str = ""                    # e.g. "2026-02"
+    day: str = ""                      # e.g. "2026-02-16"
+    requests_used: int = 0             # monthly total
+    daily_requests: int = 0            # today's total
     requests_by_sport: dict[str, int] = field(default_factory=dict)
     last_updated: str = ""
 
     def to_dict(self) -> dict:
         return {
             "month": self.month,
+            "day": self.day,
             "requests_used": self.requests_used,
+            "daily_requests": self.daily_requests,
             "requests_by_sport": self.requests_by_sport,
             "last_updated": self.last_updated,
         }
@@ -89,7 +97,9 @@ class UsageTracker:
     def from_dict(cls, d: dict) -> "UsageTracker":
         return cls(
             month=d.get("month", ""),
+            day=d.get("day", ""),
             requests_used=d.get("requests_used", 0),
+            daily_requests=d.get("daily_requests", 0),
             requests_by_sport=d.get("requests_by_sport", {}),
             last_updated=d.get("last_updated", ""),
         )
@@ -97,17 +107,23 @@ class UsageTracker:
 
 def load_usage() -> UsageTracker:
     """Load API usage from disk."""
-    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime("%Y-%m")
+    current_day = now.strftime("%Y-%m-%d")
     try:
         with open(USAGE_FILE) as f:
             data = json.load(f)
         tracker = UsageTracker.from_dict(data)
         # Reset if new month.
         if tracker.month != current_month:
-            tracker = UsageTracker(month=current_month)
+            tracker = UsageTracker(month=current_month, day=current_day)
+        # Reset daily counter if new day.
+        elif tracker.day != current_day:
+            tracker.day = current_day
+            tracker.daily_requests = 0
         return tracker
     except (FileNotFoundError, json.JSONDecodeError):
-        return UsageTracker(month=current_month)
+        return UsageTracker(month=current_month, day=current_day)
 
 
 def save_usage(tracker: UsageTracker) -> None:
@@ -120,6 +136,7 @@ def save_usage(tracker: UsageTracker) -> None:
 def record_usage(tracker: UsageTracker, sport_key: str, cost: int = API_COST_PER_SPORT) -> None:
     """Record API request usage."""
     tracker.requests_used += cost
+    tracker.daily_requests += cost
     tracker.requests_by_sport[sport_key] = (
         tracker.requests_by_sport.get(sport_key, 0) + cost
     )
@@ -129,6 +146,16 @@ def record_usage(tracker: UsageTracker, sport_key: str, cost: int = API_COST_PER
 def budget_remaining(tracker: UsageTracker) -> int:
     """Return remaining API requests for the month."""
     return max(0, MONTHLY_API_BUDGET - tracker.requests_used)
+
+
+def daily_budget_remaining(tracker: UsageTracker) -> int:
+    """Return remaining daily API requests."""
+    return max(0, DAILY_CREDIT_BUDGET - tracker.daily_requests)
+
+
+def is_daily_warning(tracker: UsageTracker) -> bool:
+    """Return True if daily usage exceeds warning threshold."""
+    return tracker.daily_requests >= int(DAILY_CREDIT_BUDGET * CREDIT_WARNING_THRESHOLD)
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +274,13 @@ def print_schedule(schedules: list[SportSchedule], usage: UsageTracker) -> None:
 
     # Usage stats.
     remaining = budget_remaining(usage)
+    daily_remaining = daily_budget_remaining(usage)
     pct_used = (usage.requests_used / MONTHLY_API_BUDGET * 100) if MONTHLY_API_BUDGET > 0 else 0
-    print(f"\n  API Budget: {usage.requests_used}/{MONTHLY_API_BUDGET} used ({pct_used:.0f}%) | {remaining} remaining")
+    daily_pct = (usage.daily_requests / DAILY_CREDIT_BUDGET * 100) if DAILY_CREDIT_BUDGET > 0 else 0
+    print(f"\n  Monthly: {usage.requests_used:,}/{MONTHLY_API_BUDGET:,} ({pct_used:.1f}%) | {remaining:,} remaining")
+    print(f"  Daily:   {usage.daily_requests:,}/{DAILY_CREDIT_BUDGET:,} ({daily_pct:.1f}%) | {daily_remaining:,} remaining")
+    if is_daily_warning(usage):
+        print(f"  ⚠  DAILY BUDGET WARNING: {daily_pct:.0f}% used (threshold: {CREDIT_WARNING_THRESHOLD*100:.0f}%)")
 
     # Schedule table.
     header = f"  {'Sport':<25} {'Games?':<8} {'Next Game':>12} {'Interval':>12} {'Action':<20}"
@@ -293,19 +325,24 @@ def run_smart_scan(
         print("  --dry-run: No scans executed.\n")
         return 0
 
-    # Check budget.
+    # Check both monthly and daily budgets.
     sports_to_scan = [s for s in schedules if s.should_scan_now]
     cost = len(sports_to_scan) * API_COST_PER_SPORT
-    remaining = budget_remaining(usage)
+    monthly_remaining = budget_remaining(usage)
+    daily_remaining_credits = daily_budget_remaining(usage)
+    effective_remaining = min(monthly_remaining, daily_remaining_credits)
 
-    if cost > remaining:
-        print(f"  WARNING: Scan would use {cost} requests but only {remaining} remain.")
-        print(f"  Reducing to top {remaining} sports by proximity.\n")
-        # Prioritize by closest game.
+    if cost > effective_remaining:
+        limit = effective_remaining // API_COST_PER_SPORT
+        if effective_remaining == daily_remaining_credits:
+            print(f"  DAILY BUDGET: {cost} credits needed but only {daily_remaining_credits} remain today.")
+        else:
+            print(f"  MONTHLY BUDGET: {cost} credits needed but only {monthly_remaining} remain.")
+        print(f"  Reducing to top {limit} sports by proximity.\n")
         sports_to_scan.sort(
             key=lambda s: s.next_game_hours if s.next_game_hours is not None else 999
         )
-        sports_to_scan = sports_to_scan[:remaining]
+        sports_to_scan = sports_to_scan[:limit]
 
     if not sports_to_scan:
         print("  No sports to scan this cycle.\n")
