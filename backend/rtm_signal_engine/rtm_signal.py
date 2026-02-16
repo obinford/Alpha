@@ -522,13 +522,14 @@ class RTMSignal:
                 player_name = m.group(1).strip()
                 prop_line = float(m.group(3))
 
-        # Kelly sizing — quarter Kelly, clamped to 3u max.
+        # Kelly sizing — quarter Kelly, clamped to [0.1, 3.0] units.
+        # f = (b*p - q) / b, then × 0.25 (quarter Kelly) × 10 (unit scale).
         true_prob = float(opportunity.get("true_prob", 0.5))
         decimal_odds = american_to_decimal(book_odds)
         b = decimal_odds - 1
         q = 1 - true_prob
         full_kelly = max(0, (true_prob * b - q) / b) if b > 0 else 0
-        kelly_units = min(full_kelly * 0.25 * 100, 3.0)  # quarter Kelly, 3u cap
+        kelly_units = max(0.1, min(full_kelly * 0.25 * 10, 3.0))
 
         # Compute fair value odds from true probability.
         fair_odds = None
@@ -553,15 +554,11 @@ class RTMSignal:
             "steam_score": steam,
             "projection_score": proj,
             "consensus_score": consensus,
-<<<<<<< HEAD
             "consensus_books": consensus_books,
-            "fair_odds": fair_odds,
-            "true_prob": true_prob,
-=======
             "intelligence_score": intel,
             "intelligence_context": intel_context,
-            "fair_odds": None,  # Set if projection available
->>>>>>> origin/claude/view-commit-history-JpSsv
+            "fair_odds": fair_odds,
+            "true_prob": true_prob,
             "edge_percentage": ev_pct,
             "kelly_size": round(kelly_units, 2),
             "home_team": home_team,
@@ -774,12 +771,9 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "steam_score": s["steam_score"],
             "projection_score": s.get("projection_score", 0),
             "consensus_score": s["consensus_score"],
-<<<<<<< HEAD
             "consensus_books": s.get("consensus_books", 0),
-=======
             "intelligence_score": s.get("intelligence_score", 0),
             "intelligence_context": s.get("intelligence_context"),
->>>>>>> origin/claude/view-commit-history-JpSsv
             "fair_odds": s.get("fair_odds"),
             "true_prob": s.get("true_prob"),
             "edge_percentage": s["edge_percentage"],

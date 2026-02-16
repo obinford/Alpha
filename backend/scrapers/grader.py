@@ -228,9 +228,9 @@ def grade_opportunities(db_client: object) -> dict:
         else:
             kelly = opp.get("kelly_fraction")
             if kelly is not None:
-                units = float(kelly) * 100  # kelly_fraction is 0.005 → 0.5 units
+                units = float(kelly) * 10  # kelly_fraction is 0.0365 → 0.365 units
             else:
-                units = 1.0  # fallback
+                units = 0.5  # fallback (conservative default)
 
         # Clamp to reasonable range.
         units = max(MIN_UNIT_SIZE, min(units, MAX_UNIT_SIZE))
@@ -352,9 +352,9 @@ def recalculate_all_results(db_client: object) -> dict:
         else:
             kelly = opp.get("kelly_fraction")
             if kelly is not None:
-                units = float(kelly) * 100
+                units = float(kelly) * 10  # kelly_fraction × 10 = display units
             else:
-                units = 1.0
+                units = 0.5  # conservative default
 
         units = max(MIN_UNIT_SIZE, min(units, MAX_UNIT_SIZE))
 

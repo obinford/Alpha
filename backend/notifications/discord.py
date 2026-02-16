@@ -106,7 +106,7 @@ def send_ev_alert(opportunities: list[dict]) -> bool:
         ev = opp.get("ev_pct", 0)
         true_prob = opp.get("true_prob", 0)
         kelly = opp.get("kelly_pct", 0)
-        units = round(kelly * 100, 2)
+        units = max(0.1, min(round(kelly * 10, 2), 3.0))
 
         fields.append({
             "name": f"{sport} | {game}",
@@ -114,7 +114,7 @@ def send_ev_alert(opportunities: list[dict]) -> bool:
                 f"**Pick:** {selection}\n"
                 f"**Book:** {book} | **Odds:** {odds_str}\n"
                 f"**EV:** {ev:+.1f}% | **True Prob:** {true_prob * 100:.1f}% | "
-                f"**Kelly:** {kelly * 100:.2f}% | **Units:** {units}"
+                f"**Kelly:** {kelly * 100:.2f}% | **Units:** {units:.2f}u"
             ),
             "inline": False,
         })
@@ -246,14 +246,14 @@ def build_ev_payload(opportunities: list[dict]) -> dict:
         ev = opp.get("ev_pct", 0)
         true_prob = opp.get("true_prob", 0)
         kelly = opp.get("kelly_pct", 0)
-        units = round(kelly * 100, 2)
+        units = max(0.1, min(round(kelly * 10, 2), 3.0))
         fields.append({
             "name": f"{sport} | {opp.get('game', '')}",
             "value": (
                 f"**Pick:** {opp.get('selection', '')}\n"
                 f"**Book:** {opp.get('book', '')} | **Odds:** {odds_str}\n"
                 f"**EV:** {ev:+.1f}% | **True Prob:** {true_prob * 100:.1f}% | "
-                f"**Kelly:** {kelly * 100:.2f}% | **Units:** {units}"
+                f"**Kelly:** {kelly * 100:.2f}% | **Units:** {units:.2f}u"
             ),
             "inline": False,
         })
@@ -355,7 +355,7 @@ def send_signal_alert(signal: dict) -> bool:
         })
 
     if kelly > 0:
-        fields.append({"name": "Kelly Size", "value": f"{kelly:.1f}%", "inline": True})
+        fields.append({"name": "Kelly Size", "value": f"{kelly:.2f}u", "inline": True})
 
     embed = {
         "title": title,

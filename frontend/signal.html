@@ -484,9 +484,9 @@ function unitsDisplay(kelly) {
   if (!kelly || kelly <= 0) return '';
   const units = Math.max(0.1, Math.min(kelly, 3.0));
   let cls = 'low';
-  if (units >= 3) cls = 'high';
-  else if (units >= 1.5) cls = 'med';
-  return `<span class="units-badge ${cls}">${units.toFixed(1)}u</span>`;
+  if (units >= 1.0) cls = 'high';
+  else if (units >= 0.5) cls = 'med';
+  return `<span class="units-badge ${cls}">${units.toFixed(2)}u</span>`;
 }
 
 function renderSignalCard(sig) {
@@ -588,7 +588,7 @@ function renderSignalCard(sig) {
           <span>${marketLabel(mt)}</span>
           ${postedAgo ? `<span class="posted-ago">${postedAgo}</span>` : ''}
         </div>
-        ${kelly > 0 ? `<span class="units-badge ${kelly >= 3 ? 'high' : kelly >= 1.5 ? 'med' : 'low'}">BET ${Math.max(0.1, Math.min(kelly, 5.0)).toFixed(1)}u</span>` : '<span>\u2014</span>'}
+        ${kelly > 0 ? `<span class="units-badge ${kelly >= 1.0 ? 'high' : kelly >= 0.5 ? 'med' : 'low'}">BET ${Math.max(0.1, Math.min(kelly, 3.0)).toFixed(2)}u</span>` : '<span>\u2014</span>'}
       </div>
     </div>
   `;
@@ -599,7 +599,7 @@ function renderHistoryRow(sig) {
   const result = sig.result || 'pending';
   const pl = sig.profit_loss;
   const kelly = sig.kelly_size || 0;
-  const units = kelly > 0 ? Math.max(0.1, Math.min(kelly, 5.0)) : 1.0;
+  const units = kelly > 0 ? Math.max(0.1, Math.min(kelly, 3.0)) : 0.5;
   let resultClass = 'result-pending';
   let resultText = 'Pending';
   if (result === 'win') { resultClass = 'result-win'; resultText = 'WIN'; }
@@ -620,7 +620,7 @@ function renderHistoryRow(sig) {
     <td style="color:#ce93d8;font-weight:600;text-transform:uppercase;font-size:11px">${sig.sportsbook || '\u2014'}</td>
     <td style="font-weight:600">${fmtOdds(sig.book_odds||0)}</td>
     <td style="color:#00e676;font-weight:700">+${(sig.edge_percentage||0).toFixed(1)}%</td>
-    <td style="font-weight:600">${units.toFixed(1)}u</td>
+    <td style="font-weight:600">${units.toFixed(2)}u</td>
     <td class="${resultClass}">${resultText}</td>
     <td class="${plClass}">${plText}</td>
   </tr>`;
