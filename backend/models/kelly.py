@@ -82,10 +82,10 @@ def kelly_units(
         Recommended units to bet (0.0 if no edge). No cap.
 
     Examples:
-        >>> kelly_units(0.55, -110)   # slight favorite
-        2.27
-        >>> kelly_units(0.196, 440)   # big underdog with 19.6% edge
-        1.44
+        >>> kelly_units(0.55, -110)   # slight favorite edge
+        1.38
+        >>> kelly_units(0.40, 200)    # underdog with real edge
+        2.50
         >>> kelly_units(0.45, -110)   # no edge
         0.0
     """
@@ -106,10 +106,10 @@ def kelly_from_ev(ev_pct: float, american_odds: int) -> float:
         Quarter-Kelly units (1 unit = 1% of bankroll).
     """
     decimal_odds = american_to_decimal(american_odds)
-    # EV% = (true_prob * decimal_odds - 1) * 100
-    # true_prob = (EV%/100 + 1) / decimal_odds
     if decimal_odds <= 0:
         return 0.0
+    # EV% = (true_prob * decimal_odds - 1) * 100
+    # true_prob = (EV%/100 + 1) / decimal_odds
     true_prob = (ev_pct / 100 + 1) / decimal_odds
     if true_prob <= 0 or true_prob >= 1:
         return 0.0

@@ -40,7 +40,7 @@ from config import (
     STEAM_MIN_BOOKS, STEAM_WINDOW_MINUTES, STEAM_DEDUP_MINUTES,
     SCAN_INTERVAL_MINUTES,
 )
-from books import get_book_tier, get_book_name
+from books import get_book_tier, get_book_name, get_book_info
 
 
 @dataclass
@@ -1048,6 +1048,24 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"  [SCAN] Soft/MM: {', '.join(get_book_name(k) for k in soft_found[:10])}"
                   + (f" +{len(soft_found)-10} more" if len(soft_found) > 10 else ""))
 
+        # Pinnacle presence check — critical for devig quality.
+        if "pinnacle" in all_book_keys:
+            print(f"  [SCAN] ✓ Pinnacle FOUND — devig source will be HIGH confidence")
+        elif "eu" in ODDS_API_REGIONS:
+            print(f"  [SCAN] ⚠ Pinnacle NOT FOUND — EU region may be failing silently!")
+            print(f"  [SCAN]   Requested regions: {ODDS_API_REGIONS}")
+            print(f"  [SCAN]   Falling back to: exchanges → sharp consensus → market avg")
+
+        # Region breakdown for diagnostics.
+        region_counts: dict[str, int] = {}
+        for bk_key in all_book_keys:
+            info = get_book_info(bk_key)
+            r = info.get("region", "unknown")
+            region_counts[r] = region_counts.get(r, 0) + 1
+        if region_counts:
+            region_str = ", ".join(f"{r}={c}" for r, c in sorted(region_counts.items()))
+            print(f"  [SCAN] Books by region: {region_str}")
+
         # Categorize games by date.
         near_games = [g for g in games if -3 < hours_until_start(g) <= PROP_WINDOW_HOURS]
         far_games = [g for g in games if hours_until_start(g) > PROP_WINDOW_HOURS]
@@ -1093,11 +1111,38 @@ def run_scan(sport_keys: list[str]) -> int:
                 print(f"  Warning: Line movement write failed for {display} ({e}).")
 
         # Scan for +EV: mainlines for ALL games, props for near-term only.
+        # Track devig source usage for diagnostics.
+        devig_source_counts: dict[str, int] = {}
+        sport_opps: list[EVOpportunity] = []
         for game in games:
-            all_opportunities.extend(scan_game(game))
+            game_opps = scan_game(game)
+            # Track which devig sources were used.
+            for opp in game_opps:
+                src = opp.devig_source or "none"
+                # Simplify source label for summary.
+                if src.startswith("exchange:"):
+                    src_label = "exchange_consensus"
+                elif src.startswith("sharp:"):
+                    src_label = "sharp_consensus"
+                elif src.startswith("market_avg:"):
+                    src_label = "market_average"
+                elif src == "pinnacle":
+                    src_label = "pinnacle"
+                else:
+                    src_label = src
+                devig_source_counts[src_label] = devig_source_counts.get(src_label, 0) + 1
+            sport_opps.extend(game_opps)
+            all_opportunities.extend(game_opps)
             h = hours_until_start(game)
             if -3 < h <= PROP_WINDOW_HOURS:
-                all_opportunities.extend(scan_game_props(game))
+                prop_opps = scan_game_props(game)
+                sport_opps.extend(prop_opps)
+                all_opportunities.extend(prop_opps)
+
+        # Print devig source summary for this sport.
+        if devig_source_counts:
+            src_str = ", ".join(f"{k}={v}" for k, v in sorted(devig_source_counts.items(), key=lambda x: -x[1]))
+            print(f"  [DEVIG] Source breakdown: {src_str}")
 
     # --- Persist EV opportunities ---
     if db is not None and all_opportunities:
