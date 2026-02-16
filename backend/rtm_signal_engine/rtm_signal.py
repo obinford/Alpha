@@ -923,8 +923,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
 
     rows = []
     for s in signals:
-        # NOTE: away_team, commence_time, consensus_books are NOT
-        # columns in rtm_signals — omit to avoid bulk insert failures.
+        # Only include columns that exist in the rtm_signals table.
+        # Omitted: away_team, commence_time, consensus_books, home_team.
         rows.append({
             "game_id": s["game_id"],
             "sport": s["sport"],
@@ -946,10 +946,12 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "true_prob": s.get("true_prob"),
             "edge_percentage": s["edge_percentage"],
             "kelly_size": s.get("kelly_size"),
-            "home_team": s.get("home_team", ""),
             "other_books": _json.dumps(s.get("other_books", [])),
             "status": "active",
         })
+
+    if rows:
+        print(f"  [DEBUG] rtm_signals columns: {sorted(rows[0].keys())}")
 
     try:
         db_client._post_many("rtm_signals", rows)

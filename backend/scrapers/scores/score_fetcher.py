@@ -53,10 +53,9 @@ def fetch_scores(sport_key: str, days_from: int = 1) -> list[dict]:
 def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) -> int:
     """Fetch scores and update the games table for completed games.
 
-    Uses PATCH (not upsert) so we only update score fields without
-    touching NOT NULL columns like sport.  Batches the status update
-    for all game IDs in one call, then sends score patches per game
-    using the connection-pooled httpx client.
+    Uses _upsert_many with on_conflict="game_id" to update all games in
+    one bulk call.  Includes sport (from sport_key) and team names to
+    satisfy NOT NULL constraints.
 
     Returns the number of games updated to 'final'.
     """
@@ -67,7 +66,7 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
     if not scores:
         return 0
 
-    updates: list[dict] = []
+    rows: list[dict] = []
     for game in scores:
         if not game.get("completed", False):
             continue
@@ -91,40 +90,23 @@ def update_game_scores(db_client: object, sport_key: str, days_from: int = 1) ->
         if home_score is None or away_score is None:
             continue
 
-        updates.append({
+        rows.append({
             "game_id": game_id,
+            "sport": sport_key,
+            "home_team": home_team,
+            "away_team": away_team,
             "home_score": home_score,
             "away_score": away_score,
+            "status": "final",
         })
 
-    if not updates:
-        return 0
-
-    # Batch-PATCH status=final for all completed game IDs at once.
-    game_ids = [u["game_id"] for u in updates]
-    try:
-        client._patch_by_ids("games", "game_id", game_ids, {"status": "final"})
-    except Exception as e:
-        print(f"  Warning: Bulk status patch failed ({e}).")
-
-    # PATCH individual scores (each game has different values).
-    # Uses the connection-pooled httpx client so these are fast.
-    for u in updates:
+    if rows:
         try:
-            client._http.patch(
-                f"{client.base_url}/games",
-                headers={**client.headers, "Prefer": "return=minimal"},
-                params={"game_id": f"eq.{u['game_id']}"},
-                json={
-                    "home_score": u["home_score"],
-                    "away_score": u["away_score"],
-                },
-                timeout=10,
-            )
-        except Exception:
-            pass
+            client._upsert_many("games", rows, on_conflict="game_id")
+        except Exception as e:
+            print(f"  Warning: Bulk score update failed ({e}).")
 
-    return len(updates)
+    return len(rows)
 
 
 def fetch_and_update_scores(db_client: object, sport_keys: list[str]) -> int:

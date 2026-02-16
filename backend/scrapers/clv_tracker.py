@@ -315,6 +315,7 @@ def process_open_records(client: object) -> tuple[int, int]:
     """Process all open CLV records.
 
     For games that have started, capture closing odds and compute CLV.
+    Batched: pre-loads closing odds/lines in bulk, then patches in bulk.
     Returns (processed_count, expired_count).
     """
     records = get_open_clv_records(client)
@@ -322,98 +323,166 @@ def process_open_records(client: object) -> tuple[int, int]:
         return 0, 0
 
     now = datetime.now(timezone.utc)
-    processed = 0
-    expired = 0
 
     from db import SupabaseClient
+    from config import CLV_EXPIRATION_HOURS
 
     db: SupabaseClient = client  # type: ignore[assignment]
+
+    # Partition records into actionable vs not-yet-started.
+    expired_ids: list = []
+    to_process: list[dict] = []
 
     for rec in records:
         game = rec.get("games", {})
         if not game:
             continue
-
         start_str = game.get("start_time", "")
         if not start_str:
             continue
-
         game_start = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-
-        # Only process games that have started.
         if game_start > now:
             continue
-
-        # If game started more than CLV_EXPIRATION_HOURS ago, expire.
-        from config import CLV_EXPIRATION_HOURS
         if (now - game_start).total_seconds() > CLV_EXPIRATION_HOURS * 3600:
-            try:
-                resp = db._http.patch(
-                    f"{db.base_url}/clv_records",
-                    headers={**db.headers, "Prefer": "return=minimal"},
-                    params={"id": f"eq.{rec['id']}"},
-                    json={"status": "expired"},
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                expired += 1
-            except Exception:
-                pass
-            continue
+            expired_ids.append(rec["id"])
+        else:
+            to_process.append(rec)
 
-        # Try to find closing odds.
-        closing_odds = get_closing_odds_from_snapshots(
-            client,
-            rec["game_id"],
-            rec["market_type"],
-            rec["side"],
-            rec["sportsbook"],
-        )
+    # Bulk-expire old records in one PATCH.
+    if expired_ids:
+        try:
+            db._patch_by_ids("clv_records", "id", expired_ids, {"status": "expired"})
+        except Exception:
+            pass
 
+    if not to_process:
+        return 0, len(expired_ids)
+
+    # Bulk-fetch closing odds: latest line_movements for all game IDs.
+    game_ids = list({r["game_id"] for r in to_process})
+    all_movements: list[dict] = []
+    for i in range(0, len(game_ids), 50):
+        chunk = game_ids[i : i + 50]
+        id_list = ",".join(chunk)
+        try:
+            rows = db._get(
+                "line_movements",
+                select="game_id,bookmaker,market_type,side,odds,timestamp",
+                filters={"game_id": f"in.({id_list})"},
+                order="timestamp.desc",
+            )
+            all_movements.extend(rows)
+        except Exception:
+            pass
+
+    # Build lookup: (game_id, bookmaker, market_type, side) -> latest odds.
+    closing_odds_map: dict[tuple[str, str, str, str], float] = {}
+    for mv in all_movements:
+        key = (mv["game_id"], mv.get("bookmaker", ""), mv.get("market_type", ""), mv.get("side", ""))
+        if key not in closing_odds_map:
+            closing_odds_map[key] = float(mv["odds"])
+
+    # Bulk-fetch closing true lines for all game IDs.
+    all_true_lines: list[dict] = []
+    for i in range(0, len(game_ids), 50):
+        chunk = game_ids[i : i + 50]
+        id_list = ",".join(chunk)
+        try:
+            rows = db._get(
+                "true_lines",
+                select="game_id,market_type,true_home_prob,true_away_prob,timestamp",
+                filters={"game_id": f"in.({id_list})"},
+                order="timestamp.desc",
+            )
+            all_true_lines.extend(rows)
+        except Exception:
+            pass
+
+    # Build lookup: (game_id, market_type) -> (home_prob, away_prob).
+    true_line_map: dict[tuple[str, str], tuple[float, float]] = {}
+    for tl in all_true_lines:
+        key = (tl["game_id"], tl.get("market_type", ""))
+        if key not in true_line_map:
+            true_line_map[key] = (
+                float(tl.get("true_home_prob", 0)),
+                float(tl.get("true_away_prob", 0)),
+            )
+
+    # Build game team lookup from the already-fetched records.
+    game_teams: dict[str, tuple[str, str]] = {}
+    for rec in to_process:
+        game = rec.get("games", {})
+        if game:
+            game_teams[rec["game_id"]] = (
+                (game.get("home_team", "") or "").lower(),
+                (game.get("away_team", "") or "").lower(),
+            )
+
+    # Process each record using cached data (zero DB calls).
+    closed_updates: list[dict] = []
+    processed = 0
+    now_iso = now.isoformat()
+
+    for rec in to_process:
+        gid = rec["game_id"]
+        mkt = rec["market_type"]
+        side = rec["side"]
+        book = rec["sportsbook"]
+
+        closing_odds = closing_odds_map.get((gid, book, mkt, side))
         if closing_odds is None:
             continue
 
-        # Calculate raw CLV (bet odds vs closing odds at same book).
         bet_implied = american_to_implied_prob(int(rec["bet_odds"]))
         closing_implied = american_to_implied_prob(int(closing_odds))
         clv = calculate_clv(bet_implied, closing_implied)
 
-        # Calculate devigged CLV (bet odds vs closing sharp true prob).
-        # This is the gold standard: did our bet beat the closing true line?
+        # Devigged CLV from true lines.
         devigged_clv = None
-        closing_true_prob = get_closing_sharp_line(
-            client, rec["game_id"], rec["market_type"], rec["side"]
-        )
-        if closing_true_prob is not None and closing_true_prob > 0:
-            devigged_clv = round(
-                calculate_clv(bet_implied, closing_true_prob), 2
-            )
+        true_probs = true_line_map.get((gid, mkt))
+        if true_probs:
+            home_prob, away_prob = true_probs
+            if home_prob or away_prob:
+                side_lower = side.lower().strip()
+                home_team, away_team = game_teams.get(gid, ("", ""))
+                closing_true_prob = None
+                if home_team and home_team in side_lower:
+                    closing_true_prob = home_prob
+                elif away_team and away_team in side_lower:
+                    closing_true_prob = away_prob
+                elif "over" in side_lower:
+                    closing_true_prob = home_prob
+                elif "under" in side_lower:
+                    closing_true_prob = away_prob
+                if closing_true_prob is not None and closing_true_prob > 0:
+                    devigged_clv = round(
+                        calculate_clv(bet_implied, closing_true_prob), 2
+                    )
 
-        # Update the record.
-        update_data: dict = {
+        update_row: dict = {
+            "id": rec["id"],
             "closing_odds": closing_odds,
             "closing_true_prob": round(closing_implied, 6),
             "clv_percentage": round(clv, 2),
-            "closing_timestamp": now.isoformat(),
+            "closing_timestamp": now_iso,
             "status": "closed",
         }
         if devigged_clv is not None:
-            update_data["devigged_clv"] = devigged_clv
+            update_row["devigged_clv"] = devigged_clv
+        else:
+            update_row["devigged_clv"] = None
 
+        closed_updates.append(update_row)
+        processed += 1
+
+    # Bulk-upsert all closed CLV records in one call.
+    if closed_updates:
         try:
-            resp = db._http.patch(
-                f"{db.base_url}/clv_records",
-                headers={**db.headers, "Prefer": "return=minimal"},
-                params={"id": f"eq.{rec['id']}"},
-                json=update_data,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            processed += 1
+            db._upsert_many("clv_records", closed_updates, on_conflict="id")
         except Exception as e:
-            print(f"  Warning: Failed to update CLV record {rec['id']}: {e}")
+            print(f"  Warning: Bulk CLV update failed ({e}).")
 
-    return processed, expired
+    return processed, len(expired_ids)
 
 
 def create_clv_from_ev_opportunities(client: object) -> int:
