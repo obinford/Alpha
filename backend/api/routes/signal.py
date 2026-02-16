@@ -255,6 +255,14 @@ def _signal_performance_impl(days: int) -> dict:
                 pass
     avg_lead = round(sum(lead_times) / len(lead_times), 1) if lead_times else None
 
+    # CLV summary — the gold standard metric.
+    clv_data = {}
+    try:
+        from scrapers.clv_tracker import get_clv_summary
+        clv_data = get_clv_summary(db, days=days)
+    except Exception:
+        pass
+
     return {
         "total_signals": len(rows),
         "graded_signals": total,
@@ -268,6 +276,7 @@ def _signal_performance_impl(days: int) -> dict:
         "avg_lead_time_hours": avg_lead,
         "by_tier": tier_breakdown,
         "by_sport": sport_breakdown,
+        "clv": clv_data,
     }
 
 

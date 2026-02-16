@@ -127,7 +127,7 @@ def get_clv_summary(client: object, days: int = 30) -> dict:
 
     closed = db._get(
         "clv_records",
-        select="clv_percentage,ev_at_bet,sport",
+        select="clv_percentage,devigged_clv,ev_at_bet,sport",
         filters={
             "status": "eq.closed",
             "created_at": f"gte.{since}",
@@ -138,6 +138,7 @@ def get_clv_summary(client: object, days: int = 30) -> dict:
         return {
             "total_records": 0,
             "avg_clv": 0,
+            "avg_devigged_clv": 0,
             "positive_clv_pct": 0,
             "avg_ev_at_bet": 0,
             "by_sport": {},
@@ -145,21 +146,28 @@ def get_clv_summary(client: object, days: int = 30) -> dict:
         }
 
     clvs = [float(r["clv_percentage"]) for r in closed if r.get("clv_percentage") is not None]
+    devigged_clvs = [float(r["devigged_clv"]) for r in closed if r.get("devigged_clv") is not None]
     evs = [float(r["ev_at_bet"]) for r in closed]
 
     # By sport.
     by_sport: dict[str, list[float]] = {}
+    by_sport_devigged: dict[str, list[float]] = {}
     for r in closed:
         sport = r.get("sport", "unknown")
         clv = r.get("clv_percentage")
+        dclv = r.get("devigged_clv")
         if clv is not None:
             by_sport.setdefault(sport, []).append(float(clv))
+        if dclv is not None:
+            by_sport_devigged.setdefault(sport, []).append(float(dclv))
 
     sport_stats = {}
     for sport, sport_clvs in by_sport.items():
+        d_clvs = by_sport_devigged.get(sport, [])
         sport_stats[sport] = {
             "count": len(sport_clvs),
             "avg_clv": round(sum(sport_clvs) / len(sport_clvs), 2) if sport_clvs else 0,
+            "avg_devigged_clv": round(sum(d_clvs) / len(d_clvs), 2) if d_clvs else 0,
             "positive_pct": round(
                 sum(1 for c in sport_clvs if c > 0) / len(sport_clvs) * 100, 1
             ) if sport_clvs else 0,
@@ -169,6 +177,7 @@ def get_clv_summary(client: object, days: int = 30) -> dict:
     return {
         "total_records": len(closed),
         "avg_clv": round(sum(clvs) / len(clvs), 2) if clvs else 0,
+        "avg_devigged_clv": round(sum(devigged_clvs) / len(devigged_clvs), 2) if devigged_clvs else 0,
         "positive_clv_pct": round(positive_count / len(clvs) * 100, 1) if clvs else 0,
         "avg_ev_at_bet": round(sum(evs) / len(evs), 2) if evs else 0,
         "by_sport": sport_stats,
@@ -232,15 +241,17 @@ def get_closing_sharp_line(
     market_type: str,
     side: str,
 ) -> float | None:
-    """Get the closing true probability from the sharp book.
+    """Get the closing true probability from the sharp book (devigged).
 
-    Looks at the most recent true_lines entry for the game/market.
+    Looks at the most recent true_lines entry for the game/market
+    and maps the side string to the correct probability.
     """
     from db import SupabaseClient
 
     db: SupabaseClient = client  # type: ignore[assignment]
 
-    rows = db._get(
+    # Get the closing true line.
+    true_rows = db._get(
         "true_lines",
         select="true_home_prob,true_away_prob,timestamp",
         filters={
@@ -251,15 +262,49 @@ def get_closing_sharp_line(
         limit=1,
     )
 
-    if not rows:
+    if not true_rows:
         return None
 
-    # Determine which side the record tracks.
-    # Side could be a team name, Over/Under, or a player prop.
-    # For h2h/spreads: assume home = true_home_prob, else away.
-    # This is a simplification; ideally we'd match side to home/away team.
-    # For now, use home_prob for the first outcome and away for the second.
-    return None  # Needs game context to map side -> prob
+    row = true_rows[0]
+    home_prob = float(row.get("true_home_prob", 0))
+    away_prob = float(row.get("true_away_prob", 0))
+
+    if not home_prob and not away_prob:
+        return None
+
+    # Get game info to match side to home/away.
+    game_rows = db._get(
+        "games",
+        select="home_team,away_team",
+        filters={"game_id": f"eq.{game_id}"},
+        limit=1,
+    )
+
+    side_lower = side.lower().strip()
+
+    if not game_rows:
+        # Can't determine team — use heuristic.
+        if "over" in side_lower:
+            return home_prob
+        elif "under" in side_lower:
+            return away_prob
+        return None
+
+    home_team = (game_rows[0].get("home_team", "") or "").lower()
+    away_team = (game_rows[0].get("away_team", "") or "").lower()
+
+    # Match side to team name.
+    if home_team and home_team in side_lower:
+        return home_prob
+    elif away_team and away_team in side_lower:
+        return away_prob
+    # Totals: Over/Under.
+    elif "over" in side_lower:
+        return home_prob
+    elif "under" in side_lower:
+        return away_prob
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -328,19 +373,32 @@ def process_open_records(client: object) -> tuple[int, int]:
         if closing_odds is None:
             continue
 
-        # Calculate CLV.
+        # Calculate raw CLV (bet odds vs closing odds at same book).
         bet_implied = american_to_implied_prob(int(rec["bet_odds"]))
         closing_implied = american_to_implied_prob(int(closing_odds))
         clv = calculate_clv(bet_implied, closing_implied)
 
+        # Calculate devigged CLV (bet odds vs closing sharp true prob).
+        # This is the gold standard: did our bet beat the closing true line?
+        devigged_clv = None
+        closing_true_prob = get_closing_sharp_line(
+            client, rec["game_id"], rec["market_type"], rec["side"]
+        )
+        if closing_true_prob is not None and closing_true_prob > 0:
+            devigged_clv = round(
+                calculate_clv(bet_implied, closing_true_prob), 2
+            )
+
         # Update the record.
-        update_data = {
+        update_data: dict = {
             "closing_odds": closing_odds,
             "closing_true_prob": round(closing_implied, 6),
             "clv_percentage": round(clv, 2),
             "closing_timestamp": now.isoformat(),
             "status": "closed",
         }
+        if devigged_clv is not None:
+            update_data["devigged_clv"] = devigged_clv
 
         try:
             resp = db._http.patch(
