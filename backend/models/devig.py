@@ -3,25 +3,31 @@
 This is the most important calculation in the platform. Accurate devigging
 = accurate true probabilities = accurate EV = profitable betting.
 
-Source hierarchy (highest confidence first):
-  1. Sharp book average — mean of devigged probs from Pinnacle, Circa,
-     Bookmaker.  2-3 sharps = HIGH, 1 sharp = MEDIUM.
-  2. Exchange consensus — Novig, Betfair, Matchbook (LOW)
-  3. Market average of all books — last resort (LOW)
+Source hierarchy (auto-selects best available):
+  Tier 1 Sharp (HIGH): Pinnacle, Circa, Bookmaker
+    - 2-3 → average devigged probs → "sharp_avg (N)"
+    - 1   → use alone → book name
+  Tier 2 Sharp Fallback (MEDIUM): DraftKings, FanDuel, BetOnline
+    - Only when 0 Tier 1 books have lines
+    - 2-3 → "market_sharp_avg (N)", 1 → "market_sharp (name)"
+  Tier 3 Exchange Consensus (LOW): Novig, Betfair, Smarkets, Matchbook
+    - Only when 0 Tier 1 AND 0 Tier 2, requires 3+ books
+  Tier 4 Market Average (LOW): all remaining books
+
+When a book is used as a devig source, it is excluded from the EV
+opportunity list for that same game/market.
 
 Devig methods:
   - Multiplicative: divide each implied prob by the overround
-  - Additive: subtract equal share of overround from each implied prob
-  - Power (Shin): solve for the insider trading parameter
-  - The engine picks the most conservative true probability across methods
+  - Additive: subtract equal share of overround
+  - Power / Shin: solve for insider trading parameter
 
 Usage:
-    from models.devig import devig_game_market, DevigResult
+    from models.devig import devig_market, DevigResult
 
-    result = devig_game_market(game, "h2h")
-    # result.true_probs = {("TeamA", None): 0.55, ("TeamB", None): 0.45}
+    result = devig_market(books)
     # result.source = "sharp_avg (2)"
-    # result.method = "multiplicative"
+    # result.source_keys = {"pinnacle", "circasports"}
     # result.confidence = "HIGH"
 """
 
@@ -44,9 +50,10 @@ class DevigResult:
     true_prob_a: float
     true_prob_b: float
     method: str            # multiplicative | additive | power | shin
-    source: str            # book key(s) used, e.g. "pinnacle" or "weighted:circa,betonlineag"
+    source: str            # human label, e.g. "sharp_avg (2)" or "market_sharp (draftkings)"
     confidence: Confidence
     overround: float       # original overround before devigging
+    source_keys: frozenset[str] = frozenset()  # API keys of books used as source
 
     @property
     def true_probs(self) -> tuple[float, float]:
@@ -227,17 +234,29 @@ def devig_pair(
 # Hierarchical source selection
 # ---------------------------------------------------------------------------
 
-# Book classification for source hierarchy.
-# Order matters — first match wins within each tier.
-_PINNACLE_KEYS = {"pinnacle"}
-_EXCHANGE_KEYS = {"novig", "betfair_ex_uk", "betfair_ex_eu", "smarkets", "matchbook"}
-_SHARP_KEYS = {"pinnacle", "circa", "bookmaker"}
+# Tier 1: True sharp books — set the market.
+_TIER1_KEYS = ("pinnacle", "circasports", "bookmaker")
+_TIER1_NAMES = {"pinnacle": "Pinnacle", "circasports": "Circa", "bookmaker": "Bookmaker"}
 
-# Weights for weighted average (when doing sharp consensus).
+# Tier 2: Market-maker sharp fallback — only when 0 Tier 1 books available.
+_TIER2_KEYS = ("draftkings", "fanduel", "betonlineag")
+_TIER2_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betonlineag": "BetOnline"}
+
+# Tier 3: Exchanges — require 3+ books.
+_EXCHANGE_KEYS = {"novig", "betfair_ex_uk", "betfair_ex_eu", "smarkets", "matchbook"}
+
+# Legacy alias so imports from odds_scraper still work.
+_SHARP_KEYS = set(_TIER1_KEYS)
+_PINNACLE_KEYS = {"pinnacle"}
+
+# Weights for weighted average.
 _SHARP_WEIGHTS: dict[str, float] = {
     "pinnacle": 1.0,
-    "circa": 0.85,
+    "circasports": 0.85,
     "bookmaker": 0.8,
+    "draftkings": 0.6,
+    "fanduel": 0.6,
+    "betonlineag": 0.55,
     "novig": 0.9,
     "betfair_ex_uk": 0.9,
     "betfair_ex_eu": 0.9,
@@ -286,67 +305,75 @@ def _weighted_devig(
 
 def select_devig_source(
     available_books: dict[str, tuple[int, int]],
-) -> tuple[list[BookOdds], str, Confidence]:
+) -> tuple[list[BookOdds], str, Confidence, int]:
     """Select the best devig source from available bookmakers.
 
     Hierarchy:
-      1. Sharp book average (Pinnacle, Circa, Bookmaker)
-         - 2-3 sharps → HIGH, 1 sharp → MEDIUM
-      2. Exchange consensus (3+ books required) → LOW
-      3. Market average → LOW
+      Tier 1 (HIGH): Pinnacle, Circa, Bookmaker — 2-3 avg, 1 alone
+      Tier 2 (MEDIUM): DraftKings, FanDuel, BetOnline — only if 0 Tier 1
+      Tier 3 (LOW): Exchange consensus (3+ books) — only if 0 Tier 1+2
+      Tier 4 (LOW): Market average of all books — last resort
 
     Args:
-        available_books: {book_key: (odds_a, odds_b)} for all books in a market.
+        available_books: {book_key: (odds_a, odds_b)} for all books.
 
     Returns:
-        (selected_books, source_label, confidence)
+        (selected_books, source_label, confidence, tier)
     """
-    # 1. Sharp book average (Pinnacle, Circa, Bookmaker).
-    sharp_books = []
-    for key in _SHARP_KEYS:
+    # --- Tier 1: True sharps (Pinnacle, Circa, Bookmaker) ---
+    t1 = []
+    for key in _TIER1_KEYS:
         if key in available_books:
             odds_a, odds_b = available_books[key]
-            sharp_books.append(
-                BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.8))
-            )
-    if sharp_books:
-        n = len(sharp_books)
+            t1.append(BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.8)))
+    if t1:
+        n = len(t1)
         if n >= 2:
             source = f"sharp_avg ({n})"
-            confidence: Confidence = "HIGH"
         else:
-            # Single sharp — use its name directly.
-            source = sharp_books[0].key
-            confidence = "MEDIUM"
-        return sharp_books, source, confidence
+            source = t1[0].key
+        confidence: Confidence = "HIGH" if n >= 2 else "HIGH"
+        return t1, source, confidence, 1
 
-    # 2. Exchange consensus — require 3+ books for reliability.
-    exchange_books = []
+    # --- Tier 2: Market-maker sharp fallback (DK, FD, BOL) ---
+    t2 = []
+    for key in _TIER2_KEYS:
+        if key in available_books:
+            odds_a, odds_b = available_books[key]
+            t2.append(BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.6)))
+    if t2:
+        n = len(t2)
+        if n >= 2:
+            source = f"market_sharp_avg ({n})"
+        else:
+            name = _TIER2_NAMES.get(t2[0].key, t2[0].key)
+            source = f"market_sharp ({name})"
+        return t2, source, "MEDIUM", 2
+
+    # --- Tier 3: Exchange consensus (3+ books required) ---
+    t3 = []
     for key in _EXCHANGE_KEYS:
         if key in available_books:
             odds_a, odds_b = available_books[key]
-            exchange_books.append(
-                BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.85))
-            )
-    if len(exchange_books) >= 3:
-        source = "exchange:" + ",".join(bo.key for bo in exchange_books)
-        return exchange_books, source, "LOW"
-    elif exchange_books:
-        # Not enough exchange books — log and fall through to market avg.
+            t3.append(BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.85)))
+    if len(t3) >= 3:
+        source = "exchange_consensus"
+        return t3, source, "LOW", 3
+    elif t3:
         print(
             f"  [DEVIG] Skipping exchange_consensus — only "
-            f"{len(exchange_books)} exchange books (need 3+)"
+            f"{len(t3)} exchange books (need 3+)"
         )
 
-    # 3. Market average — all books
-    all_books = []
+    # --- Tier 4: Market average of all books ---
+    t4 = []
     for key, (odds_a, odds_b) in available_books.items():
-        all_books.append(BookOdds(key, odds_a, odds_b, 0.3))
-    if all_books:
-        source = f"market_avg:{len(all_books)}_books"
-        return all_books, source, "LOW"
+        t4.append(BookOdds(key, odds_a, odds_b, 0.3))
+    if t4:
+        source = "market_average"
+        return t4, source, "LOW", 4
 
-    return [], "none", "LOW"
+    return [], "none", "LOW", 0
 
 
 def devig_market(
@@ -356,9 +383,9 @@ def devig_market(
     """Devig a two-way market using hierarchical source selection.
 
     This is the main entry point for devigging. It:
-    1. Selects the best available source (Pinnacle → exchanges → sharps → market)
+    1. Selects the best available source (Tier 1 → 2 → 3 → 4)
     2. Devigs using the specified method
-    3. Returns a DevigResult with probabilities, method, source, and confidence
+    3. Returns a DevigResult with probabilities, source, confidence, source_keys
 
     Args:
         available_books: {book_key: (odds_a, odds_b)} for all books.
@@ -367,9 +394,11 @@ def devig_market(
     Returns:
         DevigResult or None if no books available.
     """
-    selected, source, confidence = select_devig_source(available_books)
+    selected, source, confidence, _tier = select_devig_source(available_books)
     if not selected:
         return None
+
+    keys = frozenset(bo.key for bo in selected)
 
     if len(selected) == 1:
         # Single source — devig directly.
@@ -396,4 +425,5 @@ def devig_market(
         source=source,
         confidence=confidence,
         overround=round(overround, 4),
+        source_keys=keys,
     )

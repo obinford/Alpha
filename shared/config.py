@@ -124,7 +124,7 @@ SPORT_DISPLAY_NAMES: dict[str, str] = {
 
 # Sharp books in preference order — first available is used as the "true" line.
 # Full book registry with tiers/weights is in shared/books.py.
-SHARP_BOOKS = ["pinnacle", "circa", "bookmaker"]
+SHARP_BOOKS = ["pinnacle", "circasports", "bookmaker"]
 
 # --- Odds API regions ---
 # Each region includes different sportsbooks.  More regions = more price

@@ -111,7 +111,7 @@ class TestFullPipeline:
         }
         result = devig_market(books)
         assert result is not None
-        assert result.confidence == "MEDIUM"  # single sharp book
+        assert result.confidence == "HIGH"  # single Tier 1 sharp book
 
         # true_prob_b should be around 0.37
         assert 0.30 < result.true_prob_b < 0.45
@@ -139,32 +139,43 @@ class TestFullPipeline:
 class TestEdgeConfidence:
     """Test edge confidence classification."""
 
-    def test_single_sharp_medium_confidence(self) -> None:
+    def test_single_sharp_high_confidence(self) -> None:
+        """Single Tier 1 sharp book → HIGH confidence."""
         books = {"pinnacle": (-150, 130)}
-        result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "MEDIUM"
-
-    def test_two_sharps_high_confidence(self) -> None:
-        books = {"pinnacle": (-150, 130), "circa": (-148, 128)}
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "HIGH"
 
-    def test_sharp_circa_only_medium(self) -> None:
-        books = {"circa": (-150, 130), "betonlineag": (-148, 128)}
+    def test_two_sharps_high_confidence(self) -> None:
+        books = {"pinnacle": (-150, 130), "circasports": (-148, 128)}
         result = devig_market(books)
         assert result is not None
-        assert result.confidence == "MEDIUM"  # single sharp (circa)
+        assert result.confidence == "HIGH"
+
+    def test_sharp_circa_only_high(self) -> None:
+        """Circa (Tier 1) + BetOnline (Tier 2) → Tier 1 selected, HIGH."""
+        books = {"circasports": (-150, 130), "betonlineag": (-148, 128)}
+        result = devig_market(books)
+        assert result is not None
+        assert result.confidence == "HIGH"  # Circa is Tier 1
+
+    def test_tier2_medium_confidence(self) -> None:
+        """DK + FD (Tier 2, no Tier 1) → MEDIUM confidence."""
+        books = {"draftkings": (-155, 125), "fanduel": (-160, 135)}
+        result = devig_market(books)
+        assert result is not None
+        assert result.confidence == "MEDIUM"
 
     def test_exchange_low_confidence(self) -> None:
+        """Single exchange (no Tier 1/2) → falls to market_average, LOW."""
         books = {"novig": (-150, 130)}
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "LOW"
 
     def test_market_avg_low_confidence(self) -> None:
-        books = {"draftkings": (-155, 125), "fanduel": (-160, 135)}
+        """Only soft books → market_average, LOW confidence."""
+        books = {"espnbet": (-155, 125), "betmgm": (-160, 135)}
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "LOW"

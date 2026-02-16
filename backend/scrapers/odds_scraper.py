@@ -52,7 +52,7 @@ from books import get_book_tier, get_book_name, get_book_info
 # ---------------------------------------------------------------------------
 ALLOWED_BOOKS: set[str] = {
     # Sharp reference (needed for devig)
-    "pinnacle", "circa", "bookmaker",
+    "pinnacle", "circasports", "bookmaker",
     # US books
     "betonlineag", "bovada",
     # US market makers
@@ -233,27 +233,28 @@ def _extract_market_odds_by_book(
 
 def build_devig_line_map(
     game: Game, market_key: str,
-) -> tuple[dict[tuple[str, float | None], float], str, str, str]:
+) -> tuple[dict[tuple[str, float | None], float], str, str, str, frozenset[str]]:
     """Build a true-probability map using the hierarchical devig engine.
 
     Returns:
-        (true_probs, devig_source, devig_confidence, devig_method)
+        (true_probs, devig_source, devig_confidence, devig_method, source_keys)
         where true_probs is {(selection_name, point): true_probability}
+        and source_keys is the set of book keys used as the devig source.
     """
     book_odds, outcome_info = _extract_market_odds_by_book(game, market_key)
     if not book_odds or outcome_info is None:
-        return {}, "", "CAUTION", "multiplicative"
+        return {}, "", "CAUTION", "multiplicative", frozenset()
 
     result = devig_market(book_odds)
     if result is None:
-        return {}, "", "CAUTION", "multiplicative"
+        return {}, "", "CAUTION", "multiplicative", frozenset()
 
     name_a, name_b, point_a, point_b = outcome_info
     true_probs = {
         (name_a, point_a): result.true_prob_a,
         (name_b, point_b): result.true_prob_b,
     }
-    return true_probs, result.source, result.confidence, result.method
+    return true_probs, result.source, result.confidence, result.method, result.source_keys
 
 
 def scan_game(game: Game) -> list[EVOpportunity]:
@@ -268,19 +269,11 @@ def scan_game(game: Game) -> list[EVOpportunity]:
     opportunities: list[EVOpportunity] = []
 
     for market_key in ("h2h", "spreads", "totals"):
-        true_probs, source, confidence, method = build_devig_line_map(
+        true_probs, source, confidence, method, source_keys = build_devig_line_map(
             game, market_key
         )
         if not true_probs:
             continue
-
-        # Determine which books were used as devig source — don't bet those.
-        source_keys: set[str] = set()
-        if ":" in source:
-            # e.g. "exchange:novig,betfair_ex_eu" or "sharp:circa,betonlineag"
-            source_keys = set(source.split(":", 1)[1].split(","))
-        elif source and not source.startswith("market_avg"):
-            source_keys = {source}
 
         for bk in game.bookmakers:
             if bk.key in source_keys:
@@ -371,8 +364,6 @@ def _build_prop_devig_map(
     Returns:
         (true_probs, source, confidence, method, source_keys)
     """
-    from models.devig import _PINNACLE_KEYS, _EXCHANGE_KEYS, _SHARP_KEYS
-
     # Collect all O/U pairs per book per (player, point).
     # Structure: {(desc, point): {book_key: (over_price, under_price)}}
     pair_by_book: dict[tuple[str | None, float | None], dict[str, tuple[int, int]]] = {}
@@ -418,11 +409,7 @@ def _build_prop_devig_map(
             best_method = devig_result.method
 
         # Collect source keys for exclusion.
-        src = devig_result.source
-        if ":" in src:
-            all_source_keys.update(src.split(":", 1)[1].split(","))
-        elif src and not src.startswith("market_avg"):
-            all_source_keys.add(src)
+        all_source_keys.update(devig_result.source_keys)
 
     return result, best_source, best_confidence, best_method, all_source_keys
 
@@ -633,7 +620,7 @@ def store_true_lines(db_client: object, games: list[Game]) -> None:
     rows: list[dict] = []
     for game in games:
         for market_key in ("h2h", "spreads", "totals"):
-            true_probs, source, confidence, method = build_devig_line_map(
+            true_probs, source, confidence, method, _source_keys = build_devig_line_map(
                 game, market_key
             )
             if not true_probs:
@@ -1137,13 +1124,18 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"  [SCAN] Soft/MM: {', '.join(get_book_name(k) for k in soft_found[:10])}"
                   + (f" +{len(soft_found)-10} more" if len(soft_found) > 10 else ""))
 
-        # Pinnacle presence check — critical for devig quality.
-        if "pinnacle" in all_book_keys:
-            print(f"  [SCAN] ✓ Pinnacle FOUND — devig source will be HIGH confidence")
-        elif "eu" in ODDS_API_REGIONS:
-            print(f"  [SCAN] ⚠ Pinnacle NOT FOUND — EU region may be failing silently!")
-            print(f"  [SCAN]   Requested regions: {ODDS_API_REGIONS}")
-            print(f"  [SCAN]   Falling back to: exchanges → sharp consensus → market avg")
+        # Sharp book presence check — critical for devig quality.
+        sharp_present = sorted(k for k in all_book_keys if k in ("pinnacle", "circasports", "bookmaker"))
+        if sharp_present:
+            names = ", ".join(get_book_name(k) for k in sharp_present)
+            print(f"  [SCAN] \u2713 Tier 1 sharp books: {names} — HIGH confidence devig")
+        else:
+            t2_present = sorted(k for k in all_book_keys if k in ("draftkings", "fanduel", "betonlineag"))
+            if t2_present:
+                names = ", ".join(get_book_name(k) for k in t2_present)
+                print(f"  [SCAN] \u26a0 No Tier 1 sharps — Tier 2 fallback: {names}")
+            else:
+                print(f"  [SCAN] \u26a0 No sharp books found — falling back to exchanges \u2192 market avg")
 
         # Region breakdown for diagnostics.
         region_counts: dict[str, int] = {}
@@ -1225,20 +1217,9 @@ def run_scan(sport_keys: list[str]) -> int:
         sport_opps: list[EVOpportunity] = []
         for game in games:
             game_opps = scan_game(game)
-            # Track which devig sources were used.
+            # Track which devig sources were used (labels are already clean).
             for opp in game_opps:
-                src = opp.devig_source or "none"
-                # Simplify source label for summary.
-                if src.startswith("sharp_avg"):
-                    src_label = src  # e.g. "sharp_avg (3)"
-                elif src.startswith("exchange:"):
-                    src_label = "exchange_consensus"
-                elif src.startswith("market_avg:"):
-                    src_label = "market_average"
-                elif src in ("pinnacle", "circa", "bookmaker"):
-                    src_label = src  # single sharp book
-                else:
-                    src_label = src
+                src_label = opp.devig_source or "none"
                 devig_source_counts[src_label] = devig_source_counts.get(src_label, 0) + 1
             sport_opps.extend(game_opps)
             all_opportunities.extend(game_opps)
@@ -1254,6 +1235,32 @@ def run_scan(sport_keys: list[str]) -> int:
         if devig_source_counts:
             src_str = ", ".join(f"{k}={v}" for k, v in sorted(devig_source_counts.items(), key=lambda x: -x[1]))
             print(f"  [DEVIG] Source breakdown: {src_str}")
+
+            # Tier summary — show which devig tier was predominantly used.
+            tier_counts: dict[int, int] = {}
+            for src, cnt in devig_source_counts.items():
+                if src.startswith("sharp_avg") or src in ("pinnacle", "circasports", "bookmaker"):
+                    tier = 1
+                elif src.startswith("market_sharp"):
+                    tier = 2
+                elif src == "exchange_consensus":
+                    tier = 3
+                elif src == "market_average":
+                    tier = 4
+                else:
+                    tier = 0
+                tier_counts[tier] = tier_counts.get(tier, 0) + cnt
+            _tier_labels = {
+                1: "Tier 1 (Sharp)",
+                2: "Tier 2 (Market Sharp Fallback)",
+                3: "Tier 3 (Exchange Consensus)",
+                4: "Tier 4 (Market Average)",
+            }
+            primary_tier = min(t for t in tier_counts if t > 0) if any(t > 0 for t in tier_counts) else 0
+            if primary_tier == 1:
+                print(f"  [SCAN] \u2713 {_tier_labels[1]}")
+            elif primary_tier in _tier_labels:
+                print(f"  [SCAN] \u26a0 {_tier_labels[primary_tier]} (no sharp books)")
 
     # --- Persist EV opportunities ---
     if db is not None and all_opportunities:

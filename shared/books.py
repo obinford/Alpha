@@ -29,7 +29,7 @@ BOOK_REGISTRY: dict[str, BookInfo] = {
     # SHARP BOOKS — set the market.  Primary devig sources.
     # ---------------------------------------------------------------
     "pinnacle": {"name": "Pinnacle", "tier": "sharp", "region": "eu", "weight": 1.0},
-    "circa": {"name": "Circa", "tier": "sharp", "region": "us", "weight": 0.85},
+    "circasports": {"name": "Circa", "tier": "sharp", "region": "us", "weight": 0.85},
     "bookmaker": {"name": "Bookmaker", "tier": "sharp", "region": "us", "weight": 0.8},
 
     # ---------------------------------------------------------------
