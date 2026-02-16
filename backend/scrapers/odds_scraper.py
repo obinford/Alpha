@@ -998,6 +998,70 @@ def run_scan(sport_keys: list[str]) -> int:
         except Exception as e:
             print(f"Warning: Steam detection failed ({e}).")
 
+    # --- Intelligence Layers ---
+    if db is not None and all_games:
+        try:
+            from intelligence.book_profiler import BookProfiler, track_reactions_from_movements
+            from intelligence.stale_detector import StaleLineDetector, build_odds_snapshot_from_games
+            from intelligence.market_timing import MarketTimingEngine
+
+            profiler = BookProfiler(db)
+            detector = StaleLineDetector(db)
+
+            # Build current odds snapshot for stale detection.
+            odds_snapshot = build_odds_snapshot_from_games(all_games)
+
+            # Track book reaction times from recent line movements.
+            try:
+                now_ts = datetime.now(timezone.utc)
+                since = (now_ts - timedelta(minutes=SCAN_INTERVAL_MINUTES + 5)).isoformat()
+                recent_moves = db._get(
+                    "line_movements",
+                    select="game_id,sport,market_type,side,bookmaker,odds,timestamp",
+                    filters={"timestamp": f"gte.{since}"},
+                )
+                if recent_moves:
+                    reactions = track_reactions_from_movements(db, profiler, recent_moves)
+                    if reactions:
+                        print(f"  Book profiler: {reactions} reaction(s) tracked.")
+            except Exception as e:
+                print(f"  Warning: Book profiler tracking failed ({e}).")
+
+            # Detect stale lines.
+            try:
+                stale_lines = detector.detect_stale_lines(odds_snapshot)
+                if stale_lines:
+                    stored = detector.store_stale_lines(stale_lines)
+                    print(f"  Stale lines: {len(stale_lines)} detected, {stored} new alert(s).")
+
+                    # Resolve stale lines that have been corrected.
+                    resolved = detector.resolve_stale_lines(odds_snapshot)
+                    if resolved:
+                        print(f"  Stale lines: {resolved} resolved (book caught up).")
+
+                    # Discord alert for high-edge stale lines.
+                    from notifications.discord import _send_webhook, _is_enabled
+                    for sl in stale_lines:
+                        if sl["edge_percentage"] >= 5.0 and _is_enabled():
+                            try:
+                                _send_webhook({"embeds": [{
+                                    "title": "\U0001f3af STALE LINE DETECTED",
+                                    "description": (
+                                        f"**{sl['stale_book']}** still has **{sl['side']}** at "
+                                        f"**{int(sl['stale_odds']):+d}** | Consensus moved to "
+                                        f"**{int(sl['consensus_odds']):+d}** | "
+                                        f"**{sl['edge_percentage']:.1f}%** edge | ACT NOW"
+                                    ),
+                                    "color": 0xFF4444,
+                                    "footer": {"text": "RTM Intelligence | Stale Line Detection"},
+                                }]})
+                            except Exception:
+                                pass
+            except Exception as e:
+                print(f"  Warning: Stale line detection failed ({e}).")
+        except Exception as e:
+            print(f"Warning: Intelligence layers failed ({e}).")
+
     # --- Score fetching & auto-grading ---
     if db is not None:
         try:

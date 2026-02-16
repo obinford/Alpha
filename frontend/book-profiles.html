@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTM Book Intelligence — Know Your Enemy</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#0a0e17;color:#c8cdd6;
+    font-family:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+    font-size:13px;line-height:1.5;
+  }
+  a{color:#42a5f5;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .container{max-width:1400px;margin:0 auto;padding:16px 24px}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;
+    position:relative;
+  }
+  header::after{
+    content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;
+    background:linear-gradient(90deg,#ff5252,#ff9800,#ffd700,#ff5252);
+    background-size:200% 100%;
+    animation:header-gradient 8s linear infinite;
+  }
+  @keyframes header-gradient{0%{background-position:0 0}100%{background-position:200% 0}}
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{font-size:20px;font-weight:700;color:#e1e5eb;letter-spacing:1px}
+  .brand h1 span{color:#ff5252}
+  .brand .tagline{font-size:11px;color:#5a6378;text-transform:uppercase;letter-spacing:2px}
+  .status-bar{display:flex;align-items:center;gap:16px;font-size:11px;color:#5a6378}
+  .status-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:#00e676;box-shadow:0 0 6px #00e67680}
+
+  nav{display:flex;gap:24px;padding:8px 0;border-bottom:1px solid #1a2035;margin-bottom:16px;font-size:12px;text-transform:uppercase;letter-spacing:1.5px;flex-wrap:wrap}
+  nav a{color:#5a6378;text-decoration:none;padding:4px 0;border-bottom:2px solid transparent}
+  nav a:hover{color:#c8cdd6}
+  nav a.active{color:#ff5252;border-bottom-color:#ff5252}
+
+  .stats{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .stat-card{background:#111827;border:1px solid #1a2035;border-radius:6px;padding:10px 18px;min-width:130px}
+  .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378;margin-bottom:2px}
+  .stat-card .value{font-size:22px;font-weight:700;color:#e1e5eb}
+  .stat-card .value.green{color:#00e676}
+  .stat-card .value.red{color:#ff5252}
+  .stat-card .value.gold{color:#ffd700}
+  .stat-card .value.blue{color:#42a5f5}
+
+  .filters{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
+  .filter-group{display:flex;flex-direction:column;gap:2px}
+  .filter-group label{font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6378}
+  .filter-group select{
+    background:#111827;color:#c8cdd6;border:1px solid #1a2035;border-radius:4px;
+    padding:6px 10px;font-family:inherit;font-size:12px;min-width:120px;
+  }
+  .btn-refresh{
+    background:#111827;color:#42a5f5;border:1px solid #1a2035;border-radius:4px;
+    padding:6px 14px;font-family:inherit;font-size:12px;cursor:pointer;
+    text-transform:uppercase;letter-spacing:1px;margin-left:auto;
+  }
+  .btn-refresh:hover{background:#1a2035;border-color:#2a3555}
+
+  .section-title{
+    font-size:14px;font-weight:700;color:#e1e5eb;letter-spacing:1px;
+    text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;
+    border-bottom:1px solid #1a2035;
+  }
+
+  /* Book cards grid */
+  .book-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:24px}
+
+  .book-card{
+    background:#111827;border:1px solid #1a2035;border-radius:8px;
+    padding:0;overflow:hidden;cursor:pointer;
+    transition:transform 0.15s ease,box-shadow 0.15s ease;
+  }
+  .book-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,0.3)}
+  .book-card.rank-1{border:2px solid #ff5252;box-shadow:0 0 15px rgba(255,82,82,0.15)}
+  .book-card.rank-2{border:2px solid #ff9800;box-shadow:0 0 10px rgba(255,152,0,0.1)}
+  .book-card.rank-3{border:2px solid #ffd700}
+
+  .card-rank{
+    position:absolute;top:8px;right:8px;
+    background:#ff5252;color:#fff;font-size:10px;font-weight:700;
+    padding:2px 8px;border-radius:3px;letter-spacing:1px;
+  }
+  .card-rank.rank-2{background:#ff9800}
+  .card-rank.rank-3{background:#ffd700;color:#0a0e17}
+  .card-rank.rank-default{background:#1a2035;color:#5a6378}
+
+  .card-top{padding:16px;position:relative;border-bottom:1px solid #1a203580}
+  .book-name{font-size:18px;font-weight:700;color:#e1e5eb;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px}
+  .exploit-score{font-size:11px;color:#ff5252;font-weight:600}
+
+  .card-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:12px 16px}
+  .card-stat{display:flex;flex-direction:column;gap:2px}
+  .card-stat .cs-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#5a6378}
+  .card-stat .cs-value{font-size:14px;font-weight:700;color:#e1e5eb}
+  .card-stat .cs-value.slow{color:#ff5252}
+  .card-stat .cs-value.med{color:#ff9800}
+  .card-stat .cs-value.fast{color:#00e676}
+
+  .card-bottom{padding:10px 16px;border-top:1px solid #1a203580;font-size:11px;color:#5a6378}
+  .card-bottom .target-tip{color:#ff9800;font-weight:600}
+
+  /* Deep dive modal */
+  .modal-overlay{
+    display:none;position:fixed;top:0;left:0;right:0;bottom:0;
+    background:rgba(0,0,0,0.8);z-index:100;justify-content:center;align-items:flex-start;
+    padding:40px 20px;overflow-y:auto;
+  }
+  .modal-overlay.active{display:flex}
+  .modal{
+    background:#0d1220;border:1px solid #1a2035;border-radius:10px;
+    max-width:900px;width:100%;padding:24px;position:relative;
+  }
+  .modal-close{
+    position:absolute;top:12px;right:16px;font-size:20px;color:#5a6378;
+    cursor:pointer;background:none;border:none;font-family:inherit;
+  }
+  .modal-close:hover{color:#e1e5eb}
+  .modal h2{font-size:18px;font-weight:700;color:#e1e5eb;margin-bottom:16px;text-transform:uppercase;letter-spacing:1px}
+  .modal-section{margin-bottom:20px}
+  .modal-section h3{font-size:13px;color:#ff9800;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px}
+
+  .breakdown-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .breakdown-item{background:#111827;border:1px solid #1a2035;border-radius:6px;padding:10px}
+  .breakdown-item .bi-label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5a6378;margin-bottom:4px}
+  .breakdown-item .bi-value{font-size:16px;font-weight:700;color:#e1e5eb}
+  .breakdown-item .bi-sub{font-size:10px;color:#5a6378;margin-top:2px}
+
+  /* Reaction time bar */
+  .reaction-bar{width:100%;height:8px;background:#1a2035;border-radius:4px;overflow:hidden;margin-top:4px}
+  .reaction-fill{height:100%;border-radius:4px;transition:width 0.6s ease}
+  .reaction-fill.slow{background:linear-gradient(90deg,#ff5252,#ff9800)}
+  .reaction-fill.med{background:linear-gradient(90deg,#ff9800,#ffd700)}
+  .reaction-fill.fast{background:linear-gradient(90deg,#00e676,#42a5f5)}
+
+  .message{text-align:center;padding:60px 20px;color:#5a6378}
+  .spinner{width:28px;height:28px;border:3px solid #1a2035;border-top-color:#ff5252;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .sport-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+  .sport-mlb{background:#1a2a1a;color:#4caf50;border:1px solid #2e4a2e}
+  .sport-nba{background:#1a1a2e;color:#5c6bc0;border:1px solid #2e2e5c}
+  .sport-nfl{background:#2a1a1a;color:#a1887f;border:1px solid #4a2e2e}
+  .sport-nhl{background:#1a2a2a;color:#4dd0e1;border:1px solid #2e4a4a}
+  .sport-cfb{background:#2a2a1a;color:#ffb74d;border:1px solid #4a4a2e}
+  .sport-cbb{background:#2a1a2a;color:#ba68c8;border:1px solid #4a2e4a}
+  .sport-default{background:#1a1a1a;color:#8892a4;border:1px solid #2a2a2a}
+
+  .market-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;background:#0d1220;color:#8892a4;border:1px solid #1a2035}
+
+  @media(max-width:768px){
+    .container{padding:10px 12px}
+    .book-grid{grid-template-columns:1fr}
+    .stat-card{min-width:90px;padding:8px 12px}
+    .stat-card .value{font-size:18px}
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="brand">
+      <h1>RTM <span>Book Intel</span></h1>
+      <span class="tagline">Know Your Enemy</span>
+    </div>
+    <div class="status-bar">
+      <span class="dot"></span>
+      <span id="status-text">Loading...</span>
+    </div>
+  </header>
+
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="signal.html">Signal</a>
+    <a href="intelligence.html">Intelligence</a>
+    <a href="sharp-tracker.html">Sharp Tracker</a>
+    <a href="props.html">Props</a>
+    <a href="odds-screen.html">Odds Screen</a>
+    <a href="performance.html">Performance</a>
+    <a href="book-profiles.html" class="active">Book Intel</a>
+    <a href="clv-report.html">CLV Report</a>
+    <a href="daily-recap.html">Daily Recap</a>
+    <a href="bankroll.html">Bankroll</a>
+  </nav>
+
+  <div class="stats" id="stats-row">
+    <div class="stat-card"><div class="label">Books Profiled</div><div class="value blue" id="stat-books">--</div></div>
+    <div class="stat-card"><div class="label">Avg Reaction Time</div><div class="value" id="stat-reaction">--</div></div>
+    <div class="stat-card"><div class="label">Most Exploitable</div><div class="value red" id="stat-weakest">--</div></div>
+    <div class="stat-card"><div class="label">Avg Stale Edge</div><div class="value green" id="stat-edge">--</div></div>
+  </div>
+
+  <div class="filters">
+    <div class="filter-group">
+      <label>Sport</label>
+      <select id="filter-sport">
+        <option value="">All Sports</option>
+        <option value="basketball_nba">NBA</option>
+        <option value="baseball_mlb">MLB</option>
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="icehockey_nhl">NHL</option>
+        <option value="americanfootball_ncaaf">CFB</option>
+        <option value="basketball_ncaab">CBB</option>
+      </select>
+    </div>
+    <button class="btn-refresh" onclick="loadProfiles()">Refresh</button>
+  </div>
+
+  <div class="section-title">Book Profiles — Ranked by Exploitability</div>
+  <div class="book-grid" id="book-grid">
+    <div class="message"><div class="spinner"></div>Loading book profiles...</div>
+  </div>
+</div>
+
+<!-- Deep Dive Modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+const sportLabels = {
+  baseball_mlb:'MLB', basketball_nba:'NBA', americanfootball_nfl:'NFL',
+  icehockey_nhl:'NHL', americanfootball_ncaaf:'CFB', basketball_ncaab:'CBB',
+};
+const marketLabels = {
+  h2h:'Moneyline', spreads:'Spread', totals:'Total',
+  player_points:'Points', player_rebounds:'Rebounds', player_assists:'Assists',
+  player_threes:'Threes', player_blocks:'Blocks', player_steals:'Steals',
+  player_points_rebounds_assists:'PRA', player_pass_tds:'Pass TDs',
+  player_pass_yds:'Pass Yds', player_rush_yds:'Rush Yds',
+};
+
+function sportLabel(s) { return sportLabels[s] || s || '\u2014'; }
+function marketLabel(m) { return marketLabels[m] || m || '\u2014'; }
+function sportClass(s) {
+  const m = {baseball_mlb:'mlb',basketball_nba:'nba',americanfootball_nfl:'nfl',
+    icehockey_nhl:'nhl',americanfootball_ncaaf:'cfb',basketball_ncaab:'cbb'};
+  return 'sport-'+(m[s]||'default');
+}
+
+function reactionClass(seconds) {
+  if (seconds === null || seconds === undefined) return '';
+  if (seconds > 300) return 'slow';
+  if (seconds > 120) return 'med';
+  return 'fast';
+}
+
+function reactionWidth(seconds) {
+  if (!seconds) return 0;
+  return Math.min(100, (seconds / 600) * 100);
+}
+
+function formatSeconds(s) {
+  if (s === null || s === undefined) return '\u2014';
+  if (s >= 3600) return (s/3600).toFixed(1) + 'h';
+  if (s >= 60) return Math.round(s/60) + 'm';
+  return Math.round(s) + 's';
+}
+
+function renderBookCard(profile, rank) {
+  const name = (profile.sportsbook || 'Unknown').replace(/_/g, ' ');
+  const reaction = profile.avg_reaction_seconds;
+  const stalePct = profile.stale_frequency_pct || 0;
+  const staleEdge = profile.avg_edge_when_stale;
+  const bestSport = profile.best_sport;
+  const score = profile.exploit_score || 0;
+  const rClass = reactionClass(reaction);
+
+  let rankClass = 'rank-default';
+  if (rank === 1) rankClass = 'rank-1';
+  else if (rank === 2) rankClass = 'rank-2';
+  else if (rank === 3) rankClass = 'rank-3';
+
+  const cardClass = rank <= 3 ? ` rank-${rank}` : '';
+
+  return `
+    <div class="book-card${cardClass}" onclick="openDeepDive('${profile.sportsbook}')">
+      <div class="card-top">
+        <span class="card-rank ${rankClass}">#${rank}</span>
+        <div class="book-name">${name}</div>
+        <div class="exploit-score">Exploit Score: ${score.toFixed(0)}/100</div>
+      </div>
+      <div class="card-stats">
+        <div class="card-stat">
+          <span class="cs-label">Avg Reaction</span>
+          <span class="cs-value ${rClass}">${formatSeconds(reaction)}</span>
+          <div class="reaction-bar"><div class="reaction-fill ${rClass}" style="width:${reactionWidth(reaction)}%"></div></div>
+        </div>
+        <div class="card-stat">
+          <span class="cs-label">Stale Frequency</span>
+          <span class="cs-value ${stalePct > 20 ? 'slow' : stalePct > 10 ? 'med' : 'fast'}">${stalePct.toFixed(1)}%</span>
+        </div>
+        <div class="card-stat">
+          <span class="cs-label">Avg Edge When Stale</span>
+          <span class="cs-value" style="color:#00e676">${staleEdge != null ? '+'+staleEdge.toFixed(1)+'%' : '\u2014'}</span>
+        </div>
+        <div class="card-stat">
+          <span class="cs-label">Best Sport to Exploit</span>
+          <span class="cs-value">${bestSport ? `<span class="sport-badge ${sportClass(bestSport)}">${sportLabel(bestSport)}</span>` : '\u2014'}</span>
+        </div>
+      </div>
+      <div class="card-bottom">
+        <span class="target-tip">
+          ${bestSport ? `Target for ${sportLabel(bestSport)} ${profile.best_market ? marketLabel(profile.best_market) : ''} plays` : 'Collecting data...'}
+        </span>
+        <span style="float:right">${profile.total_observations || 0} observations</span>
+      </div>
+    </div>
+  `;
+}
+
+async function loadProfiles() {
+  const sport = document.getElementById('filter-sport').value;
+  const grid = document.getElementById('book-grid');
+  grid.innerHTML = '<div class="message"><div class="spinner"></div>Loading...</div>';
+
+  try {
+    let url = `${API}/api/intelligence/book-profiles`;
+    if (sport) url = `${API}/api/intelligence/weakest-books?sport=${sport}`;
+
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const profiles = data.profiles || data.books || [];
+
+    document.getElementById('stat-books').textContent = profiles.length;
+
+    if (profiles.length === 0) {
+      grid.innerHTML = `<div class="message" style="grid-column:1/-1">
+        <div style="font-size:16px;color:#e1e5eb;margin-bottom:12px">No book profiles yet</div>
+        <div style="max-width:500px;margin:0 auto;line-height:1.8">
+          Book profiles build automatically as the scanner tracks line movements.<br>
+          The profiler compares soft book reaction times to sharp book movements.<br>
+          <span style="color:#ff9800">Data accumulates over scan cycles — check back after a few hours.</span>
+        </div>
+      </div>`;
+      return;
+    }
+
+    // Stats.
+    const reactions = profiles.filter(p => p.avg_reaction_seconds != null).map(p => p.avg_reaction_seconds);
+    const avgReaction = reactions.length ? reactions.reduce((a,b) => a+b, 0) / reactions.length : null;
+    document.getElementById('stat-reaction').textContent = avgReaction != null ? formatSeconds(avgReaction) : '\u2014';
+    document.getElementById('stat-weakest').textContent = (profiles[0].sportsbook || '').replace(/_/g,' ').substring(0,15);
+    const edges = profiles.filter(p => p.avg_edge_when_stale != null).map(p => p.avg_edge_when_stale);
+    const avgEdge = edges.length ? edges.reduce((a,b) => a+b, 0) / edges.length : null;
+    document.getElementById('stat-edge').textContent = avgEdge != null ? '+'+avgEdge.toFixed(1)+'%' : '\u2014';
+
+    grid.innerHTML = profiles.map((p, i) => renderBookCard(p, i+1)).join('');
+    document.getElementById('status-text').textContent = 'Live';
+  } catch (e) {
+    grid.innerHTML = `<div class="message" style="color:#ff5252;grid-column:1/-1">Error: ${e.message}</div>`;
+  }
+}
+
+async function openDeepDive(book) {
+  const overlay = document.getElementById('modal-overlay');
+  const body = document.getElementById('modal-body');
+  overlay.classList.add('active');
+  body.innerHTML = '<div class="message"><div class="spinner"></div>Loading deep dive...</div>';
+
+  try {
+    const resp = await fetch(`${API}/api/intelligence/book-profiles/${book}`);
+    const data = await resp.json();
+
+    if (data.error) {
+      body.innerHTML = `<div class="message">${data.error}</div>`;
+      return;
+    }
+
+    const name = (data.sportsbook || book).replace(/_/g, ' ');
+
+    let sportHTML = '';
+    const bySport = data.by_sport || {};
+    if (Object.keys(bySport).length > 0) {
+      sportHTML = '<div class="breakdown-grid">' +
+        Object.entries(bySport).map(([sport, s]) => `
+          <div class="breakdown-item">
+            <div class="bi-label"><span class="sport-badge ${sportClass(sport)}">${sportLabel(sport)}</span></div>
+            <div class="bi-value ${reactionClass(s.avg_reaction_seconds)}">${formatSeconds(s.avg_reaction_seconds)}</div>
+            <div class="bi-sub">Stale: ${s.stale_frequency_pct}% | Edge: ${s.avg_edge_when_stale != null ? '+'+s.avg_edge_when_stale+'%' : '\u2014'}</div>
+            <div class="bi-sub">${s.observations} observations</div>
+          </div>
+        `).join('') + '</div>';
+    } else {
+      sportHTML = '<div style="color:#5a6378">No sport breakdown data yet</div>';
+    }
+
+    let marketHTML = '';
+    const byMarket = data.by_market || {};
+    if (Object.keys(byMarket).length > 0) {
+      marketHTML = '<div class="breakdown-grid">' +
+        Object.entries(byMarket).map(([mkt, m]) => `
+          <div class="breakdown-item">
+            <div class="bi-label"><span class="market-badge">${marketLabel(mkt)}</span></div>
+            <div class="bi-value ${reactionClass(m.avg_reaction_seconds)}">${formatSeconds(m.avg_reaction_seconds)}</div>
+            <div class="bi-sub">Stale: ${m.stale_frequency_pct}% | Edge: ${m.avg_edge_when_stale != null ? '+'+m.avg_edge_when_stale+'%' : '\u2014'}</div>
+          </div>
+        `).join('') + '</div>';
+    } else {
+      marketHTML = '<div style="color:#5a6378">No market breakdown data yet</div>';
+    }
+
+    let recentHTML = '';
+    const recent = data.recent_stale_lines || [];
+    if (recent.length > 0) {
+      recentHTML = '<div style="max-height:200px;overflow-y:auto">' +
+        recent.map(r => `
+          <div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid #1a2035;font-size:11px">
+            <span class="sport-badge ${sportClass(r.sport)}" style="font-size:9px">${sportLabel(r.sport)}</span>
+            <span style="color:#e1e5eb">${r.side}</span>
+            <span style="color:#5a6378">${r.market_type}</span>
+            <span style="color:#00e676;font-weight:700;margin-left:auto">${r.edge_at_stale != null ? '+'+r.edge_at_stale+'%' : '\u2014'}</span>
+          </div>
+        `).join('') + '</div>';
+    } else {
+      recentHTML = '<div style="color:#5a6378">No recent stale line data</div>';
+    }
+
+    body.innerHTML = `
+      <h2>${name} — Deep Dive</h2>
+      <div class="stats" style="margin-bottom:16px">
+        <div class="stat-card"><div class="label">Avg Reaction</div><div class="value ${reactionClass(data.avg_reaction_seconds)}">${formatSeconds(data.avg_reaction_seconds)}</div></div>
+        <div class="stat-card"><div class="label">Stale Frequency</div><div class="value red">${(data.stale_frequency_pct||0).toFixed(1)}%</div></div>
+        <div class="stat-card"><div class="label">Avg Stale Edge</div><div class="value green">${data.avg_edge_when_stale != null ? '+'+data.avg_edge_when_stale+'%' : '\u2014'}</div></div>
+        <div class="stat-card"><div class="label">Observations</div><div class="value">${data.total_observations || 0}</div></div>
+      </div>
+      <div class="modal-section">
+        <h3>Reaction Time by Sport</h3>
+        ${sportHTML}
+      </div>
+      <div class="modal-section">
+        <h3>Market Weakness Breakdown</h3>
+        ${marketHTML}
+      </div>
+      <div class="modal-section">
+        <h3>Recent Stale Lines</h3>
+        ${recentHTML}
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="message" style="color:#ff5252">Error: ${e.message}</div>`;
+  }
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('active');
+}
+
+document.getElementById('modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+document.getElementById('filter-sport').addEventListener('change', loadProfiles);
+
+loadProfiles();
+</script>
+</body>
+</html>
