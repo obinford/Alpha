@@ -998,6 +998,8 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
 
 def run_scan(sport_keys: list[str]) -> int:
     """Execute one full scan cycle. Returns the number of opportunities found."""
+    scan_start = time.time()
+
     # --- Connect to Supabase ---
     db = None
     try:
@@ -1018,11 +1020,13 @@ def run_scan(sport_keys: list[str]) -> int:
         print(f"[SCAN] Fetching {display} mainlines from regions: {ODDS_API_REGIONS}")
 
         # Step 1: Fetch mainlines (h2h, spreads, totals) for ALL upcoming games.
+        t0 = time.time()
         try:
             games = fetch_odds(sport_key, markets=MARKETS)
         except Exception as e:
             print(f"  Skipping {display}: {e}")
             continue
+        print(f"  [TIMING] {display} mainline API fetch: {time.time() - t0:.1f}s")
 
         if not games:
             print(f"  {display}: no games available right now.")
@@ -1081,6 +1085,7 @@ def run_scan(sport_keys: list[str]) -> int:
         if near_games and sport_props:
             print(f"  Fetching {display} props ({len(sport_props)} markets) for {len(near_games)} near-term game(s)...")
             time.sleep(1)
+            t0 = time.time()
             try:
                 prop_games = fetch_odds(sport_key, markets=sport_props)
                 if prop_games:
@@ -1088,6 +1093,7 @@ def run_scan(sport_keys: list[str]) -> int:
                     print(f"  Props merged for {display}.")
             except Exception as e:
                 print(f"  Warning: Prop fetch failed for {display} ({e}).")
+            print(f"  [TIMING] {display} props API fetch: {time.time() - t0:.1f}s")
         elif near_games:
             print(f"  Skipping props for {display} — no prop markets configured for this sport.")
         else:
@@ -1097,21 +1103,26 @@ def run_scan(sport_keys: list[str]) -> int:
 
         # Persist game data.
         if db is not None:
+            t0 = time.time()
             try:
                 store_games(db, games)
                 store_odds_snapshots(db, games)
                 store_true_lines(db, games)
             except Exception as e:
                 print(f"  Warning: DB write failed for {display} ({e}).")
+            print(f"  [TIMING] {display} games/odds/true_lines DB write: {time.time() - t0:.1f}s")
 
             # Line movements for ALL games (early lines are most valuable).
+            t0 = time.time()
             try:
                 store_line_movements(db, games)
             except Exception as e:
                 print(f"  Warning: Line movement write failed for {display} ({e}).")
+            print(f"  [TIMING] {display} line_movements DB write: {time.time() - t0:.1f}s")
 
         # Scan for +EV: mainlines for ALL games, props for near-term only.
         # Track devig source usage for diagnostics.
+        t0 = time.time()
         devig_source_counts: dict[str, int] = {}
         sport_opps: list[EVOpportunity] = []
         for game in games:
@@ -1139,6 +1150,8 @@ def run_scan(sport_keys: list[str]) -> int:
                 sport_opps.extend(prop_opps)
                 all_opportunities.extend(prop_opps)
 
+        print(f"  [TIMING] {display} EV scanning: {time.time() - t0:.1f}s ({len(sport_opps)} opps)")
+
         # Print devig source summary for this sport.
         if devig_source_counts:
             src_str = ", ".join(f"{k}={v}" for k, v in sorted(devig_source_counts.items(), key=lambda x: -x[1]))
@@ -1146,6 +1159,7 @@ def run_scan(sport_keys: list[str]) -> int:
 
     # --- Persist EV opportunities ---
     if db is not None and all_opportunities:
+        t0 = time.time()
         try:
             print(f"\nStoring {len(all_opportunities)} EV opportunities...")
             store_ev_opportunities(db, all_opportunities)
@@ -1178,9 +1192,11 @@ def run_scan(sport_keys: list[str]) -> int:
                 except Exception as row_err:
                     print(f"  Skipped row ({opp.game_id}/{opp.book_key}): {row_err}")
             print(f"Fallback complete: {saved}/{len(all_opportunities)} rows saved.")
+        print(f"[TIMING] EV store: {time.time() - t0:.1f}s")
 
     # --- CLV record creation ---
     if db is not None and all_opportunities:
+        t0 = time.time()
         try:
             from scrapers.clv_tracker import create_clv_from_ev_opportunities
             clv_count = create_clv_from_ev_opportunities(db)
@@ -1188,9 +1204,11 @@ def run_scan(sport_keys: list[str]) -> int:
                 print(f"CLV tracking: {clv_count} new record(s) created.")
         except Exception as e:
             print(f"Warning: CLV record creation failed ({e}).")
+        print(f"[TIMING] CLV record creation: {time.time() - t0:.1f}s")
 
     # --- CLV processing (close records for started games) ---
     if db is not None:
+        t0 = time.time()
         try:
             from scrapers.clv_tracker import process_open_records
             clv_processed, clv_expired = process_open_records(db)
@@ -1198,18 +1216,22 @@ def run_scan(sport_keys: list[str]) -> int:
                 print(f"CLV processing: {clv_processed} closed, {clv_expired} expired.")
         except Exception as e:
             print(f"Warning: CLV processing failed ({e}).")
+        print(f"[TIMING] CLV processing: {time.time() - t0:.1f}s")
 
     # --- Steam detection ---
     if db is not None:
+        t0 = time.time()
         try:
             new_alerts = detect_steam_moves(db)
             if new_alerts:
                 print(f"\nSteam alerts: {new_alerts} new alert(s) detected!")
         except Exception as e:
             print(f"Warning: Steam detection failed ({e}).")
+        print(f"[TIMING] Steam detection: {time.time() - t0:.1f}s")
 
     # --- Intelligence Layers ---
     if db is not None and all_games:
+        t0_intel = time.time()
         try:
             from intelligence.book_profiler import BookProfiler, track_reactions_from_movements
             from intelligence.stale_detector import StaleLineDetector, build_odds_snapshot_from_games
@@ -1317,9 +1339,11 @@ def run_scan(sport_keys: list[str]) -> int:
                 print(f"  Warning: Market timing tracking failed ({e}).")
         except Exception as e:
             print(f"Warning: Intelligence layers failed ({e}).")
+        print(f"[TIMING] Intelligence layers: {time.time() - t0_intel:.1f}s")
 
     # --- Score fetching & auto-grading ---
     if db is not None:
+        t0 = time.time()
         try:
             from scrapers.scores.score_fetcher import fetch_and_update_scores
             score_count = fetch_and_update_scores(db, sport_keys)
@@ -1333,9 +1357,11 @@ def run_scan(sport_keys: list[str]) -> int:
             grade_result = grade_opportunities(db)
         except Exception as e:
             print(f"Warning: Auto-grading failed ({e}).")
+        print(f"[TIMING] Scores & grading: {time.time() - t0:.1f}s")
 
     # --- RTM Signal generation ---
     if db is not None and all_opportunities:
+        t0_sig = time.time()
         try:
             from rtm_signal_engine.rtm_signal import RTMSignal, store_signals, format_signal_for_console
             from notifications.discord import send_signal_alert
@@ -1411,9 +1437,11 @@ def run_scan(sport_keys: list[str]) -> int:
             # Silent when no signals fire — expected for many scans.
         except Exception as e:
             print(f"Warning: RTM Signal generation failed ({e}).")
+        print(f"[TIMING] Signal generation: {time.time() - t0_sig:.1f}s")
 
     # --- Signal grading ---
     if db is not None:
+        t0 = time.time()
         try:
             from rtm_signal_engine.signal_grader import grade_signals
             sig_grade_result = grade_signals(db)
@@ -1421,8 +1449,10 @@ def run_scan(sport_keys: list[str]) -> int:
                 print(f"Signal grading: {sig_grade_result['graded']} signals graded.")
         except Exception as e:
             print(f"Warning: Signal grading failed ({e}).")
+        print(f"[TIMING] Signal grading: {time.time() - t0:.1f}s")
 
     # --- Discord alerts ---
+    t0 = time.time()
     try:
         from notifications.alerts import alert_manager
 
@@ -1441,9 +1471,13 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"Discord: sent {ev_sent} EV alert(s).")
     except Exception as e:
         print(f"Warning: Discord alerts failed ({e}).")
+    print(f"[TIMING] Discord alerts: {time.time() - t0:.1f}s")
 
     # --- Console output ---
     print_results(all_opportunities, all_games)
+
+    total_elapsed = time.time() - scan_start
+    print(f"\n[TIMING] ═══ Total scan cycle: {total_elapsed:.1f}s ═══")
     return len(all_opportunities)
 
 
