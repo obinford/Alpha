@@ -212,7 +212,21 @@ class TestSourceHierarchy:
         assert confidence == "MEDIUM"
         assert len(selected) == 1
 
-    def test_exchanges_when_no_sharps(self) -> None:
+    def test_exchanges_when_no_sharps_3_books(self) -> None:
+        """3+ exchange books → exchange consensus, LOW confidence."""
+        books = {
+            "novig": (-152, 128),
+            "betfair_ex_eu": (-148, 126),
+            "smarkets": (-150, 128),
+            "draftkings": (-155, 125),
+        }
+        selected, source, confidence = select_devig_source(books)
+        assert confidence == "LOW"
+        assert source.startswith("exchange:")
+        assert len(selected) >= 3
+
+    def test_exchanges_below_minimum_falls_through(self) -> None:
+        """Fewer than 3 exchange books → skip to market_avg."""
         books = {
             "novig": (-152, 128),
             "betfair_ex_eu": (-148, 126),
@@ -220,8 +234,7 @@ class TestSourceHierarchy:
         }
         selected, source, confidence = select_devig_source(books)
         assert confidence == "LOW"
-        assert source.startswith("exchange:")
-        assert len(selected) >= 2
+        assert source.startswith("market_avg:")
 
     def test_market_avg_last_resort(self) -> None:
         books = {

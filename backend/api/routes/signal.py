@@ -6,45 +6,25 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase
-from models.kelly import kelly_units
 
 router = APIRouter()
 
+# Signals only target -160 to +200 odds.  Filter old out-of-range rows.
+_SIGNAL_MIN_ODDS = -160
+_SIGNAL_MAX_ODDS = 200
 
-def _recalc_kelly(signal: dict) -> dict:
-    """Recalculate kelly_size from true_prob and book_odds.
 
-    Uses the canonical Kelly module (models/kelly.py).
-    Quarter Kelly, 1 unit = 1% of bankroll. No cap.
-    Always recomputes to ensure correctness regardless of stored value.
-    """
-    true_prob = signal.get("true_prob")
-    book_odds = signal.get("book_odds")
-    if true_prob is not None and book_odds is not None:
+def _filter_odds_range(rows: list[dict]) -> list[dict]:
+    """Keep only signals within the -160 to +200 odds window."""
+    out = []
+    for r in rows:
         try:
-            units = kelly_units(float(true_prob), int(book_odds))
-            signal["kelly_size"] = round(units, 2)
-        except (ValueError, TypeError, ZeroDivisionError):
-            pass
-    # Also fix other_books kelly if present.
-    others = signal.get("other_books")
-    if isinstance(others, str):
-        try:
-            others = json.loads(others)
-        except (json.JSONDecodeError, TypeError):
-            others = []
-    if isinstance(others, list):
-        for alt in others:
-            alt_prob = alt.get("true_prob") or signal.get("true_prob")
-            alt_odds = alt.get("book_odds")
-            if alt_prob is not None and alt_odds is not None:
-                try:
-                    alt["kelly_size"] = round(
-                        kelly_units(float(alt_prob), int(alt_odds)), 2
-                    )
-                except (ValueError, TypeError, ZeroDivisionError):
-                    pass
-    return signal
+            odds = int(r.get("book_odds", 0))
+        except (ValueError, TypeError):
+            continue
+        if _SIGNAL_MIN_ODDS <= odds <= _SIGNAL_MAX_ODDS:
+            out.append(r)
+    return out
 
 
 def _dedup_signals(rows: list[dict]) -> list[dict]:
@@ -82,7 +62,6 @@ def _dedup_signals(rows: list[dict]) -> list[dict]:
                     "sportsbook": alt.get("sportsbook", ""),
                     "book_odds": alt.get("book_odds"),
                     "ev_pct": alt.get("edge_percentage"),
-                    "kelly_size": alt.get("kelly_size"),
                 })
                 seen_books.add(alt_book)
 
@@ -115,10 +94,9 @@ def active_signals(
         if sport:
             rows = [r for r in rows if r.get("sport") == sport]
 
-        # Deduplicate: one card per play, best book featured.
+        # Filter to -160/+200 odds range, then deduplicate.
+        rows = _filter_odds_range(rows)
         signals = _dedup_signals(rows)
-        # Recalculate kelly_size from true_prob + book_odds (quarter Kelly).
-        signals = [_recalc_kelly(s) for s in signals]
         return {"count": len(signals), "signals": signals}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -152,8 +130,8 @@ def signal_history(
         if sport:
             rows = [r for r in rows if r.get("sport") == sport]
 
-        # Recalculate kelly_size from true_prob + book_odds (quarter Kelly).
-        rows = [_recalc_kelly(r) for r in rows]
+        # Filter to -160/+200 odds range.
+        rows = _filter_odds_range(rows)
         return {"count": len(rows), "signals": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

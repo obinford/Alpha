@@ -292,7 +292,7 @@ def select_devig_source(
     Hierarchy:
       1. Sharp book average (Pinnacle, Circa, Bookmaker)
          - 2-3 sharps → HIGH, 1 sharp → MEDIUM
-      2. Exchange consensus → LOW
+      2. Exchange consensus (3+ books required) → LOW
       3. Market average → LOW
 
     Args:
@@ -320,7 +320,7 @@ def select_devig_source(
             confidence = "MEDIUM"
         return sharp_books, source, confidence
 
-    # 2. Exchange consensus
+    # 2. Exchange consensus — require 3+ books for reliability.
     exchange_books = []
     for key in _EXCHANGE_KEYS:
         if key in available_books:
@@ -328,9 +328,15 @@ def select_devig_source(
             exchange_books.append(
                 BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.85))
             )
-    if exchange_books:
+    if len(exchange_books) >= 3:
         source = "exchange:" + ",".join(bo.key for bo in exchange_books)
         return exchange_books, source, "LOW"
+    elif exchange_books:
+        # Not enough exchange books — log and fall through to market avg.
+        print(
+            f"  [DEVIG] Skipping exchange_consensus — only "
+            f"{len(exchange_books)} exchange books (need 3+)"
+        )
 
     # 3. Market average — all books
     all_books = []
