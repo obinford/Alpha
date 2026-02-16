@@ -504,18 +504,20 @@ def scan_game_props(game: Game) -> list[EVOpportunity]:
 # ---------------------------------------------------------------------------
 
 def store_games(db_client: object, games: list[Game]) -> None:
-    """Upsert all games into the database."""
-    from db import upsert_game
-
-    for game in games:
-        upsert_game(
-            db_client,
-            game_id=game.id,
-            sport=game.sport_key,
-            home_team=game.home_team,
-            away_team=game.away_team,
-            start_time=game.commence_time,
-        )
+    """Upsert all games into the database (batched)."""
+    rows = [
+        {
+            "game_id": g.id,
+            "sport": g.sport_key,
+            "home_team": g.home_team,
+            "away_team": g.away_team,
+            "start_time": g.commence_time,
+            "status": "upcoming",
+        }
+        for g in games
+    ]
+    if rows:
+        db_client._upsert_many("games", rows, on_conflict="game_id")
 
 
 def store_line_movements(db_client: object, games: list[Game]) -> None:
@@ -524,28 +526,39 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
     Compares current odds to the most recent row for each combo.  If odds
     changed, insert with ``previous_odds`` / ``odds_change``.  If odds are
     the same, skip the insert to save space.
+
+    Batched: fetches latest odds for all games in one query.
     """
-    from db import get_latest_odds_for_game, bulk_insert_line_movements
+    from db import bulk_insert_line_movements
 
     scan_ts = datetime.now(timezone.utc).isoformat()
     rows: list[dict] = []
 
-    for game in games:
-        # Fetch existing latest odds for this game (all combos).
+    # Batch-fetch existing latest odds for ALL games at once (N+1 fix).
+    game_ids = [g.id for g in games]
+    all_existing: list[dict] = []
+    for i in range(0, len(game_ids), 50):
+        chunk = game_ids[i : i + 50]
+        id_list = ",".join(chunk)
         try:
-            existing = get_latest_odds_for_game(db_client, game.id)
+            batch = db_client._get(
+                "line_movements",
+                select="game_id,bookmaker,market_type,side,odds,timestamp",
+                filters={"game_id": f"in.({id_list})"},
+                order="timestamp.desc",
+            )
+            all_existing.extend(batch)
         except Exception:
-            existing = []
+            pass
 
-        # Build lookup: (bookmaker, market_type, side) -> latest odds
-        latest_map: dict[tuple[str, str, str], float] = {}
-        seen: set[tuple[str, str, str]] = set()
-        for row in existing:
-            key = (row["bookmaker"], row["market_type"], row["side"])
-            if key not in seen:
-                latest_map[key] = float(row["odds"])
-                seen.add(key)
+    # Build lookup: (game_id, bookmaker, market_type, side) -> latest odds.
+    latest_map: dict[tuple[str, str, str, str], float] = {}
+    for row in all_existing:
+        key = (row["game_id"], row["bookmaker"], row["market_type"], row["side"])
+        if key not in latest_map:
+            latest_map[key] = float(row["odds"])
 
+    for game in games:
         for bk in game.bookmakers:
             for mkt in bk.markets:
                 for outcome in mkt.outcomes:
@@ -557,7 +570,7 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
                         side = outcome.name + (
                             f" {outcome.point}" if outcome.point is not None else ""
                         )
-                    key = (bk.key, mkt.key, side)
+                    key = (game.id, bk.key, mkt.key, side)
                     current_odds = float(outcome.price)
                     prev = latest_map.get(key)
 
@@ -588,9 +601,8 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
 
 
 def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
-    """Store raw odds from every sportsbook/market combination."""
-    from db import insert_odds_snapshot
-
+    """Store raw odds from every sportsbook/market combination (batched)."""
+    rows: list[dict] = []
     for game in games:
         for bk in game.bookmakers:
             for mkt in bk.markets:
@@ -598,16 +610,17 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
                     continue
                 home_out = mkt.outcomes[0]
                 away_out = mkt.outcomes[1]
-                insert_odds_snapshot(
-                    db_client,
-                    game_id=game.id,
-                    sportsbook=bk.key,
-                    market_type=mkt.key,
-                    home_odds=home_out.price,
-                    away_odds=away_out.price,
-                    spread_value=home_out.point if mkt.key == "spreads" else None,
-                    total_value=home_out.point if mkt.key == "totals" else None,
-                )
+                rows.append({
+                    "game_id": game.id,
+                    "sportsbook": bk.key,
+                    "market_type": mkt.key,
+                    "home_odds": home_out.price,
+                    "away_odds": away_out.price,
+                    "spread_value": home_out.point if mkt.key == "spreads" else None,
+                    "total_value": home_out.point if mkt.key == "totals" else None,
+                })
+    if rows:
+        db_client._post_many("odds_snapshots", rows)
 
 
 def store_true_lines(db_client: object, games: list[Game]) -> None:
@@ -615,9 +628,9 @@ def store_true_lines(db_client: object, games: list[Game]) -> None:
 
     Uses the new devig engine: Pinnacle → Exchanges → Sharp consensus → Market avg.
     Falls back to single sharp book if hierarchical devig fails.
+    Batched: collects all rows then bulk-inserts.
     """
-    from db import insert_true_line
-
+    rows: list[dict] = []
     for game in games:
         for market_key in ("h2h", "spreads", "totals"):
             true_probs, source, confidence, method = build_devig_line_map(
@@ -636,15 +649,16 @@ def store_true_lines(db_client: object, games: list[Game]) -> None:
             true_away = true_probs.get((name_b, point_b), 0.5)
             no_vig_line = point_a
 
-            insert_true_line(
-                db_client,
-                game_id=game.id,
-                market_type=market_key,
-                true_home_prob=round(true_home, 6),
-                true_away_prob=round(true_away, 6),
-                sharp_book=source,
-                no_vig_line=no_vig_line,
-            )
+            rows.append({
+                "game_id": game.id,
+                "market_type": market_key,
+                "true_home_prob": round(true_home, 6),
+                "true_away_prob": round(true_away, 6),
+                "sharp_book": source,
+                "no_vig_line": no_vig_line,
+            })
+    if rows:
+        db_client._post_many("true_lines", rows)
 
 
 def store_ev_opportunities(
@@ -664,8 +678,8 @@ def store_ev_opportunities(
         recommended_units = round(opp.kelly_pct * DEFAULT_BANKROLL_UNITS, 2)
         # Every row MUST have the same keys — PostgREST rejects batches
         # with mismatched keys (PGRST102).  Use None for absent values.
-        # NOTE: commence_time is NOT a column in ev_opportunities — store
-        # it only if the column is added later; for now, omit it.
+        # NOTE: commence_time and sport are NOT columns in
+        # ev_opportunities — omit them to avoid bulk insert failures.
         row_data: dict = {
             "game_id": opp.game_id,
             "sportsbook": opp.book_key,
@@ -681,7 +695,6 @@ def store_ev_opportunities(
             "recommended_units": recommended_units,
             "status": "open",
             "timestamp": scan_ts,
-            "sport": opp.sport_key or None,
             "devig_source": opp.devig_source or None,
             "devig_confidence": opp.devig_confidence or None,
             "devig_method": opp.devig_method or None,

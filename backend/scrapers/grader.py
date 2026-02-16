@@ -155,7 +155,7 @@ def grade_opportunities(db_client: object) -> dict:
     Returns a summary dict with counts and stats.
     """
     from db import SupabaseClient
-    from shared.config import MIN_GRADE_EV_THRESHOLD
+    from config import MIN_GRADE_EV_THRESHOLD
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
 
@@ -303,7 +303,7 @@ def recalculate_all_results(db_client: object) -> dict:
     This fixes historical results that were calculated with flat 1-unit sizing.
     """
     from db import SupabaseClient
-    from shared.config import MIN_GRADE_EV_THRESHOLD
+    from config import MIN_GRADE_EV_THRESHOLD
 
     client: SupabaseClient = db_client  # type: ignore[assignment]
 

@@ -83,6 +83,47 @@ class SupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _upsert_many(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        on_conflict: str,
+        chunk_size: int = 100,
+    ) -> list[dict]:
+        """Bulk-upsert multiple rows, batched in chunks.
+
+        Same as _post_many but with merge-duplicates resolution on the
+        specified conflict column(s).
+        """
+        if not rows:
+            return []
+        headers = {
+            **self.headers,
+            "Prefer": "return=representation,resolution=merge-duplicates",
+        }
+        results: list[dict] = []
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            resp = self._http.post(
+                f"{self.base_url}/{table}",
+                headers=headers,
+                json=chunk,
+                timeout=30,
+            )
+            if resp.status_code >= 400:
+                try:
+                    body = resp.text
+                except Exception:
+                    body = "<unreadable>"
+                print(
+                    f"  [DB] Supabase error on {table} "
+                    f"(chunk {i // chunk_size + 1}, "
+                    f"{len(chunk)} rows, HTTP {resp.status_code}): {body}"
+                )
+            resp.raise_for_status()
+            results.extend(resp.json())
+        return results
+
     def _get(
         self,
         table: str,

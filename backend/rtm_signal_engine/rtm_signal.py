@@ -688,33 +688,51 @@ class RTMSignal:
             return []
 
     def load_cache(self, game_ids: list[str]) -> None:
-        """Bulk-load steam and movement data for multiple games."""
+        """Bulk-load steam and movement data for multiple games.
+
+        Uses IN filters to fetch all games in 1-2 queries instead of
+        2 queries per game (N+1 fix).
+        """
         if self._db is None:
             self._steam_cache = {}
             self._movements_cache = {}
             return
 
-        self._steam_cache = {}
-        self._movements_cache = {}
+        self._steam_cache = {gid: [] for gid in game_ids}
+        self._movements_cache = {gid: [] for gid in game_ids}
 
-        for gid in game_ids:
+        if not game_ids:
+            return
+
+        # Batch-fetch steam alerts for all games at once.
+        for i in range(0, len(game_ids), 50):
+            chunk = game_ids[i : i + 50]
+            id_list = ",".join(chunk)
             try:
-                steam = self._db._get(
+                rows = self._db._get(
                     "steam_alerts",
-                    filters={"game_id": f"eq.{gid}"},
+                    filters={"game_id": f"in.({id_list})"},
                 )
-                self._steam_cache[gid] = steam
+                for r in rows:
+                    gid = r.get("game_id", "")
+                    self._steam_cache.setdefault(gid, []).append(r)
             except Exception:
-                self._steam_cache[gid] = []
+                pass
 
+        # Batch-fetch line movements for all games at once.
+        for i in range(0, len(game_ids), 50):
+            chunk = game_ids[i : i + 50]
+            id_list = ",".join(chunk)
             try:
-                movements = self._db._get(
+                rows = self._db._get(
                     "line_movements",
-                    filters={"game_id": f"eq.{gid}"},
+                    filters={"game_id": f"in.({id_list})"},
                 )
-                self._movements_cache[gid] = movements
+                for r in rows:
+                    gid = r.get("game_id", "")
+                    self._movements_cache.setdefault(gid, []).append(r)
             except Exception:
-                self._movements_cache[gid] = []
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -756,6 +774,8 @@ def store_signals(db_client, signals: list[dict]) -> int:
 
     rows = []
     for s in signals:
+        # NOTE: away_team is NOT a column in rtm_signals — omit to
+        # avoid bulk insert failures.
         rows.append({
             "game_id": s["game_id"],
             "sport": s["sport"],
@@ -779,7 +799,6 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "edge_percentage": s["edge_percentage"],
             "kelly_size": s.get("kelly_size"),
             "home_team": s.get("home_team", ""),
-            "away_team": s.get("away_team", ""),
             "commence_time": s.get("commence_time"),
             "other_books": _json.dumps(s.get("other_books", [])),
             "status": "active",
