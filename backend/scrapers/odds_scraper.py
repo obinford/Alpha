@@ -31,10 +31,12 @@ from models.devig import devig_market, devig_pair as devig_pair_new, DevigResult
 from models.kelly import kelly_fraction
 from scrapers.odds.odds_api import Game, Market, fetch_odds
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from config import (
     ODDS_API_SPORT_KEYS, SHARP_BOOKS, SPORT_DISPLAY_NAMES,
     ALL_MARKETS, PROP_MARKETS, MARKETS, ODDS_API_REGIONS,
-    get_prop_markets_for_sport,
+    get_prop_markets_for_sport, is_sport_in_season,
     MIN_EV_THRESHOLD, DEFAULT_KELLY_FRACTION,
     DEFAULT_BANKROLL_UNITS, PROP_WINDOW_HOURS,
     STEAM_MIN_BOOKS, STEAM_WINDOW_MINUTES, STEAM_DEDUP_MINUTES,
@@ -974,7 +976,8 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
     """Determine which sport keys to fetch.
 
     If CLI args are provided (e.g. "NBA", "NFL"), map them to API keys.
-    Otherwise, return all sport keys from ODDS_API_SPORT_KEYS in config.
+    Otherwise, return only *in-season* sport keys to avoid wasting API
+    calls.  Set SCAN_ALL_SPORTS=1 to override the season filter.
     """
     if cli_args:
         keys: list[str] = []
@@ -987,9 +990,19 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
                 keys.append(arg)
         return keys
 
-    keys = list(ODDS_API_SPORT_KEYS.values())
-    print(f"Will fetch odds for {len(keys)} sports: {', '.join(sport_display_name(k) for k in keys)}\n")
-    return keys
+    # Reverse lookup: api_key -> sport name  (for season filtering).
+    key_to_name = {v: k for k, v in ODDS_API_SPORT_KEYS.items()}
+
+    all_keys = list(ODDS_API_SPORT_KEYS.values())
+    active_keys = [k for k in all_keys if is_sport_in_season(key_to_name.get(k, ""))]
+    skipped = [k for k in all_keys if k not in active_keys]
+
+    print(f"Active sports ({len(active_keys)}): {', '.join(sport_display_name(k) for k in active_keys)}")
+    if skipped:
+        print(f"Off-season ({len(skipped)}): {', '.join(sport_display_name(k) for k in skipped)}  (skipped)\n")
+    else:
+        print()
+    return active_keys
 
 
 # ---------------------------------------------------------------------------
@@ -1008,27 +1021,39 @@ def run_scan(sport_keys: list[str]) -> int:
     except Exception as e:
         print(f"Warning: Could not connect to Supabase ({e}). Will skip DB writes.")
 
-    # --- Fetch & process each sport ---
+    # --- Parallel API fetch for all sports ---
     all_games: list[Game] = []
     all_opportunities: list[EVOpportunity] = []
 
-    for i, sport_key in enumerate(sport_keys):
-        if i > 0:
-            time.sleep(1)
-
-        display = sport_display_name(sport_key)
-        print(f"[SCAN] Fetching {display} mainlines from regions: {ODDS_API_REGIONS}")
-
-        # Step 1: Fetch mainlines (h2h, spreads, totals) for ALL upcoming games.
+    def _fetch_sport(sport_key: str) -> tuple[str, list[Game] | None, float]:
+        """Fetch mainline odds for one sport. Returns (key, games, elapsed)."""
         t0 = time.time()
         try:
             games = fetch_odds(sport_key, markets=MARKETS)
         except Exception as e:
-            print(f"  Skipping {display}: {e}")
-            continue
-        print(f"  [TIMING] {display} mainline API fetch: {time.time() - t0:.1f}s")
+            print(f"  Skipping {sport_display_name(sport_key)}: {e}")
+            return sport_key, None, time.time() - t0
+        return sport_key, games if games else None, time.time() - t0
 
-        if not games:
+    print(f"[SCAN] Fetching {len(sport_keys)} sports in parallel from regions: {ODDS_API_REGIONS}")
+    t0_fetch_all = time.time()
+    fetch_results: dict[str, tuple[list[Game] | None, float]] = {}
+    with ThreadPoolExecutor(max_workers=len(sport_keys)) as pool:
+        futures = {pool.submit(_fetch_sport, sk): sk for sk in sport_keys}
+        for future in as_completed(futures):
+            sport_key, games, elapsed = future.result()
+            fetch_results[sport_key] = (games, elapsed)
+    print(f"[TIMING] All API fetches (parallel): {time.time() - t0_fetch_all:.1f}s")
+
+    # --- Process each sport sequentially ---
+    for sport_key in sport_keys:
+        games, fetch_elapsed = fetch_results[sport_key]
+        display = sport_display_name(sport_key)
+
+        print(f"\n[SCAN] {display}")
+        print(f"  [TIMING] {display} mainline API fetch: {fetch_elapsed:.1f}s")
+
+        if games is None:
             print(f"  {display}: no games available right now.")
             continue
 
@@ -1084,7 +1109,6 @@ def run_scan(sport_keys: list[str]) -> int:
         sport_props = get_prop_markets_for_sport(sport_key)
         if near_games and sport_props:
             print(f"  Fetching {display} props ({len(sport_props)} markets) for {len(near_games)} near-term game(s)...")
-            time.sleep(1)
             t0 = time.time()
             try:
                 prop_games = fetch_odds(sport_key, markets=sport_props)

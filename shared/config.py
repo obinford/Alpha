@@ -1,6 +1,7 @@
 """Shared configuration constants for the RTM Picks Platform."""
 
 import os
+from datetime import date
 
 # All sports we track, mapped to The Odds API sport keys.
 # The Odds API uses specific string keys for each league/sport.
@@ -25,6 +26,82 @@ ODDS_API_SPORT_KEYS: dict[str, str] = {
 }
 
 SUPPORTED_SPORTS = list(ODDS_API_SPORT_KEYS.keys())
+
+# ---------------------------------------------------------------------------
+# Sport season calendar — avoids wasting API calls on off-season sports.
+#
+# Each entry maps a sport name to a list of (start_month, start_day,
+# end_month, end_day) tuples.  A sport is "in season" if today falls
+# within ANY of its windows.  Windows that cross year boundaries
+# (e.g. Oct→Jun) are handled automatically.
+#
+# Update these dates at the start of each year, or override with the
+# env var SCAN_ALL_SPORTS=1 to skip the filter entirely.
+# ---------------------------------------------------------------------------
+SPORT_SEASONS: dict[str, list[tuple[int, int, int, int]]] = {
+    # MLB: late March → early November (including postseason)
+    "MLB":              [(3, 20, 11, 5)],
+    # NBA: mid-October → late June (including Finals)
+    "NBA":              [(10, 15, 6, 30)],
+    # NFL: early September → mid-February (including Super Bowl)
+    "NFL":              [(9, 1, 2, 15)],
+    # NHL: early October → late June (including Stanley Cup)
+    "NHL":              [(10, 1, 6, 30)],
+    # CFB: late August → mid-January (including bowls/playoff)
+    "CFB":              [(8, 24, 1, 20)],
+    # CBB: early November → early April (including March Madness)
+    "CBB":              [(11, 1, 4, 10)],
+    # WNBA: mid-May → mid-October
+    "WNBA":             [(5, 15, 10, 20)],
+    # Tennis Grand Slams — each has a ~2-week window
+    "ATP_AUS_OPEN":     [(1, 8, 1, 28)],
+    "WTA_AUS_OPEN":     [(1, 8, 1, 28)],
+    "ATP_FRENCH_OPEN":  [(5, 20, 6, 10)],
+    "WTA_FRENCH_OPEN":  [(5, 20, 6, 10)],
+    "ATP_WIMBLEDON":    [(6, 24, 7, 15)],
+    "WTA_WIMBLEDON":    [(6, 24, 7, 15)],
+    "ATP_US_OPEN":      [(8, 21, 9, 10)],
+    "WTA_US_OPEN":      [(8, 21, 9, 10)],
+}
+
+
+def _in_window(today: date, start_m: int, start_d: int, end_m: int, end_d: int) -> bool:
+    """Check if *today* falls within a (month, day) window.
+
+    Handles year-boundary wrapping (e.g. NFL Oct → Feb).
+    """
+    start = date(today.year, start_m, start_d)
+    end = date(today.year, end_m, end_d)
+
+    if start <= end:
+        # Normal window: Mar 20 → Nov 5
+        return start <= today <= end
+    # Wrapping window: Oct 15 → Jun 30  →  (Oct 15 → Dec 31) OR (Jan 1 → Jun 30)
+    return today >= start or today <= end
+
+
+def is_sport_in_season(sport_name: str, today: date | None = None) -> bool:
+    """Return True if *sport_name* is currently in season.
+
+    Always returns True for unknown sports (safe default).
+    """
+    if os.environ.get("SCAN_ALL_SPORTS", "").strip() == "1":
+        return True
+    windows = SPORT_SEASONS.get(sport_name)
+    if not windows:
+        return True  # unknown sport → scan it
+    today = today or date.today()
+    return any(_in_window(today, *w) for w in windows)
+
+
+def get_active_sport_keys(today: date | None = None) -> list[str]:
+    """Return Odds API sport keys for sports currently in season."""
+    today = today or date.today()
+    active = []
+    for name, api_key in ODDS_API_SPORT_KEYS.items():
+        if is_sport_in_season(name, today):
+            active.append(api_key)
+    return active
 
 # Human-readable display names for console output.
 SPORT_DISPLAY_NAMES: dict[str, str] = {
