@@ -567,6 +567,9 @@ class RTMSignal:
             "projection_data": proj_data,
             "commence_time": opportunity.get("commence_time"),
             "hours_until_start": opportunity.get("hours_until_start"),
+            "devig_source": opportunity.get("devig_source", ""),
+            "devig_confidence": opportunity.get("devig_confidence", ""),
+            "devig_method": opportunity.get("devig_method", "multiplicative"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 

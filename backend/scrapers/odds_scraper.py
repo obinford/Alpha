@@ -27,6 +27,7 @@ from models.ev_calculator import (
     calculate_ev,
     calculate_no_vig_probability,
 )
+from models.devig import devig_market, devig_pair as devig_pair_new, DevigResult, select_devig_source, BookOdds
 from models.kelly import kelly_fraction
 from scrapers.odds.odds_api import Game, Market, fetch_odds
 
@@ -58,6 +59,9 @@ class EVOpportunity:
     true_prob: float
     ev_pct: float
     kelly_pct: float
+    devig_source: str = ""
+    devig_confidence: str = ""
+    devig_method: str = "multiplicative"
 
 
 def parse_commence_time(ct: str) -> datetime:
@@ -144,6 +148,8 @@ def build_sharp_line_map(
     """Build a map of (selection_name, point) -> true probability from sharp odds.
 
     For two-outcome markets the probabilities come from no-vig devigging.
+    LEGACY: used when only a single sharp book is available.
+    Prefer build_devig_line_map for the hierarchical approach.
     """
     outcomes = sharp_market.outcomes
     if len(outcomes) != 2:
@@ -158,27 +164,84 @@ def build_sharp_line_map(
     }
 
 
-def scan_game(game: Game) -> list[EVOpportunity]:
-    """Scan a single game for +EV opportunities across all books and markets."""
-    sharp_key = find_sharp_book(game)
-    if sharp_key is None:
-        return []
+def _extract_market_odds_by_book(
+    game: Game, market_key: str,
+) -> tuple[dict[str, tuple[int, int]], list | None]:
+    """Extract {book_key: (odds_a, odds_b)} for a two-outcome market across all books.
 
-    sharp_bk = next(bk for bk in game.bookmakers if bk.key == sharp_key)
+    Returns (book_odds_dict, outcome_names) where outcome_names is
+    [name_a, name_b, point_a, point_b] from the first book found.
+    """
+    book_odds: dict[str, tuple[int, int]] = {}
+    outcome_info: list | None = None
+
+    for bk in game.bookmakers:
+        mkt = get_market(bk.markets, market_key)
+        if mkt is None or len(mkt.outcomes) != 2:
+            continue
+        book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
+        if outcome_info is None:
+            outcome_info = [
+                mkt.outcomes[0].name, mkt.outcomes[1].name,
+                mkt.outcomes[0].point, mkt.outcomes[1].point,
+            ]
+
+    return book_odds, outcome_info
+
+
+def build_devig_line_map(
+    game: Game, market_key: str,
+) -> tuple[dict[tuple[str, float | None], float], str, str, str]:
+    """Build a true-probability map using the hierarchical devig engine.
+
+    Returns:
+        (true_probs, devig_source, devig_confidence, devig_method)
+        where true_probs is {(selection_name, point): true_probability}
+    """
+    book_odds, outcome_info = _extract_market_odds_by_book(game, market_key)
+    if not book_odds or outcome_info is None:
+        return {}, "", "CAUTION", "multiplicative"
+
+    result = devig_market(book_odds)
+    if result is None:
+        return {}, "", "CAUTION", "multiplicative"
+
+    name_a, name_b, point_a, point_b = outcome_info
+    true_probs = {
+        (name_a, point_a): result.true_prob_a,
+        (name_b, point_b): result.true_prob_b,
+    }
+    return true_probs, result.source, result.confidence, result.method
+
+
+def scan_game(game: Game) -> list[EVOpportunity]:
+    """Scan a single game for +EV opportunities across all books and markets.
+
+    Uses the hierarchical devig engine:
+      Pinnacle → Exchanges → Sharp consensus → Market average
+    The devig source books are excluded from the soft-book comparison loop
+    (you don't bet the same book you used to set the true line).
+    """
     game_label = f"{game.away_team} @ {game.home_team}"
     opportunities: list[EVOpportunity] = []
 
     for market_key in ("h2h", "spreads", "totals"):
-        sharp_market = get_market(sharp_bk.markets, market_key)
-        if sharp_market is None:
-            continue
-
-        true_probs = build_sharp_line_map(sharp_market)
+        true_probs, source, confidence, method = build_devig_line_map(
+            game, market_key
+        )
         if not true_probs:
             continue
 
+        # Determine which books were used as devig source — don't bet those.
+        source_keys: set[str] = set()
+        if ":" in source:
+            # e.g. "exchange:novig,betfair_ex_eu" or "sharp:circa,betonlineag"
+            source_keys = set(source.split(":", 1)[1].split(","))
+        elif source and not source.startswith("market_avg"):
+            source_keys = {source}
+
         for bk in game.bookmakers:
-            if bk.key == sharp_key:
+            if bk.key in source_keys:
                 continue
 
             book_market = get_market(bk.markets, market_key)
@@ -216,6 +279,9 @@ def scan_game(game: Game) -> list[EVOpportunity]:
                         true_prob=true_prob,
                         ev_pct=ev_pct,
                         kelly_pct=kelly_pct,
+                        devig_source=source,
+                        devig_confidence=confidence,
+                        devig_method=method,
                     )
                 )
 
@@ -229,6 +295,7 @@ def _build_prop_sharp_map(
 
     Groups outcomes by (description, point) pairs — each pair is an
     Over/Under duo that can be devigged.
+    LEGACY: used for single-book devigging. See _build_prop_devig_map.
     """
     # Group outcomes by (description, point) to find Over/Under pairs.
     pairs: dict[tuple[str | None, float | None], list] = {}
@@ -251,32 +318,95 @@ def _build_prop_sharp_map(
     return result
 
 
-def scan_game_props(game: Game) -> list[EVOpportunity]:
-    """Scan a single game for +EV player prop opportunities."""
-    sharp_key = find_sharp_book(game)
-    if sharp_key is None:
-        return []
+def _build_prop_devig_map(
+    game: Game, prop_market_key: str,
+) -> tuple[dict[tuple[str, str, float | None], float], str, str, str, set[str]]:
+    """Build prop true-probability map using hierarchical source selection.
 
+    For each player/line pair, collect Over/Under odds from all books,
+    pick the best source via the hierarchy, and devig.
+
+    Returns:
+        (true_probs, source, confidence, method, source_keys)
+    """
+    from models.devig import _PINNACLE_KEYS, _EXCHANGE_KEYS, _SHARP_KEYS
+
+    # Collect all O/U pairs per book per (player, point).
+    # Structure: {(desc, point): {book_key: (over_price, under_price)}}
+    pair_by_book: dict[tuple[str | None, float | None], dict[str, tuple[int, int]]] = {}
+
+    for bk in game.bookmakers:
+        mkt = get_market(bk.markets, prop_market_key)
+        if mkt is None:
+            continue
+        # Group this book's outcomes by (description, point).
+        bk_pairs: dict[tuple[str | None, float | None], list] = {}
+        for o in mkt.outcomes:
+            bk_pairs.setdefault((o.description, o.point), []).append(o)
+        for pair_key, outcomes in bk_pairs.items():
+            if len(outcomes) != 2:
+                continue
+            outcomes.sort(key=lambda o: o.name)  # Over first
+            pair_by_book.setdefault(pair_key, {})[bk.key] = (
+                outcomes[0].price, outcomes[1].price
+            )
+
+    result: dict[tuple[str, str, float | None], float] = {}
+    best_source = ""
+    best_confidence = "CAUTION"
+    best_method = "multiplicative"
+    all_source_keys: set[str] = set()
+
+    for (desc, point), book_odds in pair_by_book.items():
+        devig_result = devig_market(book_odds)
+        if devig_result is None:
+            continue
+
+        player = desc or ""
+        # We need to know which outcome is Over vs Under.
+        # Over sorts before Under alphabetically, matching our sort above.
+        result[(player, "Over", point)] = devig_result.true_prob_a
+        result[(player, "Under", point)] = devig_result.true_prob_b
+
+        # Track the highest-confidence source across all pairs.
+        confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "CAUTION": 0}
+        if confidence_rank.get(devig_result.confidence, 0) >= confidence_rank.get(best_confidence, 0):
+            best_source = devig_result.source
+            best_confidence = devig_result.confidence
+            best_method = devig_result.method
+
+        # Collect source keys for exclusion.
+        src = devig_result.source
+        if ":" in src:
+            all_source_keys.update(src.split(":", 1)[1].split(","))
+        elif src and not src.startswith("market_avg"):
+            all_source_keys.add(src)
+
+    return result, best_source, best_confidence, best_method, all_source_keys
+
+
+def scan_game_props(game: Game) -> list[EVOpportunity]:
+    """Scan a single game for +EV player prop opportunities.
+
+    Uses the hierarchical devig engine for prop markets.
+    """
     # Only scan prop markets supported for this sport.
     sport_props = get_prop_markets_for_sport(game.sport_key)
     if not sport_props:
         return []
 
-    sharp_bk = next(bk for bk in game.bookmakers if bk.key == sharp_key)
     game_label = f"{game.away_team} @ {game.home_team}"
     opportunities: list[EVOpportunity] = []
 
     for prop_market_key in sport_props:
-        sharp_market = get_market(sharp_bk.markets, prop_market_key)
-        if sharp_market is None:
-            continue
-
-        true_probs = _build_prop_sharp_map(sharp_market)
+        true_probs, source, confidence, method, source_keys = _build_prop_devig_map(
+            game, prop_market_key
+        )
         if not true_probs:
             continue
 
         for bk in game.bookmakers:
-            if bk.key == sharp_key:
+            if bk.key in source_keys:
                 continue
 
             book_market = get_market(bk.markets, prop_market_key)
@@ -318,6 +448,9 @@ def scan_game_props(game: Game) -> list[EVOpportunity]:
                         true_prob=true_prob,
                         ev_pct=ev_pct,
                         kelly_pct=kelly_pct,
+                        devig_source=source,
+                        devig_confidence=confidence,
+                        devig_method=method,
                     )
                 )
 
@@ -435,31 +568,38 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
 
 
 def store_true_lines(db_client: object, games: list[Game]) -> None:
-    """Devig sharp lines and store true probabilities."""
+    """Devig lines using hierarchical source selection and store true probabilities.
+
+    Uses the new devig engine: Pinnacle → Exchanges → Sharp consensus → Market avg.
+    Falls back to single sharp book if hierarchical devig fails.
+    """
     from db import insert_true_line
 
     for game in games:
-        sharp_key = find_sharp_book(game)
-        if sharp_key is None:
-            continue
-        sharp_bk = next(bk for bk in game.bookmakers if bk.key == sharp_key)
-
         for market_key in ("h2h", "spreads", "totals"):
-            sharp_market = get_market(sharp_bk.markets, market_key)
-            if sharp_market is None or len(sharp_market.outcomes) != 2:
-                continue
-            true_home, true_away = calculate_no_vig_probability(
-                sharp_market.outcomes[0].price,
-                sharp_market.outcomes[1].price,
+            true_probs, source, confidence, method = build_devig_line_map(
+                game, market_key
             )
-            no_vig_line = sharp_market.outcomes[0].point
+            if not true_probs:
+                continue
+
+            # Get outcome names and points from the first available book.
+            _, outcome_info = _extract_market_odds_by_book(game, market_key)
+            if outcome_info is None:
+                continue
+            name_a, name_b, point_a, point_b = outcome_info
+
+            true_home = true_probs.get((name_a, point_a), 0.5)
+            true_away = true_probs.get((name_b, point_b), 0.5)
+            no_vig_line = point_a
+
             insert_true_line(
                 db_client,
                 game_id=game.id,
                 market_type=market_key,
                 true_home_prob=round(true_home, 6),
                 true_away_prob=round(true_away, 6),
-                sharp_book=sharp_key,
+                sharp_book=source,
                 no_vig_line=no_vig_line,
             )
 
@@ -500,6 +640,13 @@ def store_ev_opportunities(
             row_data["commence_time"] = opp.commence_time
         if opp.sport_key:
             row_data["sport"] = opp.sport_key
+        # Devig metadata for transparency.
+        if opp.devig_source:
+            row_data["devig_source"] = opp.devig_source
+        if opp.devig_confidence:
+            row_data["devig_confidence"] = opp.devig_confidence
+        if opp.devig_method:
+            row_data["devig_method"] = opp.devig_method
         rows.append(row_data)
 
     bulk_insert_ev_opportunities(db_client, rows)
