@@ -195,6 +195,11 @@ def fetch_fanmatch(target_date: date | None = None) -> list[dict[str, Any]]:
     if date_str in _cache.fanmatch:
         logger.warning("KenPom fanmatch fetch failed — using stale cache for %s", date_str)
         return _cache.fanmatch[date_str]
+
+    # Cache the empty result so we don't re-request a failing date
+    # (e.g. tomorrow returns 400 when no games are scheduled).
+    _cache.fanmatch[date_str] = []
+    _cache.fanmatch_ts[date_str] = time.time()
     return []
 
 
@@ -491,6 +496,23 @@ def resolve_team_name(kenpom_name: str, odds_api_teams: list[str] | None = None)
 # Projections
 # ---------------------------------------------------------------------------
 
+def _get_all_cached_fanmatch() -> list[dict[str, Any]]:
+    """Return all cached fanmatch games across all dates.
+
+    Reads directly from the in-memory cache without making any API calls.
+    This is safe to call repeatedly after refresh() has populated the cache.
+    """
+    all_games: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for _date_str, games in _cache.fanmatch.items():
+        for g in games:
+            key = (g.get("Home", ""), g.get("Visitor", ""))
+            if key not in seen:
+                seen.add(key)
+                all_games.append(g)
+    return all_games
+
+
 def get_fanmatch_prediction(
     home_team: str,
     away_team: str,
@@ -498,8 +520,9 @@ def get_fanmatch_prediction(
 ) -> dict[str, Any] | None:
     """Look up KenPom's fanmatch prediction for a specific game.
 
-    Searches today's and tomorrow's fanmatch data for a game matching
-    the given team names (with name resolution applied).
+    Reads from the already-cached fanmatch data (populated by refresh())
+    instead of making new API calls.  Only falls back to an API call if
+    the cache is completely empty.
 
     Returns a dict with:
         home_pred: float   — predicted home score
@@ -509,8 +532,18 @@ def get_fanmatch_prediction(
         source: str        — "kenpom_fanmatch"
     Or None if the game is not found.
     """
-    fanmatch_games = fetch_fanmatch_today_tomorrow()
+    # Read from cache first (no API calls).
+    fanmatch_games = _get_all_cached_fanmatch()
+
+    # Only fetch if cache is completely empty (first call without refresh).
     if not fanmatch_games:
+        logger.debug("KenPom fanmatch cache empty — fetching fresh data")
+        fanmatch_games = fetch_fanmatch_today_tomorrow()
+    if not fanmatch_games:
+        logger.debug(
+            "KenPom fanmatch: no data available for %s @ %s",
+            away_team, home_team,
+        )
         return None
 
     # Build name map for resolution.
@@ -523,6 +556,14 @@ def get_fanmatch_prediction(
     # Also try mascot-stripped version as a fallback.
     home_stripped = _strip_mascot(home_team)
     away_stripped = _strip_mascot(away_team)
+
+    logger.debug(
+        "KenPom fanmatch lookup: home=%r (kp=%r, stripped=%r) "
+        "away=%r (kp=%r, stripped=%r) | %d cached games",
+        home_team, home_as_kp, home_stripped,
+        away_team, away_as_kp, away_stripped,
+        len(fanmatch_games),
+    )
 
     for game in fanmatch_games:
         kp_home = game.get("Home", "")
@@ -559,6 +600,13 @@ def get_fanmatch_prediction(
                 if home_wp > 1.0:
                     home_wp = home_wp / 100.0
                 pred_tempo = float(game.get("PredTempo", _AVG_TEMPO))
+                logger.debug(
+                    "KenPom fanmatch MATCH: %s @ %s -> "
+                    "kp_home=%r kp_vis=%r | %.0f-%.0f (WP %.1f%%)",
+                    away_team, home_team,
+                    kp_home, kp_visitor,
+                    away_pred, home_pred, home_wp * 100,
+                )
                 return {
                     "home_pred": home_pred,
                     "away_pred": away_pred,
@@ -572,6 +620,20 @@ def get_fanmatch_prediction(
                 logger.warning("Failed to parse fanmatch data for %s vs %s: %s", home_team, away_team, exc)
                 return None
 
+    # No match found — log the names we tried for debugging.
+    kp_game_labels = [
+        f"{g.get('Visitor', '?')} @ {g.get('Home', '?')}"
+        for g in fanmatch_games[:5]
+    ]
+    logger.debug(
+        "KenPom fanmatch NO MATCH for %s @ %s | "
+        "Tried kp names: home_as_kp=%r, away_as_kp=%r | "
+        "Sample games: %s%s",
+        away_team, home_team,
+        home_as_kp, away_as_kp,
+        kp_game_labels,
+        f" ... +{len(fanmatch_games) - 5} more" if len(fanmatch_games) > 5 else "",
+    )
     return None
 
 
@@ -660,15 +722,26 @@ def get_projection(
     Tries fanmatch first (direct KenPom predictions), then falls back
     to calculating from ratings.
 
-    Returns a projection dict or None if no data is available.
+    Returns a projection dict with keys:
+        home_pred, away_pred, home_wp, away_wp, pred_tempo, source
+        And for fanmatch: thrill_score
+        And for ratings: margin
+        Plus: home_score, away_score, home_win_prob (aliases for scanner)
+    Or None if no data is available.
     """
     # Try fanmatch first — it has KenPom's own predictions.
     prediction = get_fanmatch_prediction(home_team, away_team, odds_api_teams)
-    if prediction is not None:
-        return prediction
+    if prediction is None:
+        # Fall back to ratings-based projection.
+        prediction = get_ratings_projection(home_team, away_team, odds_api_teams)
 
-    # Fall back to ratings-based projection.
-    return get_ratings_projection(home_team, away_team, odds_api_teams)
+    if prediction is not None:
+        # Add convenience aliases used by the scanner's console output.
+        prediction["home_score"] = prediction.get("home_pred", 0)
+        prediction["away_score"] = prediction.get("away_pred", 0)
+        prediction["home_win_prob"] = prediction.get("home_wp", 0.5)
+
+    return prediction
 
 
 def get_team_rating(team_name: str, odds_api_teams: list[str] | None = None) -> dict[str, Any] | None:

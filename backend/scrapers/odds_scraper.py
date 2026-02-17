@@ -1608,12 +1608,23 @@ def run_scan(sport_keys: list[str]) -> int:
                 except Exception:
                     pass
 
+            # Build KenPom game projections for CBB signals.
+            game_projections: dict[str, dict] = {}
+            if _kenpom_client is not None:
+                for g in all_games:
+                    if g.sport_key == _cbb_sport_key:
+                        gp = _kenpom_client.get_projection(g.home_team, g.away_team)
+                        if gp:
+                            game_projections[g.id] = gp
+                if game_projections:
+                    print(f"  KenPom projections: {len(game_projections)} CBB games passed to signal engine.")
+
             signal_engine = RTMSignal(db_client=db)
             game_ids = list({o.game_id for o in all_opportunities})
             signal_engine.load_cache(game_ids)
 
             signals = signal_engine.generate_signals(
-                opp_dicts_for_signal, player_projections
+                opp_dicts_for_signal, player_projections, game_projections
             )
 
             if signals:

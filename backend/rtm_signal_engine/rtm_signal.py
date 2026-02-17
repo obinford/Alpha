@@ -40,6 +40,15 @@ NBA_WEIGHTS = {
     "intelligence": 0.20,
 }
 
+# CBB uses KenPom game-level projections (less weight than NBA player projections).
+CBB_WEIGHTS = {
+    "ev": 0.30,
+    "steam": 0.15,
+    "projection": 0.20,
+    "consensus": 0.15,
+    "intelligence": 0.20,
+}
+
 # All other sports use 4 components (no projection data available).
 DEFAULT_WEIGHTS = {
     "ev": 0.40,
@@ -75,18 +84,22 @@ SIGNAL_MAX_ODDS = 200
 SIGNAL_BET_AMOUNT = 100.0
 
 # Sports that have projection support.
-_PROJECTION_SPORTS = {"basketball_nba"}
+_PROJECTION_SPORTS = {"basketball_nba", "basketball_ncaab"}
 
 
 def _get_weights(sport: str, is_prop: bool) -> dict[str, float]:
     """Return the appropriate weight set for a sport and market type.
 
-    Only NBA props use 4-component weights (with projections).
-    All game lines and non-NBA props use 3-component weights
-    so that the full 100% of weight is distributed across active components.
+    NBA props use 5-component weights with player projections.
+    CBB uses KenPom game-level projections for mainlines.
+    All other sports use 4-component weights (no projection data).
     """
-    if is_prop and sport in _PROJECTION_SPORTS:
+    if is_prop and sport == "basketball_nba":
         return NBA_PROP_WEIGHTS
+    if sport == "basketball_nba":
+        return NBA_WEIGHTS
+    if sport == "basketball_ncaab":
+        return CBB_WEIGHTS
     return DEFAULT_WEIGHTS
 
 
@@ -258,6 +271,92 @@ class RTMSignal:
             return 30
         elif edge >= 0:
             return 10
+        return 0
+
+    def game_projection_score(
+        self,
+        game_proj: dict,
+        side: str,
+        market_type: str,
+        game_info: dict,
+        point: float | None = None,
+    ) -> int:
+        """Score based on KenPom game-level projection (CBB).
+
+        For h2h: compares KenPom win probability with the bet side.
+        For spreads: compares KenPom predicted margin with the line.
+        For totals: compares KenPom predicted total with the line.
+
+        Returns 0-100 score.
+        """
+        if not game_proj:
+            return 0
+
+        home_wp = game_proj.get("home_wp", 0.5)
+        home_pred = game_proj.get("home_pred", 0)
+        away_pred = game_proj.get("away_pred", 0)
+        home_team = game_info.get("home_team", "")
+        away_team = game_info.get("away_team", "")
+
+        if market_type == "h2h":
+            # Determine which side we're betting.
+            side_norm = side.strip().lower()
+            home_norm = home_team.strip().lower()
+            away_norm = away_team.strip().lower()
+
+            if side_norm == home_norm or home_norm in side_norm:
+                our_wp = home_wp
+            elif side_norm == away_norm or away_norm in side_norm:
+                our_wp = 1.0 - home_wp
+            else:
+                return 0
+
+            # Score: how much KenPom agrees with this side.
+            # 50% = neutral, 75% = strong agreement.
+            edge = (our_wp - 0.5) * 200  # Scale: 50%=0, 75%=50, 100%=100
+            return int(min(100, max(0, edge)))
+
+        elif market_type == "spreads":
+            # KenPom predicted margin (positive = home favored).
+            kp_margin = home_pred - away_pred
+            if point is None:
+                return 0
+
+            # The spread point is from the bet side's perspective.
+            # If betting home at -5.5, we need home to win by >5.5.
+            # KenPom margin of 8 vs line of -5.5 → 2.5 points of value.
+            side_norm = side.strip().lower()
+            home_norm = home_team.strip().lower()
+
+            if home_norm in side_norm:
+                # Betting home side: value = kp_margin - |point|
+                value = kp_margin - abs(point)
+            else:
+                # Betting away side: value = (-kp_margin) - |point|
+                value = (-kp_margin) - abs(point)
+
+            # Scale: 0 pts value=20, 3 pts=50, 6 pts=80, 10+=100
+            if value <= 0:
+                return 0
+            return int(min(100, 20 + value * 10))
+
+        elif market_type == "totals":
+            kp_total = home_pred + away_pred
+            if point is None:
+                return 0
+
+            side_lower = side.strip().lower()
+            if "over" in side_lower:
+                value = kp_total - point
+            elif "under" in side_lower:
+                value = point - kp_total
+            else:
+                return 0
+
+            if value <= 0:
+                return 0
+            return int(min(100, 20 + value * 10))
+
         return 0
 
     def intelligence_score(
@@ -488,8 +587,14 @@ class RTMSignal:
         self,
         opportunity: dict,
         player_projection: dict | None = None,
+        game_projection: dict | None = None,
     ) -> dict | None:
         """Score a single betting opportunity through the confluence model.
+
+        Args:
+            opportunity: EV opportunity dict.
+            player_projection: Player-level projection (NBA props).
+            game_projection: Game-level projection from KenPom (CBB).
 
         Returns a signal dict if it meets the threshold, else None.
         """
@@ -510,9 +615,11 @@ class RTMSignal:
         ev = self.ev_score(ev_pct)
         steam = self.steam_score(game_id, side, market_type)
 
-        # Projection score (NBA props only).
+        # Projection score.
         proj = 0
         proj_data = None
+
+        # NBA player props: use player-level projections.
         if is_prop and player_projection and sport in _PROJECTION_SPORTS:
             m = re.search(r"(over|under)\s+([\d.]+)", side, re.IGNORECASE)
             if m:
@@ -527,6 +634,27 @@ class RTMSignal:
                     "mean": player_projection.get("projections", {}).get(
                         _prop_type_to_key(market_type), {}
                     ).get("mean"),
+                }
+
+        # CBB game lines: use KenPom game-level projections.
+        elif game_projection and sport == "basketball_ncaab" and not is_prop:
+            # Parse the point from the side string for spreads/totals.
+            point = None
+            m_pt = re.search(r"[-+]?\d+\.?\d*$", side)
+            if m_pt:
+                try:
+                    point = float(m_pt.group())
+                except ValueError:
+                    pass
+            proj = self.game_projection_score(
+                game_projection, side, market_type, game_info, point
+            )
+            if proj > 0:
+                proj_data = {
+                    "source": game_projection.get("source", "kenpom"),
+                    "home_pred": game_projection.get("home_pred"),
+                    "away_pred": game_projection.get("away_pred"),
+                    "home_wp": game_projection.get("home_wp"),
                 }
 
         consensus, consensus_books = self.market_consensus_score(
@@ -627,6 +755,7 @@ class RTMSignal:
         self,
         opportunities: list[dict],
         player_projections: dict[int, dict] | None = None,
+        game_projections: dict[str, dict] | None = None,
     ) -> list[dict]:
         """Score all opportunities and return those meeting signal threshold.
 
@@ -635,7 +764,8 @@ class RTMSignal:
 
         Args:
             opportunities: List of EV opportunity dicts.
-            player_projections: Dict of player_id -> projection dict.
+            player_projections: Dict of player_id -> projection dict (NBA props).
+            game_projections: Dict of game_id -> KenPom projection dict (CBB).
 
         Returns list of signal dicts sorted by strength descending.
         """
@@ -650,6 +780,7 @@ class RTMSignal:
             self._consensus_map.setdefault(key, set()).add(book)
 
         projections = player_projections or {}
+        game_projs = game_projections or {}
         all_signals: list[dict] = []
 
         for opp in opportunities:
@@ -677,7 +808,10 @@ class RTMSignal:
                             proj = p
                             break
 
-            signal = self.score_opportunity(opp, proj)
+            # Look up game-level projection for CBB.
+            game_proj = game_projs.get(opp.get("game_id", ""))
+
+            signal = self.score_opportunity(opp, proj, game_proj)
             if signal:
                 all_signals.append(signal)
 
