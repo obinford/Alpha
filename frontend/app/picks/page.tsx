@@ -221,19 +221,26 @@ export default function PicksPage() {
                   </span>
                 </div>
 
-                {/* Other books */}
-                {sig.other_books && sig.other_books.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {sig.other_books.map((alt, i) => (
-                      <span
-                        key={i}
-                        className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-500"
-                      >
-                        {alt.sportsbook} {formatOdds(alt.book_odds)}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {/* Other books (filter out betopenly/novig) */}
+                {(() => {
+                  const HIDDEN_BOOKS = new Set(["betopenly", "novig"]);
+                  const visible = (sig.other_books ?? []).filter(
+                    (alt) => !HIDDEN_BOOKS.has(alt.sportsbook?.toLowerCase() ?? ""),
+                  );
+                  if (visible.length === 0) return null;
+                  return (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {visible.map((alt, i) => (
+                        <span
+                          key={i}
+                          className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-500"
+                        >
+                          {alt.sportsbook} {formatOdds(alt.book_odds)}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

@@ -75,10 +75,13 @@ TIER_LEAN = 40
 # Star ratings.
 STAR_RATINGS = {5: TIER_STRONG, 4: TIER_SIGNAL, 3: TIER_LEAN}
 
-# Odds range for signals: only fire on -160 to +200 (inclusive).
-# Targets ~56% win-rate plays, not longshots.
+# Odds range for signals: only fire on -160 to +150 (inclusive).
+# Targets high win-rate plays, not longshots or heavy favorites.
 SIGNAL_MIN_ODDS = -160
-SIGNAL_MAX_ODDS = 200
+SIGNAL_MAX_ODDS = 150
+
+# Sportsbooks to never include in signals (removed from scanner, stale data).
+_BLOCKED_SIGNAL_BOOKS: set[str] = {"betopenly"}
 
 # Flat bet amount for all signals ($100).
 SIGNAL_BET_AMOUNT = 100.0
@@ -784,7 +787,11 @@ class RTMSignal:
         all_signals: list[dict] = []
 
         for opp in opportunities:
-            # Filter: only fire signals in the -160 to +200 odds window.
+            # Skip blocked sportsbooks.
+            if opp.get("sportsbook", "") in _BLOCKED_SIGNAL_BOOKS:
+                continue
+
+            # Filter: only fire signals in the allowed odds window.
             odds_val = opp.get("book_odds", 0)
             try:
                 odds_val = int(odds_val)
@@ -827,9 +834,11 @@ class RTMSignal:
             # Sort by signal_strength desc, pick best.
             group.sort(key=lambda s: s["signal_strength"], reverse=True)
             best = group[0]
-            # Attach other books (excluding the featured sportsbook).
+            # Attach other books (excluding featured book and blocked books).
             other_books = []
             for alt in group[1:]:
+                if alt["sportsbook"] in _BLOCKED_SIGNAL_BOOKS:
+                    continue
                 other_books.append({
                     "sportsbook": alt["sportsbook"],
                     "book_odds": alt["book_odds"],

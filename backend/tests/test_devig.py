@@ -163,8 +163,8 @@ class TestDevigBest:
 # ---------------------------------------------------------------------------
 
 class TestSourceHierarchy:
-    def test_three_sharps_avg(self) -> None:
-        """All three sharp books → sharp_avg (3), HIGH confidence."""
+    def test_pinnacle_present_with_others(self) -> None:
+        """Pinnacle present among many books → pinnacle only, HIGH."""
         books = {
             "pinnacle": (-150, 130),
             "circasports": (-152, 128),
@@ -172,26 +172,14 @@ class TestSourceHierarchy:
             "draftkings": (-155, 125),
         }
         selected, source, confidence, tier = select_devig_source(books)
-        assert source == "sharp_avg (3)"
+        assert source == "pinnacle"
         assert confidence == "HIGH"
         assert tier == 1
-        assert len(selected) == 3
+        assert len(selected) == 1
+        assert selected[0].key == "pinnacle"
 
-    def test_two_sharps_avg(self) -> None:
-        """Two sharp books → sharp_avg (2), HIGH confidence."""
-        books = {
-            "pinnacle": (-150, 130),
-            "circasports": (-152, 128),
-            "draftkings": (-155, 125),
-        }
-        selected, source, confidence, tier = select_devig_source(books)
-        assert source == "sharp_avg (2)"
-        assert confidence == "HIGH"
-        assert tier == 1
-        assert len(selected) == 2
-
-    def test_single_sharp_pinnacle(self) -> None:
-        """Only Pinnacle → source='pinnacle', HIGH confidence (Tier 1)."""
+    def test_pinnacle_alone(self) -> None:
+        """Only Pinnacle → source='pinnacle', HIGH confidence."""
         books = {
             "pinnacle": (-150, 130),
             "novig": (-152, 128),
@@ -203,81 +191,53 @@ class TestSourceHierarchy:
         assert tier == 1
         assert len(selected) == 1
 
-    def test_single_sharp_circa(self) -> None:
-        """Only Circa → source='circasports', HIGH confidence (Tier 1)."""
+    def test_no_pinnacle_returns_none(self) -> None:
+        """Without Pinnacle → no source selected."""
         books = {
             "circasports": (-153, 129),
-            "novig": (-152, 128),
+            "draftkings": (-155, 125),
             "espnbet": (-155, 125),
         }
         selected, source, confidence, tier = select_devig_source(books)
-        assert source == "circasports"
-        assert confidence == "HIGH"
-        assert tier == 1
-        assert len(selected) == 1
+        assert selected == []
+        assert source == "none"
+        assert tier == 0
 
-    def test_tier2_single_book(self) -> None:
-        """Only DraftKings (no Tier 1) → market_sharp (DraftKings), MEDIUM."""
-        books = {
-            "draftkings": (-155, 125),
-            "espnbet": (-158, 130),
-        }
-        selected, source, confidence, tier = select_devig_source(books)
-        assert source == "market_sharp (DraftKings)"
-        assert confidence == "MEDIUM"
-        assert tier == 2
-        assert len(selected) == 1
-
-    def test_tier2_multiple_books(self) -> None:
-        """DK + FD (no Tier 1) → market_sharp_avg (2), MEDIUM."""
+    def test_no_pinnacle_tier2_only(self) -> None:
+        """Only Tier 2 books (no Pinnacle) → no source selected."""
         books = {
             "draftkings": (-155, 125),
             "fanduel": (-160, 135),
             "espnbet": (-158, 130),
         }
         selected, source, confidence, tier = select_devig_source(books)
-        assert source == "market_sharp_avg (2)"
-        assert confidence == "MEDIUM"
-        assert tier == 2
-        assert len(selected) == 2
+        assert selected == []
+        assert source == "none"
+        assert tier == 0
 
-    def test_exchanges_when_no_sharps_3_books(self) -> None:
-        """3+ exchange books (no Tier 1 or 2) → exchange_consensus, LOW."""
+    def test_no_pinnacle_exchanges_only(self) -> None:
+        """Only exchanges (no Pinnacle) → no source selected."""
         books = {
             "novig": (-152, 128),
             "betfair_ex_eu": (-148, 126),
             "smarkets": (-150, 128),
-            "espnbet": (-155, 125),
         }
         selected, source, confidence, tier = select_devig_source(books)
-        assert source == "exchange_consensus"
-        assert confidence == "LOW"
-        assert tier == 3
-        assert len(selected) >= 3
+        assert selected == []
+        assert source == "none"
+        assert tier == 0
 
-    def test_exchanges_below_minimum_falls_through(self) -> None:
-        """Fewer than 3 exchange books, no Tier 1/2 → market_average."""
-        books = {
-            "novig": (-152, 128),
-            "betfair_ex_eu": (-148, 126),
-            "espnbet": (-155, 125),
-        }
-        selected, source, confidence, tier = select_devig_source(books)
-        assert source == "market_average"
-        assert confidence == "LOW"
-        assert tier == 4
-
-    def test_market_avg_last_resort(self) -> None:
-        """Only soft books → market_average, LOW."""
+    def test_no_pinnacle_soft_books_only(self) -> None:
+        """Only soft books (no Pinnacle) → no source selected."""
         books = {
             "espnbet": (-158, 130),
             "betmgm": (-155, 125),
             "mybookieag": (-160, 135),
         }
         selected, source, confidence, tier = select_devig_source(books)
-        assert source == "market_average"
-        assert confidence == "LOW"
-        assert tier == 4
+        assert selected == []
+        assert source == "none"
+        assert tier == 0
 
     def test_empty_books(self) -> None:
         selected, source, confidence, tier = select_devig_source({})
@@ -291,7 +251,8 @@ class TestSourceHierarchy:
 # ---------------------------------------------------------------------------
 
 class TestDevigMarket:
-    def test_sharp_avg_result(self) -> None:
+    def test_pinnacle_result(self) -> None:
+        """Pinnacle present → HIGH confidence, source='pinnacle'."""
         books = {
             "pinnacle": (-150, 130),
             "circasports": (-152, 128),
@@ -300,12 +261,12 @@ class TestDevigMarket:
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "HIGH"
-        assert result.source == "sharp_avg (2)"
-        assert result.source_keys == frozenset({"pinnacle", "circasports"})
+        assert result.source == "pinnacle"
+        assert result.source_keys == frozenset({"pinnacle"})
         assert_sums_to_one(result.true_prob_a, result.true_prob_b)
         assert result.overround > 1.0
 
-    def test_single_sharp_result(self) -> None:
+    def test_pinnacle_only_result(self) -> None:
         books = {"pinnacle": (-150, 130), "espnbet": (-155, 125)}
         result = devig_market(books)
         assert result is not None
@@ -315,30 +276,15 @@ class TestDevigMarket:
         assert_sums_to_one(result.true_prob_a, result.true_prob_b)
         assert result.overround > 1.0
 
-    def test_tier2_result(self) -> None:
-        """DK + FD (no Tier 1) → MEDIUM confidence, source_keys excludes them."""
+    def test_no_pinnacle_returns_none(self) -> None:
+        """Without Pinnacle → None (no devigging possible)."""
         books = {
             "draftkings": (-155, 125),
             "fanduel": (-160, 135),
             "espnbet": (-158, 130),
         }
         result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "MEDIUM"
-        assert result.source == "market_sharp_avg (2)"
-        assert result.source_keys == frozenset({"draftkings", "fanduel"})
-        assert_sums_to_one(result.true_prob_a, result.true_prob_b)
-
-    def test_market_avg_result(self) -> None:
-        books = {
-            "espnbet": (-155, 125),
-            "betmgm": (-160, 135),
-        }
-        result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "LOW"
-        assert result.source == "market_average"
-        assert_sums_to_one(result.true_prob_a, result.true_prob_b)
+        assert result is None
 
     def test_empty_returns_none(self) -> None:
         result = devig_market({})

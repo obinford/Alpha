@@ -146,39 +146,36 @@ class TestEdgeConfidence:
         assert result is not None
         assert result.confidence == "HIGH"
 
-    def test_two_sharps_high_confidence(self) -> None:
+    def test_pinnacle_with_others_high_confidence(self) -> None:
+        """Pinnacle present with other books → HIGH confidence."""
         books = {"pinnacle": (-150, 130), "circasports": (-148, 128)}
         result = devig_market(books)
         assert result is not None
         assert result.confidence == "HIGH"
 
-    def test_sharp_circa_only_high(self) -> None:
-        """Circa (Tier 1) + BetOnline (Tier 2) → Tier 1 selected, HIGH."""
+    def test_no_pinnacle_returns_none(self) -> None:
+        """Without Pinnacle → no devigging (Pinnacle-only policy)."""
         books = {"circasports": (-150, 130), "betonlineag": (-148, 128)}
         result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "HIGH"  # Circa is Tier 1
+        assert result is None
 
-    def test_tier2_medium_confidence(self) -> None:
-        """DK + FD (Tier 2, no Tier 1) → MEDIUM confidence."""
+    def test_tier2_only_returns_none(self) -> None:
+        """DK + FD (no Pinnacle) → None."""
         books = {"draftkings": (-155, 125), "fanduel": (-160, 135)}
         result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "MEDIUM"
+        assert result is None
 
-    def test_exchange_low_confidence(self) -> None:
-        """Single exchange (no Tier 1/2) → falls to market_average, LOW."""
+    def test_exchange_only_returns_none(self) -> None:
+        """Single exchange (no Pinnacle) → None."""
         books = {"novig": (-150, 130)}
         result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "LOW"
+        assert result is None
 
-    def test_market_avg_low_confidence(self) -> None:
-        """Only soft books → market_average, LOW confidence."""
+    def test_soft_books_only_returns_none(self) -> None:
+        """Only soft books (no Pinnacle) → None."""
         books = {"espnbet": (-155, 125), "betmgm": (-160, 135)}
         result = devig_market(books)
-        assert result is not None
-        assert result.confidence == "LOW"
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

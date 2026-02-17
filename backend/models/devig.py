@@ -308,11 +308,9 @@ def select_devig_source(
 ) -> tuple[list[BookOdds], str, Confidence, int]:
     """Select the best devig source from available bookmakers.
 
-    Hierarchy:
-      Tier 1 (HIGH): Pinnacle, Circa, Bookmaker — 2-3 avg, 1 alone
-      Tier 2 (MEDIUM): DraftKings, FanDuel, BetOnline — only if 0 Tier 1
-      Tier 3 (LOW): Exchange consensus (3+ books) — only if 0 Tier 1+2
-      Tier 4 (LOW): Market average of all books — last resort
+    Pinnacle-only: if Pinnacle doesn't have odds for a market, no true
+    probability is calculated and no EV opportunities are generated.
+    This ensures all devigging uses the sharpest possible source.
 
     Args:
         available_books: {book_key: (odds_a, odds_b)} for all books.
@@ -320,58 +318,10 @@ def select_devig_source(
     Returns:
         (selected_books, source_label, confidence, tier)
     """
-    # --- Tier 1: True sharps (Pinnacle, Circa, Bookmaker) ---
-    t1 = []
-    for key in _TIER1_KEYS:
-        if key in available_books:
-            odds_a, odds_b = available_books[key]
-            t1.append(BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.8)))
-    if t1:
-        n = len(t1)
-        if n >= 2:
-            source = f"sharp_avg ({n})"
-        else:
-            source = t1[0].key
-        confidence: Confidence = "HIGH" if n >= 2 else "HIGH"
-        return t1, source, confidence, 1
-
-    # --- Tier 2: Market-maker sharp fallback (DK, FD, BOL) ---
-    t2 = []
-    for key in _TIER2_KEYS:
-        if key in available_books:
-            odds_a, odds_b = available_books[key]
-            t2.append(BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.6)))
-    if t2:
-        n = len(t2)
-        if n >= 2:
-            source = f"market_sharp_avg ({n})"
-        else:
-            name = _TIER2_NAMES.get(t2[0].key, t2[0].key)
-            source = f"market_sharp ({name})"
-        return t2, source, "MEDIUM", 2
-
-    # --- Tier 3: Exchange consensus (3+ books required) ---
-    t3 = []
-    for key in _EXCHANGE_KEYS:
-        if key in available_books:
-            odds_a, odds_b = available_books[key]
-            t3.append(BookOdds(key, odds_a, odds_b, _SHARP_WEIGHTS.get(key, 0.85)))
-    if len(t3) >= 3:
-        source = "exchange_consensus"
-        return t3, source, "LOW", 3
-    elif t3:
-        print(
-            f"  [DEVIG] Skipping exchange_consensus — only "
-            f"{len(t3)} exchange books (need 3+)"
-        )
-
-    # --- Tier 4: Market average of all books ---
-    t4 = []
-    for key, (odds_a, odds_b) in available_books.items():
-        t4.append(BookOdds(key, odds_a, odds_b, 0.3))
-    if t4:
-        source = "market_average"
-        return t4, source, "LOW", 4
+    if "pinnacle" in available_books:
+        odds_a, odds_b = available_books["pinnacle"]
+        bo = BookOdds("pinnacle", odds_a, odds_b, 1.0)
+        return [bo], "pinnacle", "HIGH", 1
 
     return [], "none", "LOW", 0
 
