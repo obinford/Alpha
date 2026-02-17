@@ -248,79 +248,146 @@ def fetch_teams(year: int | None = None) -> list[dict[str, Any]]:
 # Team name matching
 # ---------------------------------------------------------------------------
 
-# Manual overrides for known name mismatches between KenPom and The Odds API.
-# Format: KenPom name -> The Odds API name
+# Manual overrides for known name mismatches between The Odds API and KenPom.
+# Format: Odds API name -> KenPom name
+# Primary direction: the scanner passes Odds API team names, and we need to
+# resolve them to KenPom names for fanmatch/ratings lookups.
 _MANUAL_NAME_OVERRIDES: dict[str, str] = {
-    "UConn": "Connecticut Huskies",
-    "St. John's": "St. John's Red Storm",
-    "Saint Mary's": "Saint Mary's Gaels",
-    "Miami FL": "Miami Hurricanes",
-    "Miami OH": "Miami (OH) RedHawks",
-    "USC": "USC Trojans",
-    "LSU": "LSU Tigers",
-    "UCLA": "UCLA Bruins",
-    "UNC": "North Carolina Tar Heels",
-    "UNLV": "UNLV Rebels",
-    "VCU": "VCU Rams",
-    "UCF": "UCF Knights",
-    "SMU": "SMU Mustangs",
-    "BYU": "BYU Cougars",
-    "TCU": "TCU Horned Frogs",
-    "Ole Miss": "Ole Miss Rebels",
-    "Mississippi St.": "Mississippi State Bulldogs",
-    "Penn St.": "Penn State Nittany Lions",
-    "Ohio St.": "Ohio State Buckeyes",
-    "Michigan St.": "Michigan State Spartans",
-    "Iowa St.": "Iowa State Cyclones",
-    "Kansas St.": "Kansas State Wildcats",
-    "Oklahoma St.": "Oklahoma State Cowboys",
-    "Arizona St.": "Arizona State Sun Devils",
-    "Oregon St.": "Oregon State Beavers",
-    "Washington St.": "Washington State Cougars",
-    "Colorado St.": "Colorado State Rams",
-    "Boise St.": "Boise State Broncos",
-    "Fresno St.": "Fresno State Bulldogs",
-    "San Diego St.": "San Diego St Aztecs",
-    "San Jose St.": "San Jose State Spartans",
-    "N.C. State": "NC State Wolfpack",
-    "Florida St.": "Florida State Seminoles",
-    "Georgia Tech": "Georgia Tech Yellow Jackets",
-    "Virginia Tech": "Virginia Tech Hokies",
-    "Boston College": "Boston College Eagles",
-    "Wake Forest": "Wake Forest Demon Deacons",
-    "West Virginia": "West Virginia Mountaineers",
-    "Pitt": "Pittsburgh Panthers",
-    "Louisville": "Louisville Cardinals",
-    "Gonzaga": "Gonzaga Bulldogs",
-    "Villanova": "Villanova Wildcats",
-    "Creighton": "Creighton Bluejays",
-    "Marquette": "Marquette Golden Eagles",
-    "Xavier": "Xavier Musketeers",
+    "Connecticut Huskies": "UConn",
+    "St. John's Red Storm": "St. John's",
+    "Saint Mary's Gaels": "Saint Mary's",
+    "Miami Hurricanes": "Miami FL",
+    "Miami (OH) RedHawks": "Miami OH",
+    "USC Trojans": "USC",
+    "LSU Tigers": "LSU",
+    "UCLA Bruins": "UCLA",
+    "North Carolina Tar Heels": "UNC",
+    "UNLV Rebels": "UNLV",
+    "VCU Rams": "VCU",
+    "UCF Knights": "UCF",
+    "SMU Mustangs": "SMU",
+    "BYU Cougars": "BYU",
+    "TCU Horned Frogs": "TCU",
+    "Ole Miss Rebels": "Ole Miss",
+    "Mississippi State Bulldogs": "Mississippi St.",
+    "Penn State Nittany Lions": "Penn St.",
+    "Ohio State Buckeyes": "Ohio St.",
+    "Michigan State Spartans": "Michigan St.",
+    "Iowa State Cyclones": "Iowa St.",
+    "Kansas State Wildcats": "Kansas St.",
+    "Oklahoma State Cowboys": "Oklahoma St.",
+    "Arizona State Sun Devils": "Arizona St.",
+    "Oregon State Beavers": "Oregon St.",
+    "Washington State Cougars": "Washington St.",
+    "Colorado State Rams": "Colorado St.",
+    "Boise State Broncos": "Boise St.",
+    "Fresno State Bulldogs": "Fresno St.",
+    "San Diego St Aztecs": "San Diego St.",
+    "San Jose State Spartans": "San Jose St.",
+    "NC State Wolfpack": "N.C. State",
+    "Florida State Seminoles": "Florida St.",
+    "Georgia Tech Yellow Jackets": "Georgia Tech",
+    "Virginia Tech Hokies": "Virginia Tech",
+    "Boston College Eagles": "Boston College",
+    "Wake Forest Demon Deacons": "Wake Forest",
+    "West Virginia Mountaineers": "West Virginia",
+    "Pittsburgh Panthers": "Pitt",
+    "Louisville Cardinals": "Louisville",
+    "Gonzaga Bulldogs": "Gonzaga",
+    "Villanova Wildcats": "Villanova",
+    "Creighton Bluejays": "Creighton",
+    "Marquette Golden Eagles": "Marquette",
+    "Xavier Musketeers": "Xavier",
     # --- 20 unmatched teams from Odds API alignment ---
-    "Charleston Southern": "Charleston Southern Buccaneers",
-    "Buffalo": "Buffalo Bulls",
-    "Central Michigan": "Central Michigan Chippewas",
-    "Akron": "Akron Zips",
-    "Ball State": "Ball State Cardinals",
-    "Bowling Green": "Bowling Green Falcons",
-    "Kent St.": "Kent State Golden Flashes",
-    "Massachusetts": "Massachusetts Minutemen",
-    "Saint Louis": "Saint Louis Billikens",
-    "Wisconsin": "Wisconsin Badgers",
-    "Southeast Missouri St.": "SE Missouri St Redhawks",
-    "New Mexico": "New Mexico Lobos",
-    "Air Force": "Air Force Falcons",
-    "Iowa": "Iowa Hawkeyes",
-    "Nebraska": "Nebraska Cornhuskers",
-    "Grand Canyon": "Grand Canyon Antelopes",
-    "Nevada": "Nevada Wolf Pack",
-    "Minnesota": "Minnesota Golden Gophers",
+    "Charleston Southern Buccaneers": "Charleston Southern",
+    "Buffalo Bulls": "Buffalo",
+    "Central Michigan Chippewas": "Central Michigan",
+    "Akron Zips": "Akron",
+    "Ball State Cardinals": "Ball State",
+    "Bowling Green Falcons": "Bowling Green",
+    "Kent State Golden Flashes": "Kent St.",
+    "Massachusetts Minutemen": "Massachusetts",
+    "Saint Louis Billikens": "Saint Louis",
+    "Wisconsin Badgers": "Wisconsin",
+    "SE Missouri St Redhawks": "Southeast Missouri St.",
+    "New Mexico Lobos": "New Mexico",
+    "Air Force Falcons": "Air Force",
+    "Iowa Hawkeyes": "Iowa",
+    "Nebraska Cornhuskers": "Nebraska",
+    "Grand Canyon Antelopes": "Grand Canyon",
+    "Nevada Wolf Pack": "Nevada",
+    "Minnesota Golden Gophers": "Minnesota",
+}
+
+# Reverse direction: KenPom name -> Odds API name (auto-built).
+_REVERSE_OVERRIDES: dict[str, str] = {v: k for k, v in _MANUAL_NAME_OVERRIDES.items()}
+
+# Common mascot/suffix words to strip when trying to match team names.
+_MASCOT_WORDS: set[str] = {
+    "bulldogs", "tigers", "bears", "eagles", "hawks", "wildcats", "cougars",
+    "panthers", "lions", "wolves", "huskies", "mustangs", "rebels", "knights",
+    "aggies", "bruins", "trojans", "cardinals", "falcons", "hornets",
+    "owls", "rams", "cowboys", "beavers", "ducks", "gators", "seminoles",
+    "hurricanes", "cavaliers", "demon deacons", "yellow jackets", "hokies",
+    "mountaineers", "cyclones", "jayhawks", "sooners", "longhorns",
+    "wolverines", "spartans", "buckeyes", "nittany lions", "badgers",
+    "hawkeyes", "cornhuskers", "golden gophers", "boilermakers",
+    "hoosiers", "fighting illini", "terrapins", "scarlet knights",
+    "buccaneers", "chippewas", "zips", "redhawks", "lobos", "antelopes",
+    "wolf pack", "billikens", "minutemen", "golden flashes", "aztecs",
+    "red storm", "gaels", "musketeers", "bluejays", "golden eagles",
+    "tar heels", "wolfpack", "sun devils", "broncos",
 }
 
 
 def _normalize_name(name: str) -> str:
     """Normalize a team name for fuzzy matching."""
     return name.strip().lower().replace(".", "").replace("'", "").replace("-", " ")
+
+
+def _strip_mascot(name: str) -> str:
+    """Strip common mascot words from a team name.
+
+    "Wisconsin Badgers" -> "Wisconsin"
+    "Kent State Golden Flashes" -> "Kent State"
+    """
+    lowered = name.strip().lower()
+    # Try multi-word mascots first (e.g. "golden gophers", "nittany lions").
+    for mascot in sorted(_MASCOT_WORDS, key=len, reverse=True):
+        if lowered.endswith(" " + mascot):
+            stripped = name[: len(name) - len(mascot)].strip()
+            if stripped:
+                return stripped
+    return name
+
+
+def _resolve_odds_api_to_kenpom(odds_api_name: str) -> str | None:
+    """Resolve an Odds API team name to a KenPom name.
+
+    Tries in order:
+      1. Direct override lookup (full Odds API name)
+      2. Strip mascot, then look up the base name
+    Returns the KenPom name or None if no match.
+    """
+    # 1. Direct override.
+    if odds_api_name in _MANUAL_NAME_OVERRIDES:
+        return _MANUAL_NAME_OVERRIDES[odds_api_name]
+
+    # 2. Strip mascot and check if the base name is a KenPom name
+    #    (it might be an override value, or might match directly).
+    stripped = _strip_mascot(odds_api_name)
+    if stripped != odds_api_name:
+        # Check if the stripped name is itself a KenPom name (override value).
+        kenpom_names_set = set(_MANUAL_NAME_OVERRIDES.values())
+        if stripped in kenpom_names_set:
+            return stripped
+        # Also check normalized.
+        stripped_lower = stripped.lower()
+        for kp_name in kenpom_names_set:
+            if kp_name.lower() == stripped_lower:
+                return kp_name
+
+    return None
 
 
 def _fuzzy_match(kenpom_name: str, odds_api_names: list[str], threshold: float = 0.55) -> str | None:
@@ -352,10 +419,10 @@ def _fuzzy_match(kenpom_name: str, odds_api_names: list[str], threshold: float =
 
 
 def build_name_map(odds_api_teams: list[str]) -> dict[str, str]:
-    """Build a mapping from KenPom team names to The Odds API team names.
+    """Build a bidirectional mapping between KenPom and Odds API team names.
 
     Uses the teams endpoint for the full list of KenPom names, then
-    applies manual overrides and fuzzy matching.
+    applies manual overrides (now Odds API -> KenPom) and fuzzy matching.
 
     Args:
         odds_api_teams: List of team names as they appear in The Odds API.
@@ -373,9 +440,9 @@ def build_name_map(odds_api_teams: list[str]) -> dict[str, str]:
     name_map: dict[str, str] = {}
 
     for kp_name in kenpom_names:
-        # 1. Manual override
-        if kp_name in _MANUAL_NAME_OVERRIDES:
-            name_map[kp_name] = _MANUAL_NAME_OVERRIDES[kp_name]
+        # 1. Reverse override lookup (KenPom -> Odds API via _REVERSE_OVERRIDES)
+        if kp_name in _REVERSE_OVERRIDES:
+            name_map[kp_name] = _REVERSE_OVERRIDES[kp_name]
             continue
 
         # 2. Exact match (case-insensitive)
@@ -404,9 +471,9 @@ def resolve_team_name(kenpom_name: str, odds_api_teams: list[str] | None = None)
 
     Falls back to the original name if no match is found.
     """
-    # Manual override first (fast path).
-    if kenpom_name in _MANUAL_NAME_OVERRIDES:
-        return _MANUAL_NAME_OVERRIDES[kenpom_name]
+    # Reverse override: KenPom -> Odds API.
+    if kenpom_name in _REVERSE_OVERRIDES:
+        return _REVERSE_OVERRIDES[kenpom_name]
 
     # Use cached name map if available.
     if _cache._name_map is not None:
@@ -450,23 +517,36 @@ def get_fanmatch_prediction(
     if odds_api_teams:
         build_name_map(odds_api_teams)
 
-    # Try to match by resolving Odds API names back to KenPom names,
-    # or by matching KenPom names to Odds API names.
+    # Resolve input Odds API team names to KenPom names for matching.
+    home_as_kp = _resolve_odds_api_to_kenpom(home_team)
+    away_as_kp = _resolve_odds_api_to_kenpom(away_team)
+    # Also try mascot-stripped version as a fallback.
+    home_stripped = _strip_mascot(home_team)
+    away_stripped = _strip_mascot(away_team)
+
     for game in fanmatch_games:
         kp_home = game.get("Home", "")
         kp_visitor = game.get("Visitor", "")
 
-        # Resolve KenPom names to Odds API names.
+        # Resolve KenPom names to Odds API names (for reverse matching).
         resolved_home = resolve_team_name(kp_home, odds_api_teams)
         resolved_visitor = resolve_team_name(kp_visitor, odds_api_teams)
 
-        # Check for match (case-insensitive).
+        # Check for match using multiple strategies:
+        # 1. Resolved KenPom -> Odds API name matches input
+        # 2. Input resolved to KenPom name matches fanmatch KenPom name
+        # 3. Mascot-stripped input matches KenPom name
+        # 4. Raw KenPom name matches input (case-insensitive)
         home_match = (
             _normalize_name(resolved_home) == _normalize_name(home_team)
+            or (home_as_kp is not None and _normalize_name(kp_home) == _normalize_name(home_as_kp))
+            or _normalize_name(kp_home) == _normalize_name(home_stripped)
             or _normalize_name(kp_home) == _normalize_name(home_team)
         )
         away_match = (
             _normalize_name(resolved_visitor) == _normalize_name(away_team)
+            or (away_as_kp is not None and _normalize_name(kp_visitor) == _normalize_name(away_as_kp))
+            or _normalize_name(kp_visitor) == _normalize_name(away_stripped)
             or _normalize_name(kp_visitor) == _normalize_name(away_team)
         )
 
@@ -633,30 +713,51 @@ def _find_team_ratings(
     ratings_by_name: dict[str, dict[str, Any]],
     odds_api_teams: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Find ratings for a team by name, trying various resolution strategies."""
-    # Direct lookup.
+    """Find ratings for a team by name, trying various resolution strategies.
+
+    The team_name is typically an Odds API name.  We try:
+      1. Direct lookup (works if team_name IS a KenPom name)
+      2. Normalized lookup
+      3. Override: Odds API name -> KenPom name (direct dict lookup)
+      4. Mascot-stripped name
+      5. Cached name map reverse lookup
+      6. Fuzzy match as last resort
+    """
+    # 1. Direct lookup.
     if team_name in ratings_by_name:
         return ratings_by_name[team_name]
 
-    # Normalized lookup.
+    # 2. Normalized lookup.
     normalized = _normalize_name(team_name)
     if normalized in ratings_by_name:
         return ratings_by_name[normalized]
 
-    # Try reverse name map: odds_api_name -> kenpom_name.
+    # 3. Direct override: Odds API name -> KenPom name.
+    kp_name = _MANUAL_NAME_OVERRIDES.get(team_name)
+    if kp_name:
+        if kp_name in ratings_by_name:
+            return ratings_by_name[kp_name]
+        kp_normalized = _normalize_name(kp_name)
+        if kp_normalized in ratings_by_name:
+            return ratings_by_name[kp_normalized]
+
+    # 4. Strip mascot and try again.
+    stripped = _strip_mascot(team_name)
+    if stripped != team_name:
+        if stripped in ratings_by_name:
+            return ratings_by_name[stripped]
+        stripped_normalized = _normalize_name(stripped)
+        if stripped_normalized in ratings_by_name:
+            return ratings_by_name[stripped_normalized]
+
+    # 5. Cached name map reverse lookup (Odds API -> KenPom).
     if _cache._name_map:
         reverse_map = {v: k for k, v in _cache._name_map.items()}
         kp_name = reverse_map.get(team_name)
         if kp_name and kp_name in ratings_by_name:
             return ratings_by_name[kp_name]
 
-    # Try manual overrides in reverse.
-    reverse_overrides = {v: k for k, v in _MANUAL_NAME_OVERRIDES.items()}
-    kp_name = reverse_overrides.get(team_name)
-    if kp_name and kp_name in ratings_by_name:
-        return ratings_by_name[kp_name]
-
-    # Fuzzy match against all KenPom names in the ratings.
+    # 6. Fuzzy match against all KenPom names in the ratings.
     kp_names = [n for n in ratings_by_name if not n.islower() or " " in n]
     matched = _fuzzy_match(team_name, kp_names, threshold=0.6)
     if matched and matched in ratings_by_name:

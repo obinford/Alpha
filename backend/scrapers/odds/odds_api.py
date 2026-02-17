@@ -120,10 +120,16 @@ def fetch_odds(
     )
     resp.raise_for_status()
 
+    # Books that must never enter the pipeline — filtered at the parse
+    # layer so no downstream code can accidentally process them.
+    _BLOCKED_BOOK_KEYS: set[str] = {"betopenly"}
+
     games: list[Game] = []
     for g in resp.json():
         bookmakers: list[Bookmaker] = []
         for bk in g.get("bookmakers", []):
+            if bk.get("key", "") in _BLOCKED_BOOK_KEYS:
+                continue
             bk_markets: list[Market] = []
             for mkt in bk.get("markets", []):
                 outcomes = [

@@ -65,12 +65,27 @@ ALLOWED_BOOKS: set[str] = {
     "kalshi", "novig", "polymarket", "prophetx",
 }
 
+# Hardcoded blocklist — books that must NEVER appear in scan output,
+# opportunities, or devig calculations regardless of what The Odds API
+# returns.  Checked at parse time before any processing.
+BLOCKED_BOOKS: set[str] = {
+    "betopenly",
+}
+
 # Build fetch regions: base regions + eu (for Pinnacle).
 _FETCH_REGIONS = ODDS_API_REGIONS if "eu" in ODDS_API_REGIONS else f"{ODDS_API_REGIONS},eu"
 
 
+def _is_book_allowed(book_key: str) -> bool:
+    """Return True if a bookmaker should be processed.
+
+    A book must be in the whitelist AND not in the blocklist.
+    """
+    return book_key in ALLOWED_BOOKS and book_key not in BLOCKED_BOOKS
+
+
 def _filter_non_whitelisted_books(games: list[Game]) -> int:
-    """Remove bookmakers not in ALLOWED_BOOKS from game data.
+    """Remove bookmakers not in ALLOWED_BOOKS (or in BLOCKED_BOOKS) from game data.
 
     Mutates game.bookmakers in place.  Returns the total number of
     bookmakers removed across all games.
@@ -79,7 +94,7 @@ def _filter_non_whitelisted_books(games: list[Game]) -> int:
     for game in games:
         original = len(game.bookmakers)
         game.bookmakers = [
-            bk for bk in game.bookmakers if bk.key in ALLOWED_BOOKS
+            bk for bk in game.bookmakers if _is_book_allowed(bk.key)
         ]
         removed += original - len(game.bookmakers)
     return removed
@@ -158,9 +173,14 @@ def merge_prop_data(mainline_games: list[Game], prop_games: list[Game]) -> None:
         existing_keys = {m.key for bk in game.bookmakers for m in bk.markets}
         bk_map = {bk.key: bk for bk in game.bookmakers}
         for prop_bk in prop_game.bookmakers:
+            # Block explicitly blocked books from entering via prop merge.
+            if prop_bk.key in BLOCKED_BOOKS:
+                continue
             target_bk = bk_map.get(prop_bk.key)
             if target_bk is None:
-                game.bookmakers.append(prop_bk)
+                # Only add if the book passes the whitelist check.
+                if _is_book_allowed(prop_bk.key):
+                    game.bookmakers.append(prop_bk)
             else:
                 for mkt in prop_bk.markets:
                     if mkt.key not in existing_keys:
@@ -218,6 +238,8 @@ def _extract_market_odds_by_book(
     outcome_info: list | None = None
 
     for bk in game.bookmakers:
+        if bk.key in BLOCKED_BOOKS:
+            continue
         mkt = get_market(bk.markets, market_key)
         if mkt is None or len(mkt.outcomes) != 2:
             continue
@@ -276,7 +298,7 @@ def scan_game(game: Game) -> list[EVOpportunity]:
             continue
 
         for bk in game.bookmakers:
-            if bk.key in source_keys:
+            if bk.key in source_keys or bk.key in BLOCKED_BOOKS:
                 continue
 
             book_market = get_market(bk.markets, market_key)
@@ -369,6 +391,8 @@ def _build_prop_devig_map(
     pair_by_book: dict[tuple[str | None, float | None], dict[str, tuple[int, int]]] = {}
 
     for bk in game.bookmakers:
+        if bk.key in BLOCKED_BOOKS:
+            continue
         mkt = get_market(bk.markets, prop_market_key)
         if mkt is None:
             continue
@@ -435,7 +459,7 @@ def scan_game_props(game: Game) -> list[EVOpportunity]:
             continue
 
         for bk in game.bookmakers:
-            if bk.key in source_keys:
+            if bk.key in source_keys or bk.key in BLOCKED_BOOKS:
                 continue
 
             book_market = get_market(bk.markets, prop_market_key)
