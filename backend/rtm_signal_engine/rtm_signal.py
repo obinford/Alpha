@@ -786,6 +786,11 @@ class RTMSignal:
         game_projs = game_projections or {}
         all_signals: list[dict] = []
 
+        # Diagnostic counters for CBB projection flow.
+        _cbb_total = 0
+        _cbb_matched = 0
+        _cbb_proj_nonzero = 0
+
         for opp in opportunities:
             # Skip blocked sportsbooks.
             if opp.get("sportsbook", "") in _BLOCKED_SIGNAL_BOOKS:
@@ -818,9 +823,38 @@ class RTMSignal:
             # Look up game-level projection for CBB.
             game_proj = game_projs.get(opp.get("game_id", ""))
 
+            # Track CBB projection matching for diagnostics.
+            opp_sport = (opp.get("games") or {}).get("sport", opp.get("sport", ""))
+            if opp_sport == "basketball_ncaab" and not opp.get("market_type", "").startswith("player_"):
+                _cbb_total += 1
+                if game_proj is not None:
+                    _cbb_matched += 1
+
             signal = self.score_opportunity(opp, proj, game_proj)
             if signal:
+                if signal.get("sport") == "basketball_ncaab" and signal.get("projection_score", 0) > 0:
+                    _cbb_proj_nonzero += 1
                 all_signals.append(signal)
+
+        # Print CBB projection diagnostics.
+        if game_projs:
+            print(
+                f"  [KENPOM] Signal engine: {len(game_projs)} projections received | "
+                f"{_cbb_matched}/{_cbb_total} CBB opps matched a projection | "
+                f"{_cbb_proj_nonzero} signals with Proj>0"
+            )
+            if _cbb_total > 0 and _cbb_matched == 0:
+                # Debug: show sample game_ids to diagnose key mismatch.
+                sample_proj_keys = list(game_projs.keys())[:3]
+                sample_opp_ids = [
+                    o.get("game_id", "")
+                    for o in opportunities
+                    if (o.get("games") or {}).get("sport") == "basketball_ncaab"
+                ][:3]
+                print(
+                    f"  [KENPOM] KEY MISMATCH — projection keys: {sample_proj_keys} | "
+                    f"opp game_ids: {sample_opp_ids}"
+                )
 
         # Deduplicate: keep the strongest signal per (game_id, market_type, side).
         # Collect all books for each play to populate other_books.
