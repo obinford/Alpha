@@ -786,3 +786,97 @@ def clear_cache() -> None:
     """Clear all cached KenPom data. Useful for testing."""
     global _cache
     _cache = _Cache()
+
+
+# ---------------------------------------------------------------------------
+# KenPomClient — class wrapper expected by the scanner
+# ---------------------------------------------------------------------------
+
+class KenPomClient:
+    """Client interface for KenPom data used by the odds scanner.
+
+    Wraps the module-level functions so the scanner can import and
+    instantiate a single object:
+
+        from intelligence.kenpom import KenPomClient
+        kenpom = KenPomClient()
+        proj = kenpom.get_projection("Iowa Hawkeyes", "Wisconsin Badgers")
+    """
+
+    def __init__(self, odds_api_teams: list[str] | None = None) -> None:
+        self._odds_api_teams = odds_api_teams or []
+
+    def set_odds_api_teams(self, teams: list[str]) -> None:
+        """Update the list of Odds API team names for name resolution."""
+        self._odds_api_teams = teams
+
+    def fetch_ratings(self, year: int | None = None) -> list[dict[str, Any]]:
+        """Fetch team efficiency ratings."""
+        return fetch_ratings(year)
+
+    def fetch_fanmatch(self, target_date: date | None = None) -> list[dict[str, Any]]:
+        """Fetch fanmatch predictions for a specific date."""
+        return fetch_fanmatch(target_date)
+
+    def fetch_fanmatch_today_tomorrow(self) -> list[dict[str, Any]]:
+        """Fetch fanmatch for today and tomorrow, combined."""
+        return fetch_fanmatch_today_tomorrow()
+
+    def fetch_teams(self, year: int | None = None) -> list[dict[str, Any]]:
+        """Fetch team metadata."""
+        return fetch_teams(year)
+
+    def get_projection(
+        self,
+        home_team: str,
+        away_team: str,
+        odds_api_teams: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Get the best available KenPom projection for a game.
+
+        Tries fanmatch first, then falls back to ratings.
+        """
+        teams = odds_api_teams or self._odds_api_teams or None
+        return get_projection(home_team, away_team, teams)
+
+    def get_fanmatch_prediction(
+        self,
+        home_team: str,
+        away_team: str,
+        odds_api_teams: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Look up KenPom's fanmatch prediction for a game."""
+        teams = odds_api_teams or self._odds_api_teams or None
+        return get_fanmatch_prediction(home_team, away_team, teams)
+
+    def get_ratings_projection(
+        self,
+        home_team: str,
+        away_team: str,
+        odds_api_teams: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Calculate a projection from KenPom ratings."""
+        teams = odds_api_teams or self._odds_api_teams or None
+        return get_ratings_projection(home_team, away_team, teams)
+
+    def get_team_rating(
+        self,
+        team_name: str,
+        odds_api_teams: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Get KenPom ratings for a single team."""
+        teams = odds_api_teams or self._odds_api_teams or None
+        return get_team_rating(team_name, teams)
+
+    def build_name_map(self, odds_api_teams: list[str] | None = None) -> dict[str, str]:
+        """Build the KenPom <-> Odds API team name mapping."""
+        teams = odds_api_teams or self._odds_api_teams or []
+        return build_name_map(teams)
+
+    def resolve_team_name(self, kenpom_name: str) -> str:
+        """Resolve a KenPom team name to its Odds API equivalent."""
+        return resolve_team_name(kenpom_name, self._odds_api_teams or None)
+
+    def clear_cache(self) -> None:
+        """Clear all cached data."""
+        clear_cache()
