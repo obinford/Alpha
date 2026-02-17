@@ -137,7 +137,7 @@ SHARP_BOOKS = ["pinnacle", "circasports", "bookmaker"]
 #   us2   — BallyBet, BetAnySports, BetParx, ESPN Bet, Fliff, Hard Rock, ReBet
 #   eu    — Pinnacle, 1xBet, 888sport, Betfair Exchange, BetVictor, Betway,
 #           Matchbook, Marathon Bet  (requires $59+ plan)
-#   us_ex — Novig, Kalshi, Polymarket, BetOpenly, ProphetX
+#   us_ex — Novig, Kalshi, Polymarket, ProphetX
 #   uk    — Betfair Exchange, Paddy Power, William Hill, Sky Bet, Smarkets
 #
 # Credit cost per API call = 1 request regardless of how many regions.

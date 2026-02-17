@@ -46,7 +46,6 @@ BOOK_REGISTRY: dict[str, BookInfo] = {
     "betfair_ex_eu": {"name": "Betfair Exchange EU", "tier": "exchange", "region": "eu", "weight": 0.9},
     "smarkets": {"name": "Smarkets", "tier": "exchange", "region": "uk", "weight": 0.85},
     "matchbook": {"name": "Matchbook", "tier": "exchange", "region": "eu", "weight": 0.85},
-    "betopenly": {"name": "BetOpenly", "tier": "exchange", "region": "us_ex", "weight": 0.7},
     "prophetx": {"name": "ProphetX", "tier": "exchange", "region": "us_ex", "weight": 0.6},
     "kalshi": {"name": "Kalshi", "tier": "exchange", "region": "us_ex", "weight": 0.5},
     "polymarket": {"name": "Polymarket", "tier": "exchange", "region": "us_ex", "weight": 0.4},

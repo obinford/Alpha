@@ -62,7 +62,7 @@ ALLOWED_BOOKS: set[str] = {
     # US2 soft
     "ballybet", "betparx", "espnbet", "fliff", "hardrockbet", "rebet",
     # US exchanges
-    "betopenly", "kalshi", "novig", "polymarket", "prophetx",
+    "kalshi", "novig", "polymarket", "prophetx",
 }
 
 # Build fetch regions: base regions + eu (for Pinnacle).
