@@ -16,6 +16,7 @@ interface Signal {
   market_type: string;
   side: string;
   player_name: string | null;
+  prop_line: number | null;
   sportsbook: string;
   book_odds: number;
   signal_strength: number;
@@ -37,16 +38,41 @@ interface Signal {
   other_books?: { sportsbook: string; book_odds: number; ev_pct: number }[];
 }
 
+interface Game {
+  game_id: string;
+  sport: string;
+  home_team: string;
+  away_team: string;
+  start_time: string;
+}
+
+interface Opportunity {
+  id: number;
+  game_id: string;
+  sportsbook: string;
+  market_type: string;
+  side: string;
+  book_odds: number;
+  book_implied_prob: number;
+  true_prob: number;
+  ev_percentage: number;
+  kelly_fraction: number;
+  recommended_units: number;
+  timestamp: string;
+  status: string;
+  games: Game;
+}
+
 // ---------------------------------------------------------------------------
 // Score explanation content
 // ---------------------------------------------------------------------------
 
 const SCORE_EXPLANATIONS: Record<string, string> = {
-  EV: "Measures how much positive expected value this bet has compared to the true probability derived from Pinnacle's devigged line. Higher means more mathematical edge. Score of 80+ means strong value, 50-79 moderate, below 50 marginal.",
+  EV: "Measures how much positive expected value this bet has compared to the true probability derived from Pinnacle's devigged line. Higher means more mathematical edge. Score of 80+ means strong value, 50\u201179 moderate, below 50 marginal.",
   Steam:
     "Detects sharp money movement by tracking line changes across books. Score of 100 means significant odds drops detected (sharp bettors hammering this line). Score of 0 means no notable movement. Based on RTM's real-time line movement tracking.",
   Proj: "How strongly KenPom's independent game projection agrees with this bet. For h2h bets, measures if KenPom's win probability supports the bet side. For spreads, measures if KenPom's predicted margin covers the spread. For totals, measures if KenPom's predicted total agrees with over/under. Score of 0 means KenPom disagrees or is neutral.",
-  Cons: "Measures how many other sportsbooks also show this as a +EV opportunity. High consensus (80+) means many books are mispriced on this line, suggesting the market broadly disagrees with Pinnacle. Low consensus means only 1-2 books have value, which could indicate stale odds.",
+  Cons: "Measures how many other sportsbooks also show this as a +EV opportunity. High consensus (80+) means many books are mispriced on this line, suggesting the market broadly disagrees with Pinnacle. Low consensus means only 1\u20112 books have value, which could indicate stale odds.",
   Intel:
     "Combines intelligence signals: book reaction speed profiling (how fast each book moves after Pinnacle), stale line detection, and market timing patterns. Higher scores indicate the book is known to be slow to react, making the edge more likely to be real.",
 };
@@ -75,6 +101,10 @@ function trueProbToAmericanOdds(prob: number): number {
   if (prob <= 0 || prob >= 1) return -110;
   if (prob > 0.5) return Math.round((-100 * prob) / (1 - prob));
   return Math.round((100 * (1 - prob)) / prob);
+}
+
+function pct(value: number): string {
+  return `${value.toFixed(1)}%`;
 }
 
 function strengthColor(strength: number): string {
@@ -120,7 +150,6 @@ function extractKenPom(intelligenceContext: string | null): KenPomData | null {
   if (!intelligenceContext) return null;
   try {
     const ctx = JSON.parse(intelligenceContext);
-    // Check various possible field structures
     const kp = ctx.kenpom ?? ctx.projection ?? ctx;
     if (
       typeof kp.home_score === "number" &&
@@ -139,6 +168,128 @@ function extractKenPom(intelligenceContext: string | null): KenPomData | null {
     // ignore parse errors
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// KenPom edge analysis (Fix 3)
+// ---------------------------------------------------------------------------
+
+function KenPomEdge({
+  sig,
+  kenpom,
+}: {
+  sig: Signal;
+  kenpom: KenPomData;
+}) {
+  const margin = kenpom.home_score - kenpom.away_score; // positive = home favored
+  const kpTotal = kenpom.home_score + kenpom.away_score;
+
+  // Score prediction line
+  const scoreText = `${kenpom.away_team ?? "Away"} ${kenpom.away_score.toFixed(1)} \u2013 ${kenpom.home_team ?? "Home"} ${kenpom.home_score.toFixed(1)}`;
+
+  if (sig.market_type === "spreads") {
+    // For spreads: compare KenPom margin to the actual spread (prop_line)
+    const spreadLine = sig.prop_line ?? 0;
+    // KenPom predicted margin from the perspective of "side" team
+    // If side is home team, KenPom says home wins by `margin`. Spread is typically in home perspective.
+    // Edge = how much KenPom covers beyond the spread
+    const edge = Math.abs(spreadLine) - Math.abs(margin);
+    const absEdge = Math.abs(edge).toFixed(1);
+
+    return (
+      <div className="mt-2 space-y-1 text-[11px] text-gray-400">
+        <p>
+          <span className="text-gray-500">KenPom:</span> {scoreText}
+        </p>
+        <p>
+          <span className="text-gray-500">KenPom Margin:</span>{" "}
+          {margin > 0
+            ? `${kenpom.home_team ?? "Home"} by ${margin.toFixed(1)}`
+            : margin < 0
+              ? `${kenpom.away_team ?? "Away"} by ${Math.abs(margin).toFixed(1)}`
+              : "Pick"}
+        </p>
+        <p>
+          <span className="text-gray-500">Line:</span> {sig.side}{" "}
+          {spreadLine > 0 ? "+" : ""}
+          {spreadLine}
+        </p>
+        <p>
+          <span className="text-gray-500">Edge:</span>{" "}
+          <span className={edge > 0 ? "text-emerald-400" : "text-amber-400"}>
+            {absEdge} points
+          </span>
+        </p>
+      </div>
+    );
+  }
+
+  if (sig.market_type === "totals") {
+    const totalLine = sig.prop_line ?? 0;
+    const diff = kpTotal - totalLine;
+    const direction = diff > 0 ? "over" : "under";
+    const absDiff = Math.abs(diff).toFixed(1);
+
+    return (
+      <div className="mt-2 space-y-1 text-[11px] text-gray-400">
+        <p>
+          <span className="text-gray-500">KenPom:</span> {scoreText}
+        </p>
+        <p>
+          <span className="text-gray-500">KenPom Total:</span>{" "}
+          {kpTotal.toFixed(1)}
+        </p>
+        <p>
+          <span className="text-gray-500">Line:</span> {totalLine}
+        </p>
+        <p>
+          <span className="text-gray-500">Edge:</span>{" "}
+          <span className={Math.abs(diff) > 1 ? "text-emerald-400" : "text-amber-400"}>
+            {absDiff} points {direction}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
+  // h2h (moneyline)
+  const pinImplied = sig.true_prob != null ? sig.true_prob * 100 : null;
+  const kpWp = kenpom.home_win_prob * 100;
+  // Determine which side the signal is on
+  const isHome =
+    sig.side === kenpom.home_team ||
+    sig.side.toLowerCase().includes("home");
+  const kpSideWp = isHome ? kpWp : 100 - kpWp;
+  const edge =
+    pinImplied != null ? kpSideWp - (100 - pinImplied) : null;
+
+  return (
+    <div className="mt-2 space-y-1 text-[11px] text-gray-400">
+      <p>
+        <span className="text-gray-500">KenPom:</span> {scoreText}
+      </p>
+      <p>
+        <span className="text-gray-500">KenPom WP:</span> {kpSideWp.toFixed(1)}%
+      </p>
+      {pinImplied != null && (
+        <p>
+          <span className="text-gray-500">PIN Implied:</span>{" "}
+          {(100 - pinImplied).toFixed(1)}%
+        </p>
+      )}
+      {edge != null && (
+        <p>
+          <span className="text-gray-500">Edge:</span>{" "}
+          <span
+            className={edge > 0 ? "text-emerald-400" : "text-amber-400"}
+          >
+            {edge > 0 ? "+" : ""}
+            {edge.toFixed(1)}%
+          </span>
+        </p>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +312,10 @@ function ScoreBarWithExplanation({
   return (
     <div>
       <button
-        onClick={() => onToggle(label)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle(label);
+        }}
         className="flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-[#2c2c2e]/50"
       >
         <span className="w-10 text-xs font-medium text-gray-400">{label}</span>
@@ -171,16 +325,165 @@ function ScoreBarWithExplanation({
             style={{ width: `${Math.min(score, 100)}%` }}
           />
         </div>
-        <span className={`w-8 text-right font-mono text-xs font-semibold ${scoreTextColor(score)}`}>
+        <span
+          className={`w-8 text-right font-mono text-xs font-semibold ${scoreTextColor(score)}`}
+        >
           {score}
         </span>
-        <span className="text-[10px] text-gray-600">{isOpen ? "▲" : "?"}</span>
+        <span className="text-[10px] text-gray-600">{isOpen ? "\u25B2" : "?"}</span>
       </button>
       {isOpen && SCORE_EXPLANATIONS[label] && (
         <div className="mt-1 mb-1 ml-12 rounded-lg border border-gray-800/50 bg-[#1a1a1c] px-3 py-2 text-xs leading-relaxed text-gray-400">
           {SCORE_EXPLANATIONS[label]}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Books comparison table (Fix 4)
+// ---------------------------------------------------------------------------
+
+function BooksTable({
+  sig,
+  opportunities,
+  oppsLoading,
+}: {
+  sig: Signal;
+  opportunities: Opportunity[];
+  oppsLoading: boolean;
+}) {
+  const matchingOpps = opportunities.filter(
+    (o) =>
+      o.game_id === sig.game_id &&
+      o.market_type === sig.market_type &&
+      o.side === sig.side,
+  );
+  matchingOpps.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
+
+  const trueProb = sig.true_prob ?? (matchingOpps.length > 0 ? matchingOpps[0].true_prob : null);
+
+  // Merge other_books from signal with opportunities for a complete picture
+  const hasOpps = matchingOpps.length > 0;
+
+  return (
+    <div className="mt-3 overflow-x-auto rounded-xl bg-[#1a1a1c]">
+      <table className="w-full text-left text-xs">
+        <thead>
+          <tr className="border-b border-gray-800 text-[10px] font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-3 py-2">Book</th>
+            <th className="px-3 py-2 text-right">Odds</th>
+            <th className="px-3 py-2 text-right">True%</th>
+            <th className="px-3 py-2 text-right">Book%</th>
+            <th className="px-3 py-2 text-right">EV%</th>
+            <th className="px-3 py-2 text-right">Kelly%</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/50">
+          {/* Pinnacle reference row */}
+          {trueProb != null && trueProb > 0 && (
+            <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
+              <td className="whitespace-nowrap px-3 py-2 text-blue-400">
+                <span className="font-medium">Pinnacle</span>
+                <span className="ml-1.5 rounded bg-blue-500/20 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">
+                  Sharp
+                </span>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-blue-300">
+                {formatOdds(trueProbToAmericanOdds(trueProb))}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-blue-300/70">
+                {pct(trueProb * 100)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-blue-300/70">
+                {pct(trueProb * 100)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-600">
+                0.0%
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-600">
+                0.0%
+              </td>
+            </tr>
+          )}
+
+          {oppsLoading ? (
+            <tr>
+              <td colSpan={6} className="px-3 py-3 text-center text-gray-600">
+                Loading books...
+              </td>
+            </tr>
+          ) : hasOpps ? (
+            matchingOpps.map((opp, i) => (
+              <tr key={opp.id} className={i % 2 === 0 ? "bg-[#1e1e20]" : ""}>
+                <td className="whitespace-nowrap px-3 py-2 text-gray-400">
+                  {opp.sportsbook}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
+                  {formatOdds(opp.book_odds)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                  {pct((opp.true_prob ?? 0) * 100)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                  {pct((opp.book_implied_prob ?? 0) * 100)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/80">
+                  +{pct(opp.ev_percentage ?? 0)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                  {pct((opp.kelly_fraction ?? 0) * 100)}
+                </td>
+              </tr>
+            ))
+          ) : sig.other_books && sig.other_books.length > 0 ? (
+            /* Fallback: use other_books from signal if no opportunities found */
+            <>
+              <tr className="bg-[#1e1e20]">
+                <td className="whitespace-nowrap px-3 py-2 text-gray-300">
+                  {sig.sportsbook}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
+                  {formatOdds(sig.book_odds)}
+                </td>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2" />
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/80">
+                  +{pct(sig.edge_percentage ?? 0)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                  {sig.kelly_fraction != null
+                    ? pct(sig.kelly_fraction * 100)
+                    : "\u2014"}
+                </td>
+              </tr>
+              {sig.other_books.map((ob) => (
+                <tr key={ob.sportsbook}>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-400">
+                    {ob.sportsbook}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-400">
+                    {formatOdds(ob.book_odds)}
+                  </td>
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2" />
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/60">
+                    +{pct(ob.ev_pct ?? 0)}
+                  </td>
+                  <td className="px-3 py-2" />
+                </tr>
+              ))}
+            </>
+          ) : (
+            <tr>
+              <td colSpan={6} className="px-3 py-3 text-center text-gray-600">
+                No other books available
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -193,14 +496,22 @@ function SignalCard({
   sig,
   expandedScore,
   onToggleScore,
+  expandedCardId,
+  onToggleCard,
   unitSize,
   kellyBetSize,
+  opportunities,
+  oppsLoading,
 }: {
   sig: Signal;
   expandedScore: string | null;
   onToggleScore: (label: string) => void;
+  expandedCardId: number | null;
+  onToggleCard: (id: number) => void;
   unitSize: number | null;
   kellyBetSize: (fraction: number) => number | null;
+  opportunities: Opportunity[];
+  oppsLoading: boolean;
 }) {
   const kenpom = extractKenPom(sig.intelligence_context);
   const pinOdds =
@@ -218,120 +529,120 @@ function SignalCard({
 
   const kellyBet =
     sig.kelly_fraction != null ? kellyBetSize(sig.kelly_fraction) : null;
+  const isCardExpanded = expandedCardId === sig.id;
+
+  const otherBookCount =
+    (sig.other_books?.length ?? 0) > 0
+      ? sig.other_books!.length
+      : 0;
 
   return (
-    <div className="rounded-2xl bg-[#1c1c1e] p-5 transition-colors hover:bg-[#1e1e20]">
-      {/* Header row */}
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Stars count={sig.star_rating} />
-            <span className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-400">
-              {sportLabel(sig.sport)}
-            </span>
+    <div className="rounded-2xl bg-[#1c1c1e] transition-colors hover:bg-[#1e1e20]">
+      <div className="p-5">
+        {/* Header row */}
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Stars count={sig.star_rating} />
+              <span className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-400">
+                {sportLabel(sig.sport)}
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-lg font-bold ${strengthColor(sig.signal_strength ?? 0)}`}
+            >
+              {(sig.signal_strength ?? 0).toFixed(1)}
+            </p>
+            <p className="text-xs text-emerald-400">
+              +{(sig.edge_percentage ?? 0).toFixed(1)}% EV
+            </p>
           </div>
         </div>
-        <div className="text-right">
-          <p
-            className={`text-lg font-bold ${strengthColor(sig.signal_strength ?? 0)}`}
-          >
-            {(sig.signal_strength ?? 0).toFixed(1)}
-          </p>
-          <p className="text-xs text-emerald-400">
-            +{(sig.edge_percentage ?? 0).toFixed(1)}% EV
-          </p>
-        </div>
-      </div>
 
-      {/* Side / selection */}
-      <p className="mt-3 text-base font-semibold text-gray-100">{sig.side}</p>
-      <p className="mt-0.5 text-xs text-gray-500">
-        {sig.market_type.replace(/_/g, " ")}
-      </p>
+        {/* Side / selection */}
+        <p className="mt-3 text-base font-semibold text-gray-100">
+          {sig.side}
+        </p>
+        <p className="mt-0.5 text-xs text-gray-500">
+          {sig.market_type.replace(/_/g, " ")}
+        </p>
 
-      {/* Book + odds row */}
-      <div className="mt-3 flex items-center justify-between">
-        <span className="text-sm text-gray-400">{sig.sportsbook}</span>
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-lg font-bold text-gray-200">
-            {formatOdds(sig.book_odds ?? -110)}
-          </span>
-          {pinOdds != null && (
-            <span className="font-mono text-xs text-blue-400/70">
-              PIN {formatOdds(pinOdds)}
+        {/* Book + odds row */}
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-sm text-gray-400">{sig.sportsbook}</span>
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-lg font-bold text-gray-200">
+              {formatOdds(sig.book_odds ?? -110)}
             </span>
-          )}
-        </div>
-      </div>
-
-      {/* Bet sizing */}
-      <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
-        {unitSize != null ? (
-          <>
-            <span>
-              1u (${unitSize.toFixed(2)})
-            </span>
-            {kellyBet != null && sig.kelly_fraction != null && (
-              <span className="text-emerald-400/70">
-                Kelly: {(sig.kelly_fraction * 100).toFixed(1)}% ($
-                {kellyBet.toFixed(2)})
+            {pinOdds != null && (
+              <span className="font-mono text-xs text-blue-400/70">
+                PIN {formatOdds(pinOdds)}
               </span>
             )}
-          </>
-        ) : (
-          <span>${(sig.bet_amount ?? 100).toFixed(0)} flat bet</span>
-        )}
-      </div>
-
-      {/* KenPom projection (Sub-feature 3A) */}
-      {kenpom != null && (sig.projection_score ?? 0) > 0 && (
-        <div className="mt-3 rounded-lg bg-[#2c2c2e]/50 px-3 py-2">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
-            KenPom Projection
-          </p>
-          <p className="mt-0.5 font-mono text-sm text-gray-300">
-            {kenpom.away_team ?? "Away"} {kenpom.away_score.toFixed(1)} -{" "}
-            {kenpom.home_team ?? "Home"} {kenpom.home_score.toFixed(1)}
-          </p>
-          <p className="text-[11px] text-gray-500">
-            Home WP: {(kenpom.home_win_prob * 100).toFixed(1)}%
-          </p>
-        </div>
-      )}
-
-      {/* Component scores (Sub-features 3B + 3C) */}
-      <div className="mt-3 space-y-0.5">
-        {scores.map((s) => (
-          <ScoreBarWithExplanation
-            key={s.label}
-            label={s.label}
-            score={s.score}
-            expandedScore={expandedScore}
-            onToggle={onToggleScore}
-          />
-        ))}
-      </div>
-
-      {/* Other books */}
-      {sig.other_books && sig.other_books.length > 0 && (
-        <div className="mt-3 border-t border-gray-800/50 pt-2">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-gray-600">
-            Also available at
-          </p>
-          <div className="mt-1 flex flex-wrap gap-2">
-            {sig.other_books.map((ob) => (
-              <span
-                key={ob.sportsbook}
-                className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-400"
-              >
-                {ob.sportsbook}{" "}
-                <span className="font-mono">{formatOdds(ob.book_odds)}</span>
-                <span className="ml-1 text-emerald-400/60">
-                  +{ob.ev_pct.toFixed(1)}%
-                </span>
-              </span>
-            ))}
           </div>
+        </div>
+
+        {/* Bet sizing */}
+        <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
+          {unitSize != null ? (
+            <>
+              <span>1u (${unitSize.toFixed(2)})</span>
+              {kellyBet != null && sig.kelly_fraction != null && (
+                <span className="text-emerald-400/70">
+                  Kelly: {(sig.kelly_fraction * 100).toFixed(1)}% ($
+                  {kellyBet.toFixed(2)})
+                </span>
+              )}
+            </>
+          ) : (
+            <span>${(sig.bet_amount ?? 100).toFixed(0)} flat bet</span>
+          )}
+        </div>
+
+        {/* KenPom projection (Fix 3) */}
+        {kenpom != null && (sig.projection_score ?? 0) > 0 && (
+          <div className="mt-3 rounded-lg bg-[#2c2c2e]/50 px-3 py-2">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
+              KenPom Projection
+            </p>
+            <KenPomEdge sig={sig} kenpom={kenpom} />
+          </div>
+        )}
+
+        {/* Component scores */}
+        <div className="mt-3 space-y-0.5">
+          {scores.map((s) => (
+            <ScoreBarWithExplanation
+              key={s.label}
+              label={s.label}
+              score={s.score}
+              expandedScore={expandedScore}
+              onToggle={onToggleScore}
+            />
+          ))}
+        </div>
+
+        {/* View all books button (Fix 4) */}
+        <button
+          onClick={() => onToggleCard(sig.id)}
+          className="mt-3 w-full rounded-lg bg-[#2c2c2e]/50 py-1.5 text-center text-xs text-gray-400 transition-colors hover:bg-[#2c2c2e] hover:text-gray-200"
+        >
+          {isCardExpanded
+            ? "Hide book comparison"
+            : `View all books${otherBookCount > 0 ? ` (${otherBookCount + 1})` : ""}`}
+        </button>
+      </div>
+
+      {/* Expanded books table (Fix 4) */}
+      {isCardExpanded && (
+        <div className="border-t border-gray-800/50 px-5 pb-5">
+          <BooksTable
+            sig={sig}
+            opportunities={opportunities}
+            oppsLoading={oppsLoading}
+          />
         </div>
       )}
     </div>
@@ -344,23 +655,32 @@ function SignalCard({
 
 export default function PicksPage() {
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [oppsLoading, setOppsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Only one score explanation can be open at a time — tracked as "cardId:scoreLabel"
   const [expandedScore, setExpandedScore] = useState<string | null>(null);
+  const [expandedCardId, setExpandedCardId] = useState<number | null>(null);
 
   const { unitSize, kellyBetSize } = useBankroll();
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE}/api/signals/active`)
-      .then((r) => {
+    Promise.all([
+      fetch(`${API_BASE}/api/signals/active`).then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
-      })
-      .then((data) => {
-        setSignals(data.signals ?? []);
+      }),
+      fetch(`${API_BASE}/api/ev-opportunities/`).then((r) => {
+        if (!r.ok) throw new Error(`Opportunities: HTTP ${r.status}`);
+        return r.json();
+      }),
+    ])
+      .then(([sigData, oppData]) => {
+        setSignals(sigData.signals ?? []);
+        setOpportunities(oppData.opportunities ?? []);
+        setOppsLoading(false);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -369,6 +689,10 @@ export default function PicksPage() {
   function handleToggleScore(sigId: number, label: string) {
     const key = `${sigId}:${label}`;
     setExpandedScore((prev) => (prev === key ? null : key));
+  }
+
+  function handleToggleCard(id: number) {
+    setExpandedCardId((prev) => (prev === id ? null : id));
   }
 
   return (
@@ -405,8 +729,12 @@ export default function PicksPage() {
                   : null
               }
               onToggleScore={(label) => handleToggleScore(sig.id, label)}
+              expandedCardId={expandedCardId}
+              onToggleCard={handleToggleCard}
               unitSize={unitSize}
               kellyBetSize={kellyBetSize}
+              opportunities={opportunities}
+              oppsLoading={oppsLoading}
             />
           ))}
         </div>

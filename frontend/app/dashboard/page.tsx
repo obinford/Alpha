@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useBankroll, KellyMultiplier } from "@/lib/bankroll-context";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -149,10 +149,6 @@ function StatCard({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Score bar component
-// ---------------------------------------------------------------------------
-
 function ScoreBar({ label, score }: { label: string; score: number }) {
   return (
     <div className="flex items-center gap-2">
@@ -171,7 +167,7 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
 }
 
 // ---------------------------------------------------------------------------
-// Bankroll settings panel
+// Bankroll card (always visible, not collapsible)
 // ---------------------------------------------------------------------------
 
 const KELLY_OPTIONS: { value: KellyMultiplier; label: string }[] = [
@@ -181,94 +177,160 @@ const KELLY_OPTIONS: { value: KellyMultiplier; label: string }[] = [
   { value: 0.125, label: "Eighth Kelly (0.125x)" },
 ];
 
-function BankrollPanel() {
-  const { bankroll, kellyMultiplier, unitSize, setBankroll, setKellyMultiplier } =
+function BankrollCard() {
+  const { bankroll, kellyMultiplier, unitSize, setBankroll, setKellyMultiplier, kellyLabel } =
     useBankroll();
-  const [open, setOpen] = useState(false);
-  const [inputValue, setInputValue] = useState(bankroll != null ? String(bankroll) : "");
+  const [editing, setEditing] = useState(false);
+  const [inputValue, setInputValue] = useState(
+    bankroll != null ? String(bankroll) : "",
+  );
 
   function handleSave() {
     const parsed = parseFloat(inputValue.replace(/[,$]/g, ""));
     if (!isNaN(parsed) && parsed > 0) {
       setBankroll(parsed);
     }
-    setOpen(false);
+    setEditing(false);
   }
 
   return (
-    <div className="mb-6">
-      {/* Toggle button */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-[#1c1c1e] hover:text-gray-200"
-      >
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-        {bankroll != null ? (
-          <span>
-            Bankroll: <span className="text-emerald-400">${bankroll.toLocaleString()}</span>
-            {" | "}
-            <span className="text-gray-300">{KELLY_OPTIONS.find((o) => o.value === kellyMultiplier)?.label ?? "Quarter Kelly"}</span>
-            {unitSize != null && (
-              <span className="text-gray-500"> | 1u = ${unitSize.toFixed(2)}</span>
-            )}
-          </span>
-        ) : (
-          <span>Set your bankroll to see personalized bet sizing</span>
+    <div className="rounded-2xl bg-[#1c1c1e] p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wider text-gray-500">
+          Bankroll
+        </p>
+        {!editing && (
+          <button
+            onClick={() => {
+              setInputValue(bankroll != null ? String(bankroll) : "");
+              setEditing(true);
+            }}
+            className="text-[10px] text-gray-500 transition-colors hover:text-gray-300"
+          >
+            Edit
+          </button>
         )}
-      </button>
+      </div>
 
-      {/* Collapsible panel */}
-      {open && (
-        <div className="mt-2 rounded-2xl bg-[#1c1c1e] p-5">
-          <h3 className="text-sm font-semibold text-gray-200">Bankroll Settings</h3>
-          <div className="mt-3 grid gap-4 sm:grid-cols-3">
-            {/* Bankroll input */}
-            <div>
-              <label className="text-xs text-gray-500">Your Bankroll ($)</label>
-              <input
-                type="text"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                placeholder="1000"
-                className="mt-1 w-full rounded-lg bg-[#2c2c2e] px-3 py-2 text-sm text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-            </div>
-            {/* Kelly selector */}
-            <div>
-              <label className="text-xs text-gray-500">Kelly Fraction</label>
-              <select
-                value={kellyMultiplier}
-                onChange={(e) => setKellyMultiplier(parseFloat(e.target.value) as KellyMultiplier)}
-                className="mt-1 w-full rounded-lg bg-[#2c2c2e] px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-emerald-500"
-              >
-                {KELLY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {/* Unit size display + save */}
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className="text-xs text-gray-500">Unit Size (1%)</label>
-                <div className="mt-1 rounded-lg bg-[#2c2c2e] px-3 py-2 text-sm text-gray-300">
-                  {unitSize != null ? `$${unitSize.toFixed(2)}` : "—"}
-                </div>
-              </div>
-              <button
-                onClick={handleSave}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
-              >
-                Save
-              </button>
-            </div>
+      {editing ? (
+        <div className="mt-2 space-y-2">
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            placeholder="1000"
+            className="w-full rounded-lg bg-[#2c2c2e] px-3 py-2 text-sm text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-emerald-500"
+            autoFocus
+          />
+          <select
+            value={kellyMultiplier}
+            onChange={(e) =>
+              setKellyMultiplier(parseFloat(e.target.value) as KellyMultiplier)
+            }
+            className="w-full rounded-lg bg-[#2c2c2e] px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-emerald-500"
+          >
+            {KELLY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="rounded-lg px-3 py-1.5 text-xs text-gray-400 transition-colors hover:text-gray-200"
+            >
+              Cancel
+            </button>
           </div>
         </div>
+      ) : bankroll != null ? (
+        <div className="mt-1">
+          <p className="text-2xl font-bold text-white">
+            ${bankroll.toLocaleString()}
+          </p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {kellyLabel} &middot; 1u = ${unitSize?.toFixed(2) ?? "0"}
+          </p>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-gray-500">
+          Set your bankroll to see personalized bet sizing.
+          <button
+            onClick={() => setEditing(true)}
+            className="ml-2 text-emerald-400 hover:text-emerald-300"
+          >
+            Set up
+          </button>
+        </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Book filter
+// ---------------------------------------------------------------------------
+
+function BookFilter({
+  allBooks,
+  selectedBooks,
+  onToggle,
+  onSelectAll,
+  onClear,
+}: {
+  allBooks: string[];
+  selectedBooks: Set<string> | null;
+  onToggle: (book: string) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+}) {
+  if (allBooks.length === 0) return null;
+
+  function isSelected(book: string) {
+    return selectedBooks == null || selectedBooks.has(book);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-gray-600">
+        Books:
+      </span>
+      <button
+        onClick={onSelectAll}
+        className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+          selectedBooks == null
+            ? "bg-emerald-600 text-white"
+            : "bg-[#2c2c2e] text-gray-500 hover:text-gray-300"
+        }`}
+      >
+        All
+      </button>
+      <button
+        onClick={onClear}
+        className="rounded-full bg-[#2c2c2e] px-2.5 py-1 text-[11px] text-gray-500 transition-colors hover:text-gray-300"
+      >
+        Clear
+      </button>
+      {allBooks.map((book) => (
+        <button
+          key={book}
+          onClick={() => onToggle(book)}
+          className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+            isSelected(book)
+              ? "bg-emerald-600/80 text-white"
+              : "bg-[#2c2c2e] text-gray-500 hover:text-gray-300"
+          }`}
+        >
+          {book}
+        </button>
+      ))}
     </div>
   );
 }
@@ -286,7 +348,8 @@ function SignalDetail({
   opportunities: Opportunity[];
   oppsLoading: boolean;
 }) {
-  // Filter opportunities matching this signal's game+market+side
+  const { bankroll, kellyBetSize, unitSize, kellyLabel } = useBankroll();
+
   const matchingOpps = opportunities.filter(
     (o) =>
       o.game_id === sig.game_id &&
@@ -295,22 +358,12 @@ function SignalDetail({
   );
   matchingOpps.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
 
-  // Try to find game info from opportunities
   const game = matchingOpps[0]?.games ?? null;
-
-  // Parse intelligence_context if available
-  let intelContext: Record<string, unknown> | null = null;
-  if (sig.intelligence_context) {
-    try {
-      intelContext = JSON.parse(sig.intelligence_context);
-    } catch {
-      // ignore
-    }
-  }
 
   const trueProb =
     sig.true_prob ?? (matchingOpps.length > 0 ? matchingOpps[0].true_prob : null);
-  const pinOdds = trueProb != null && trueProb > 0 ? trueProbToAmericanOdds(trueProb) : null;
+  const pinOdds =
+    trueProb != null && trueProb > 0 ? trueProbToAmericanOdds(trueProb) : null;
 
   const scores = [
     { label: "EV", score: sig.ev_score ?? 0 },
@@ -319,6 +372,12 @@ function SignalDetail({
     { label: "Cons", score: sig.consensus_score ?? 0 },
     { label: "Intel", score: sig.intelligence_score ?? 0 },
   ];
+
+  // Kelly calculations
+  const kellyPct =
+    sig.kelly_fraction != null ? sig.kelly_fraction * 100 : null;
+  const kellyDollar =
+    sig.kelly_fraction != null ? kellyBetSize(sig.kelly_fraction) : null;
 
   return (
     <div className="overflow-hidden transition-all duration-300">
@@ -347,7 +406,8 @@ function SignalDetail({
               </p>
             )}
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
+          {/* Fix 5: Enhanced stats with Kelly + Unit display */}
+          <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
             <div>
               <p className="text-[10px] uppercase text-gray-500">Edge</p>
               <p className="font-mono text-sm font-bold text-emerald-400">
@@ -356,15 +416,37 @@ function SignalDetail({
             </div>
             <div>
               <p className="text-[10px] uppercase text-gray-500">Strength</p>
-              <p className={`font-mono text-sm font-bold ${strengthColor(sig.signal_strength ?? 0)}`}>
+              <p
+                className={`font-mono text-sm font-bold ${strengthColor(sig.signal_strength ?? 0)}`}
+              >
                 {(sig.signal_strength ?? 0).toFixed(1)}
               </p>
             </div>
             <div>
               <p className="text-[10px] uppercase text-gray-500">Kelly</p>
               <p className="font-mono text-sm text-gray-300">
-                {sig.kelly_fraction != null ? pct(sig.kelly_fraction * 100) : "—"}
+                {kellyPct != null ? `${kellyPct.toFixed(1)}%` : "\u2014"}
               </p>
+              {kellyDollar != null ? (
+                <p className="text-[10px] text-emerald-400/70">
+                  ${kellyDollar.toFixed(2)}
+                </p>
+              ) : bankroll == null && kellyPct != null ? (
+                <p className="text-[10px] text-gray-600">Set bankroll</p>
+              ) : null}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-gray-500">Unit</p>
+              {unitSize != null ? (
+                <>
+                  <p className="font-mono text-sm text-gray-300">1u</p>
+                  <p className="text-[10px] text-gray-500">
+                    ${unitSize.toFixed(2)}
+                  </p>
+                </>
+              ) : (
+                <p className="font-mono text-sm text-gray-500">{"\u2014"}</p>
+              )}
             </div>
           </div>
         </div>
@@ -417,7 +499,6 @@ function SignalDetail({
                 </tr>
               )}
 
-              {/* Matching opportunities from other books */}
               {oppsLoading ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-3 text-center text-gray-600">
@@ -474,7 +555,7 @@ export default function DashboardPage() {
   const [oppsLoading, setOppsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const { bankroll } = useBankroll();
+  const [selectedBooks, setSelectedBooks] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -498,8 +579,46 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const topSignal = signals.length > 0 ? signals[0] : null;
-  const nextGameTime = signals
+  // Derive all unique books from signals (primary + other_books)
+  const allBooks = useMemo(() => {
+    const s = new Set<string>();
+    for (const sig of signals) {
+      s.add(sig.sportsbook);
+      if (sig.other_books) {
+        for (const ob of sig.other_books) s.add(ob.sportsbook);
+      }
+    }
+    return Array.from(s).sort();
+  }, [signals]);
+
+  // Filter signals by selected books
+  const filteredSignals = useMemo(() => {
+    if (selectedBooks == null) return signals;
+    return signals.filter(
+      (sig) =>
+        selectedBooks.has(sig.sportsbook) ||
+        (sig.other_books?.some((ob) => selectedBooks.has(ob.sportsbook)) ??
+          false),
+    );
+  }, [signals, selectedBooks]);
+
+  function toggleBook(book: string) {
+    setSelectedBooks((prev) => {
+      if (prev == null) {
+        const next = new Set(allBooks);
+        next.delete(book);
+        return next;
+      }
+      const next = new Set(prev);
+      if (next.has(book)) next.delete(book);
+      else next.add(book);
+      if (next.size === allBooks.length) return null;
+      return next;
+    });
+  }
+
+  const topSignal = filteredSignals.length > 0 ? filteredSignals[0] : null;
+  const nextGameTime = filteredSignals
     .map((s) => s.created_at)
     .filter(Boolean)
     .sort()[0];
@@ -531,17 +650,12 @@ export default function DashboardPage() {
         Overview of today&apos;s picks, active signals, and key metrics.
       </p>
 
-      {/* Bankroll settings */}
-      <div className="mt-4">
-        <BankrollPanel />
-      </div>
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {/* Stat cards + Bankroll card */}
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <StatCard
           label="Active Signals"
-          value={String(signals.length)}
-          accent={signals.length > 0 ? "green" : "neutral"}
+          value={String(filteredSignals.length)}
+          accent={filteredSignals.length > 0 ? "green" : "neutral"}
         />
         <StatCard
           label="Opportunities"
@@ -553,7 +667,7 @@ export default function DashboardPage() {
           value={
             topSignal
               ? `${(topSignal.signal_strength ?? 0).toFixed(1)}`
-              : "---"
+              : "\u2014"
           }
           sub={
             topSignal
@@ -566,7 +680,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Next Game"
-          value={nextGameTime ? formatTimeUntil(nextGameTime) : "---"}
+          value={nextGameTime ? formatTimeUntil(nextGameTime) : "\u2014"}
           sub={
             nextGameTime
               ? new Date(nextGameTime).toLocaleTimeString([], {
@@ -576,19 +690,34 @@ export default function DashboardPage() {
               : undefined
           }
         />
+        <BankrollCard />
       </div>
 
+      {/* Book filter */}
+      {allBooks.length > 0 && (
+        <div className="mt-4">
+          <BookFilter
+            allBooks={allBooks}
+            selectedBooks={selectedBooks}
+            onToggle={toggleBook}
+            onSelectAll={() => setSelectedBooks(null)}
+            onClear={() => setSelectedBooks(new Set())}
+          />
+        </div>
+      )}
+
       {/* Active signals list */}
-      <div className="mt-8">
+      <div className="mt-6">
         <h2 className="text-lg font-semibold">Active Signals</h2>
-        {signals.length === 0 ? (
+        {filteredSignals.length === 0 ? (
           <div className="mt-6 rounded-2xl bg-[#1c1c1e] p-8 text-center text-gray-500">
-            No active signals right now. Signals fire when the confluence model
-            detects high-confidence plays.
+            {signals.length > 0
+              ? "No signals match the selected books."
+              : "No active signals right now. Signals fire when the confluence model detects high-confidence plays."}
           </div>
         ) : (
           <div className="mt-3 space-y-2">
-            {signals.map((sig) => {
+            {filteredSignals.map((sig) => {
               const isExpanded = expandedId === sig.id;
               const trueProb =
                 sig.true_prob ??
@@ -653,7 +782,6 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Expanded detail panel */}
                   {isExpanded && (
                     <SignalDetail
                       sig={sig}
