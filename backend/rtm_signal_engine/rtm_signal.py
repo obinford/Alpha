@@ -276,6 +276,10 @@ class RTMSignal:
             return 10
         return 0
 
+    # Counter for debug logging (first N CBB opportunities).
+    _cbb_debug_count = 0
+    _CBB_DEBUG_LIMIT = 5
+
     def game_projection_score(
         self,
         game_proj: dict,
@@ -301,6 +305,8 @@ class RTMSignal:
         home_team = game_info.get("home_team", "")
         away_team = game_info.get("away_team", "")
 
+        score = 0
+
         if market_type == "h2h":
             # Determine which side we're betting.
             side_norm = side.strip().lower()
@@ -312,17 +318,33 @@ class RTMSignal:
             elif side_norm == away_norm or away_norm in side_norm:
                 our_wp = 1.0 - home_wp
             else:
+                self._debug_cbb(
+                    market_type, side, home_team, away_team,
+                    home_pred, away_pred, home_wp, point, 0,
+                    reason=f"side '{side_norm}' matched neither home '{home_norm}' nor away '{away_norm}'",
+                )
                 return 0
 
             # Score: how much KenPom agrees with this side.
             # 50% = neutral, 75% = strong agreement.
             edge = (our_wp - 0.5) * 200  # Scale: 50%=0, 75%=50, 100%=100
-            return int(min(100, max(0, edge)))
+            score = int(min(100, max(0, edge)))
+            self._debug_cbb(
+                market_type, side, home_team, away_team,
+                home_pred, away_pred, home_wp, point, score,
+                reason=f"our_wp={our_wp:.3f}, edge={edge:.1f}",
+            )
+            return score
 
         elif market_type == "spreads":
             # KenPom predicted margin (positive = home favored).
             kp_margin = home_pred - away_pred
             if point is None:
+                self._debug_cbb(
+                    market_type, side, home_team, away_team,
+                    home_pred, away_pred, home_wp, point, 0,
+                    reason="point is None",
+                )
                 return 0
 
             # The spread point is from the bet side's perspective.
@@ -335,17 +357,31 @@ class RTMSignal:
                 # Betting home side: value = kp_margin - |point|
                 value = kp_margin - abs(point)
             else:
-                # Betting away side: value = (-kp_margin) - |point|
-                value = (-kp_margin) - abs(point)
+                # Betting away side: KenPom margin < spread means cushion.
+                # E.g., KenPom home by 3, away gets +5.5 → 2.5 pts value.
+                value = abs(point) - kp_margin
 
             # Scale: 0 pts value=20, 3 pts=50, 6 pts=80, 10+=100
             if value <= 0:
-                return 0
-            return int(min(100, 20 + value * 10))
+                score = 0
+            else:
+                score = int(min(100, 20 + value * 10))
+
+            self._debug_cbb(
+                market_type, side, home_team, away_team,
+                home_pred, away_pred, home_wp, point, score,
+                reason=f"kp_margin={kp_margin:.1f}, spread={point}, value={value:.1f}",
+            )
+            return score
 
         elif market_type == "totals":
             kp_total = home_pred + away_pred
             if point is None:
+                self._debug_cbb(
+                    market_type, side, home_team, away_team,
+                    home_pred, away_pred, home_wp, point, 0,
+                    reason="point is None",
+                )
                 return 0
 
             side_lower = side.strip().lower()
@@ -354,13 +390,50 @@ class RTMSignal:
             elif "under" in side_lower:
                 value = point - kp_total
             else:
+                self._debug_cbb(
+                    market_type, side, home_team, away_team,
+                    home_pred, away_pred, home_wp, point, 0,
+                    reason=f"side '{side_lower}' has neither over nor under",
+                )
                 return 0
 
             if value <= 0:
-                return 0
-            return int(min(100, 20 + value * 10))
+                score = 0
+            else:
+                score = int(min(100, 20 + value * 10))
+
+            self._debug_cbb(
+                market_type, side, home_team, away_team,
+                home_pred, away_pred, home_wp, point, score,
+                reason=f"kp_total={kp_total:.1f}, line={point}, value={value:.1f}",
+            )
+            return score
 
         return 0
+
+    def _debug_cbb(
+        self,
+        market_type: str,
+        side: str,
+        home_team: str,
+        away_team: str,
+        home_pred: float,
+        away_pred: float,
+        home_wp: float,
+        point: float | None,
+        score: int,
+        reason: str = "",
+    ) -> None:
+        """Print debug info for the first N CBB projection scores."""
+        if RTMSignal._cbb_debug_count >= RTMSignal._CBB_DEBUG_LIMIT:
+            return
+        RTMSignal._cbb_debug_count += 1
+        print(
+            f"  [KENPOM DEBUG {RTMSignal._cbb_debug_count}/{RTMSignal._CBB_DEBUG_LIMIT}] "
+            f"{market_type} | side='{side}' | {away_team} @ {home_team} | "
+            f"KP: {away_pred:.0f}-{home_pred:.0f} (home WP {home_wp:.1%}) | "
+            f"point={point} | score={score} | {reason}"
+        )
 
     def intelligence_score(
         self,
@@ -785,6 +858,9 @@ class RTMSignal:
         projections = player_projections or {}
         game_projs = game_projections or {}
         all_signals: list[dict] = []
+
+        # Reset CBB debug counter for this scan cycle.
+        RTMSignal._cbb_debug_count = 0
 
         # Diagnostic counters for CBB projection flow.
         _cbb_total = 0
