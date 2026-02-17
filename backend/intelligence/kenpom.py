@@ -810,6 +810,19 @@ class KenPomClient:
         """Update the list of Odds API team names for name resolution."""
         self._odds_api_teams = teams
 
+    def refresh(self) -> None:
+        """Refresh all KenPom data: ratings, fanmatch (today+tomorrow), and teams.
+
+        Called by the scanner at the start of each scan cycle to ensure
+        fresh data.  Each fetch respects its own cache TTL, so redundant
+        calls within the TTL window are no-ops.
+        """
+        fetch_ratings()
+        fetch_fanmatch_today_tomorrow()
+        fetch_teams()
+        if self._odds_api_teams:
+            build_name_map(self._odds_api_teams)
+
     def fetch_ratings(self, year: int | None = None) -> list[dict[str, Any]]:
         """Fetch team efficiency ratings."""
         return fetch_ratings(year)
