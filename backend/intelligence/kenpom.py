@@ -729,11 +729,39 @@ def get_projection(
         Plus: home_score, away_score, home_win_prob (aliases for scanner)
     Or None if no data is available.
     """
+    # Log cache state for debugging second-pass failures.
+    cached_dates = list(_cache.fanmatch.keys())
+    cached_game_count = sum(len(v) for v in _cache.fanmatch.values())
+    logger.debug(
+        "get_projection(%r @ %r): fanmatch cache has %d games across dates %s",
+        away_team, home_team, cached_game_count, cached_dates,
+    )
+
     # Try fanmatch first — it has KenPom's own predictions.
     prediction = get_fanmatch_prediction(home_team, away_team, odds_api_teams)
-    if prediction is None:
+
+    if prediction is not None:
+        logger.debug(
+            "get_projection(%r @ %r): FOUND in fanmatch cache [source=%s]",
+            away_team, home_team, prediction.get("source"),
+        )
+    else:
+        logger.debug(
+            "get_projection(%r @ %r): NOT in fanmatch cache, trying ratings fallback",
+            away_team, home_team,
+        )
         # Fall back to ratings-based projection.
         prediction = get_ratings_projection(home_team, away_team, odds_api_teams)
+        if prediction is not None:
+            logger.debug(
+                "get_projection(%r @ %r): FOUND via ratings fallback [source=%s]",
+                away_team, home_team, prediction.get("source"),
+            )
+        else:
+            logger.debug(
+                "get_projection(%r @ %r): NO DATA from fanmatch or ratings",
+                away_team, home_team,
+            )
 
     if prediction is not None:
         # Add convenience aliases used by the scanner's console output.

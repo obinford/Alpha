@@ -1359,8 +1359,12 @@ def run_scan(sport_keys: list[str]) -> int:
         print(f"[TIMING] Steam detection: {time.time() - t0:.1f}s")
 
     # --- KenPom refresh (CBB intelligence) ---
+    # Build game_projections ONCE here and reuse in the signal engine below.
+    # Previously, projections were regenerated in a second pass which could
+    # fail if the fanmatch cache TTL expired between passes.
     _cbb_sport_key = "basketball_ncaab"
     _kenpom_client = None
+    game_projections: dict[str, dict] = {}
     if any(g.sport_key == _cbb_sport_key for g in all_games):
         t0_kp = time.time()
         try:
@@ -1379,12 +1383,14 @@ def run_scan(sport_keys: list[str]) -> int:
             _kenpom_client.refresh()
             print(f"  KenPom: refreshed data for {len(cbb_teams)} CBB teams.")
 
-            # Log projections for each CBB game.
+            # Build projections for each CBB game — stored in game_projections
+            # dict for reuse by the signal engine (no second lookup needed).
             for g in all_games:
                 if g.sport_key != _cbb_sport_key:
                     continue
                 proj = _kenpom_client.get_projection(g.home_team, g.away_team)
                 if proj:
+                    game_projections[g.id] = proj
                     src = proj.get("source", "unknown")
                     home_score = proj.get("home_score", 0)
                     away_score = proj.get("away_score", 0)
@@ -1394,6 +1400,15 @@ def run_scan(sport_keys: list[str]) -> int:
                         f"{away_score:.0f}-{home_score:.0f} "
                         f"(home WP {home_wp:.1%}) [{src}]"
                     )
+                else:
+                    print(
+                        f"  KenPom: {g.away_team} @ {g.home_team} -> "
+                        f"no projection available"
+                    )
+            if game_projections:
+                print(f"  [KENPOM] {len(game_projections)} CBB game projections cached for signal engine.")
+            else:
+                print(f"  [KENPOM] No projections available — CBB projection scoring will be disabled.")
         except Exception as e:
             print(f"  Warning: KenPom refresh failed ({e}).")
         print(f"  [TIMING] KenPom refresh: {time.time() - t0_kp:.1f}s")
@@ -1608,16 +1623,15 @@ def run_scan(sport_keys: list[str]) -> int:
                 except Exception:
                     pass
 
-            # Build KenPom game projections for CBB signals.
-            game_projections: dict[str, dict] = {}
-            if _kenpom_client is not None:
-                for g in all_games:
-                    if g.sport_key == _cbb_sport_key:
-                        gp = _kenpom_client.get_projection(g.home_team, g.away_team)
-                        if gp:
-                            game_projections[g.id] = gp
-                if game_projections:
-                    print(f"  KenPom projections: {len(game_projections)} CBB games passed to signal engine.")
+            # Reuse KenPom game projections built during the first pass
+            # (KenPom refresh section above).  No second lookup needed —
+            # game_projections was populated when the cache was fresh.
+            if game_projections:
+                print(f"  [KENPOM] Passing {len(game_projections)} cached CBB projections to signal engine.")
+            else:
+                cbb_opps = sum(1 for o in all_opportunities if o.sport_key == _cbb_sport_key)
+                if cbb_opps:
+                    print(f"  [KENPOM] No cached projections — {cbb_opps} CBB opportunities will score Proj:0.")
 
             signal_engine = RTMSignal(db_client=db)
             game_ids = list({o.game_id for o in all_opportunities})
