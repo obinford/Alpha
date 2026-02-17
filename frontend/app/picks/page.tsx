@@ -140,7 +140,8 @@ export default function PicksPage() {
       ) : (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {signals.map((sig) => {
-            const tier = tierLabel(sig.signal_strength);
+            const strength = sig.signal_strength ?? 0;
+            const tier = tierLabel(strength);
             const betAmount = 100;
             return (
               <div
@@ -149,7 +150,7 @@ export default function PicksPage() {
               >
                 {/* Header: stars + tier + sport */}
                 <div className="flex items-center justify-between">
-                  <Stars count={sig.star_rating} />
+                  <Stars count={sig.star_rating ?? 0} />
                   <div className="flex items-center gap-2">
                     <span
                       className={`rounded px-2 py-0.5 text-xs font-semibold ${tier.color}`}
@@ -174,7 +175,7 @@ export default function PicksPage() {
                 <div className="mt-3 flex items-center justify-between">
                   <span className="text-sm text-gray-400">{sig.sportsbook}</span>
                   <span className="font-mono text-lg font-bold text-gray-200">
-                    {formatOdds(sig.book_odds)}
+                    {formatOdds(sig.book_odds ?? -110)}
                   </span>
                 </div>
 
@@ -183,7 +184,7 @@ export default function PicksPage() {
                   <div>
                     <p className="text-xs text-gray-500">Strength</p>
                     <p className="text-xl font-bold text-white">
-                      {sig.signal_strength.toFixed(1)}
+                      {strength.toFixed(1)}
                     </p>
                   </div>
                   <div className="text-right">
@@ -204,19 +205,19 @@ export default function PicksPage() {
 
                 {/* Component scores */}
                 <div className="mt-3 space-y-1.5">
-                  <ScoreBar label="EV" value={sig.ev_score} />
-                  <ScoreBar label="Steam" value={sig.steam_score} />
+                  <ScoreBar label="EV" value={sig.ev_score ?? 0} />
+                  <ScoreBar label="Steam" value={sig.steam_score ?? 0} />
                   {sig.projection_score != null && sig.projection_score > 0 && (
                     <ScoreBar label="Proj" value={sig.projection_score} />
                   )}
-                  <ScoreBar label="Cons" value={sig.consensus_score} />
+                  <ScoreBar label="Cons" value={sig.consensus_score ?? 0} />
                 </div>
 
                 {/* Edge */}
                 <div className="mt-3 flex items-center justify-between border-t border-gray-800/50 pt-3">
                   <span className="text-xs text-gray-500">Edge</span>
                   <span className="font-mono text-sm font-medium text-emerald-400">
-                    +{sig.edge_percentage.toFixed(1)}%
+                    +{(sig.edge_percentage ?? 0).toFixed(1)}%
                   </span>
                 </div>
 

@@ -189,16 +189,16 @@ export default function EVScannerPage() {
                     {formatOdds(opp.book_odds)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-gray-300">
-                    {pct(opp.true_prob * 100)}
+                    {pct((opp.true_prob ?? 0) * 100)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-gray-400">
-                    {pct(opp.book_implied_prob * 100)}
+                    {pct((opp.book_implied_prob ?? 0) * 100)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-mono font-medium text-emerald-400">
-                    +{pct(opp.ev_percentage)}
+                    +{pct(opp.ev_percentage ?? 0)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-gray-300">
-                    {pct(opp.kelly_fraction * 100)}
+                    {pct((opp.kelly_fraction ?? 0) * 100)}
                   </td>
                 </tr>
               ))}

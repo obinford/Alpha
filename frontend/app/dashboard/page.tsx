@@ -192,11 +192,11 @@ export default function DashboardPage() {
           label="Top Signal"
           value={
             topSignal
-              ? `${topSignal.signal_strength.toFixed(1)}`
+              ? `${(topSignal.signal_strength ?? 0).toFixed(1)}`
               : "---"
           }
-          sub={topSignal ? `${topSignal.star_rating}★ ${sportLabel(topSignal.sport)}` : undefined}
-          accent={topSignal && topSignal.star_rating >= 4 ? "green" : "neutral"}
+          sub={topSignal ? `${topSignal.star_rating ?? 0}★ ${sportLabel(topSignal.sport ?? "")}` : undefined}
+          accent={topSignal && (topSignal.star_rating ?? 0) >= 4 ? "green" : "neutral"}
         />
         <StatCard
           label="Next Game"
@@ -235,14 +235,14 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className="ml-4 text-right">
-                  <p className={`text-lg font-bold ${strengthColor(sig.signal_strength)}`}>
-                    {sig.signal_strength.toFixed(1)}
+                  <p className={`text-lg font-bold ${strengthColor(sig.signal_strength ?? 0)}`}>
+                    {(sig.signal_strength ?? 0).toFixed(1)}
                   </p>
                   <p className="font-mono text-sm text-gray-400">
-                    {formatOdds(sig.book_odds)}
+                    {formatOdds(sig.book_odds ?? -110)}
                   </p>
                   <p className="text-xs text-emerald-400">
-                    +{sig.edge_percentage.toFixed(1)}% EV
+                    +{(sig.edge_percentage ?? 0).toFixed(1)}% EV
                   </p>
                 </div>
               </div>

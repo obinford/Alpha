@@ -154,10 +154,17 @@ function MiniChart({ data }: { data: { date: string; pnl: number }[] }) {
 function SignalsTab({ data }: { data: SignalPerformance | null }) {
   if (!data) return <p className="text-center text-gray-500">Loading...</p>;
 
-  const pnlColor = data.total_profit_loss >= 0 ? "green" : "red";
-  const roiColor = data.roi_percent >= 0 ? "green" : "red";
+  const totalPnl = data.total_profit_loss ?? 0;
+  const totalWagered = data.total_wagered ?? 0;
+  const winRate = data.win_rate ?? 0;
+  const roiPct = data.roi_percent ?? 0;
+  const pending = data.pending ?? 0;
+  const pnlColor = totalPnl >= 0 ? "green" : "red";
+  const roiColor = roiPct >= 0 ? "green" : "red";
+  const tiers = data.by_tier ?? {};
+  const sports = data.by_sport ?? {};
   const tierMax = Math.max(
-    ...Object.values(data.by_tier).map((t) => Math.abs(t.pnl)),
+    ...Object.values(tiers).map((t) => Math.abs(t.pnl ?? 0)),
     1,
   );
 
@@ -167,39 +174,39 @@ function SignalsTab({ data }: { data: SignalPerformance | null }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard
           label="Record"
-          value={data.record}
-          sub={`${data.pending} pending`}
+          value={data.record ?? "0-0"}
+          sub={`${pending} pending`}
         />
         <StatCard
           label="Win Rate"
-          value={`${data.win_rate}%`}
-          accent={data.win_rate >= 52 ? "green" : "neutral"}
+          value={`${winRate}%`}
+          accent={winRate >= 52 ? "green" : "neutral"}
         />
         <StatCard
           label="Profit / Loss"
-          value={`${data.total_profit_loss >= 0 ? "+" : ""}$${data.total_profit_loss.toFixed(0)}`}
-          sub={`$${data.total_wagered.toFixed(0)} wagered`}
+          value={`${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(0)}`}
+          sub={`$${totalWagered.toFixed(0)} wagered`}
           accent={pnlColor as "green" | "red"}
         />
         <StatCard
           label="ROI"
-          value={`${data.roi_percent >= 0 ? "+" : ""}${data.roi_percent}%`}
+          value={`${roiPct >= 0 ? "+" : ""}${roiPct}%`}
           accent={roiColor as "green" | "red"}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatCard label="Streak" value={data.streak} />
+        <StatCard label="Streak" value={data.streak ?? "\u2014"} />
         <StatCard
           label="Best Day"
-          value={data.best_day ? `+$${data.best_day.pnl.toFixed(0)}` : "\u2014"}
+          value={data.best_day ? `+$${(data.best_day.pnl ?? 0).toFixed(0)}` : "\u2014"}
           sub={data.best_day?.date}
           accent="green"
         />
         <StatCard
           label="Worst Day"
           value={
-            data.worst_day ? `$${data.worst_day.pnl.toFixed(0)}` : "\u2014"
+            data.worst_day ? `$${(data.worst_day.pnl ?? 0).toFixed(0)}` : "\u2014"
           }
           sub={data.worst_day?.date}
           accent="red"
@@ -211,7 +218,7 @@ function SignalsTab({ data }: { data: SignalPerformance | null }) {
         <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
           Running P/L
         </p>
-        <MiniChart data={data.running_pnl} />
+        <MiniChart data={data.running_pnl ?? []} />
       </div>
 
       {/* Tier breakdown */}
@@ -220,15 +227,15 @@ function SignalsTab({ data }: { data: SignalPerformance | null }) {
           By Star Rating
         </p>
         <div className="space-y-3">
-          {Object.entries(data.by_tier).map(([tier, stats]) => (
+          {Object.entries(tiers).map(([tier, stats]) => (
             <div key={tier} className="flex items-center justify-between">
               <span className="text-sm text-gray-300">
                 {tier.replace("_", " ")}
               </span>
               <div className="flex items-center gap-4">
-                <span className="text-xs text-gray-400">{stats.record}</span>
-                <span className="text-xs text-gray-400">{stats.win_rate}%</span>
-                <PnlBar pnl={stats.pnl} max={tierMax} />
+                <span className="text-xs text-gray-400">{stats.record ?? "0-0"}</span>
+                <span className="text-xs text-gray-400">{stats.win_rate ?? 0}%</span>
+                <PnlBar pnl={stats.pnl ?? 0} max={tierMax} />
               </div>
             </div>
           ))}
@@ -241,25 +248,28 @@ function SignalsTab({ data }: { data: SignalPerformance | null }) {
           By Sport
         </p>
         <div className="space-y-3">
-          {Object.entries(data.by_sport).map(([sport, stats]) => (
-            <div key={sport} className="flex items-center justify-between">
-              <span className="text-sm text-gray-300">
-                {sport
-                  .replace("_", " ")
-                  .replace("basketball ", "")
-                  .toUpperCase()}
-              </span>
-              <div className="flex items-center gap-4">
-                <span className="text-xs text-gray-400">{stats.record}</span>
-                <span className="text-xs text-gray-400">{stats.win_rate}%</span>
-                <span
-                  className={`text-xs font-medium ${stats.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}
-                >
-                  {stats.pnl >= 0 ? "+" : ""}${stats.pnl.toFixed(0)}
+          {Object.entries(sports).map(([sport, stats]) => {
+            const sportPnl = stats.pnl ?? 0;
+            return (
+              <div key={sport} className="flex items-center justify-between">
+                <span className="text-sm text-gray-300">
+                  {sport
+                    .replace("_", " ")
+                    .replace("basketball ", "")
+                    .toUpperCase()}
                 </span>
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-gray-400">{stats.record ?? "0-0"}</span>
+                  <span className="text-xs text-gray-400">{stats.win_rate ?? 0}%</span>
+                  <span
+                    className={`text-xs font-medium ${sportPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}
+                  >
+                    {sportPnl >= 0 ? "+" : ""}${sportPnl.toFixed(0)}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
@@ -269,34 +279,42 @@ function SignalsTab({ data }: { data: SignalPerformance | null }) {
 function ScannerTab({ data }: { data: ScannerPerformance | null }) {
   if (!data) return <p className="text-center text-gray-500">Loading...</p>;
 
+  const unitsProfit = data.units_profit ?? 0;
+  const winRate = data.win_rate ?? 0;
+  const roi = data.roi ?? 0;
+  const avgEv = data.avg_ev ?? 0;
+  const wins = data.wins ?? 0;
+  const losses = data.losses ?? 0;
+  const pushes = data.pushes ?? 0;
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Total Bets" value={String(data.total_bets)} />
-        <StatCard label="Record" value={data.record} />
+        <StatCard label="Total Bets" value={String(data.total_bets ?? 0)} />
+        <StatCard label="Record" value={data.record ?? "0-0"} />
         <StatCard
           label="Win Rate"
-          value={`${data.win_rate}%`}
-          accent={data.win_rate >= 52 ? "green" : "neutral"}
+          value={`${winRate}%`}
+          accent={winRate >= 52 ? "green" : "neutral"}
         />
         <StatCard
           label="Units P/L"
-          value={`${data.units_profit >= 0 ? "+" : ""}${data.units_profit.toFixed(2)}u`}
-          accent={data.units_profit >= 0 ? "green" : "red"}
+          value={`${unitsProfit >= 0 ? "+" : ""}${unitsProfit.toFixed(2)}u`}
+          accent={unitsProfit >= 0 ? "green" : "red"}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatCard
           label="ROI"
-          value={`${data.roi >= 0 ? "+" : ""}${data.roi}%`}
-          accent={data.roi >= 0 ? "green" : "red"}
+          value={`${roi >= 0 ? "+" : ""}${roi}%`}
+          accent={roi >= 0 ? "green" : "red"}
         />
-        <StatCard label="Avg EV" value={`${data.avg_ev}%`} accent="green" />
+        <StatCard label="Avg EV" value={`${avgEv}%`} accent="green" />
         <StatCard
           label="Decided"
-          value={`${data.wins + data.losses}`}
-          sub={data.pushes ? `${data.pushes} pushes` : undefined}
+          value={`${wins + losses}`}
+          sub={pushes ? `${pushes} pushes` : undefined}
         />
       </div>
 
