@@ -1358,6 +1358,46 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"Warning: Steam detection failed ({e}).")
         print(f"[TIMING] Steam detection: {time.time() - t0:.1f}s")
 
+    # --- KenPom refresh (CBB intelligence) ---
+    _cbb_sport_key = "basketball_ncaab"
+    _kenpom_client = None
+    if any(g.sport_key == _cbb_sport_key for g in all_games):
+        t0_kp = time.time()
+        try:
+            from intelligence.kenpom import KenPomClient
+
+            # Collect all unique Odds API team names from CBB games.
+            cbb_teams: list[str] = []
+            for g in all_games:
+                if g.sport_key == _cbb_sport_key:
+                    if g.home_team not in cbb_teams:
+                        cbb_teams.append(g.home_team)
+                    if g.away_team not in cbb_teams:
+                        cbb_teams.append(g.away_team)
+
+            _kenpom_client = KenPomClient(odds_api_teams=cbb_teams)
+            _kenpom_client.refresh()
+            print(f"  KenPom: refreshed data for {len(cbb_teams)} CBB teams.")
+
+            # Log projections for each CBB game.
+            for g in all_games:
+                if g.sport_key != _cbb_sport_key:
+                    continue
+                proj = _kenpom_client.get_projection(g.home_team, g.away_team)
+                if proj:
+                    src = proj.get("source", "unknown")
+                    home_score = proj.get("home_score", 0)
+                    away_score = proj.get("away_score", 0)
+                    home_wp = proj.get("home_win_prob", 0)
+                    print(
+                        f"  KenPom: {g.away_team} @ {g.home_team} -> "
+                        f"{away_score:.0f}-{home_score:.0f} "
+                        f"(home WP {home_wp:.1%}) [{src}]"
+                    )
+        except Exception as e:
+            print(f"  Warning: KenPom refresh failed ({e}).")
+        print(f"  [TIMING] KenPom refresh: {time.time() - t0_kp:.1f}s")
+
     # --- Intelligence Layers ---
     if db is not None and all_games:
         t0_intel = time.time()
