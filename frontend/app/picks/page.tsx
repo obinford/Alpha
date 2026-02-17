@@ -24,6 +24,7 @@ interface Signal {
   steam_score: number;
   projection_score: number | null;
   consensus_score: number;
+  true_prob: number | null;
   edge_percentage: number;
   kelly_size: number | null;
   status: string;
@@ -49,6 +50,13 @@ function sportLabel(sport: string): string {
 
 function formatOdds(odds: number): string {
   return odds > 0 ? `+${odds}` : String(odds);
+}
+
+/** Convert a true probability (0–1) to American odds. */
+function trueProbToAmericanOdds(prob: number): number {
+  if (prob <= 0 || prob >= 1) return -110; // fallback
+  if (prob > 0.5) return Math.round((-100 * prob) / (1 - prob));
+  return Math.round((100 * (1 - prob)) / prob);
 }
 
 function Stars({ count }: { count: number }) {
@@ -174,9 +182,16 @@ export default function PicksPage() {
                 {/* Book + odds row */}
                 <div className="mt-3 flex items-center justify-between">
                   <span className="text-sm text-gray-400">{sig.sportsbook}</span>
-                  <span className="font-mono text-lg font-bold text-gray-200">
-                    {formatOdds(sig.book_odds ?? -110)}
-                  </span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono text-lg font-bold text-gray-200">
+                      {formatOdds(sig.book_odds ?? -110)}
+                    </span>
+                    {sig.true_prob != null && sig.true_prob > 0 && (
+                      <span className="font-mono text-xs text-blue-400/70">
+                        PIN {formatOdds(trueProbToAmericanOdds(sig.true_prob))}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Strength + bet info */}

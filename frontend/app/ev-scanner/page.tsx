@@ -80,6 +80,13 @@ function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+/** Convert a true probability (0–1) to American odds. */
+function trueProbToAmericanOdds(prob: number): number {
+  if (prob <= 0 || prob >= 1) return -110; // fallback
+  if (prob > 0.5) return Math.round((-100 * prob) / (1 - prob));
+  return Math.round((100 * (1 - prob)) / prob);
+}
+
 /** Group flat opportunity list into OppGroup[] keyed by game+market+side. */
 function groupOpportunities(opps: Opportunity[]): OppGroup[] {
   const map = new Map<string, Opportunity[]>();
@@ -316,6 +323,37 @@ function GroupRows({
       </tr>
 
       {/* Expanded sub-rows */}
+      {isExpanded && (
+        <>
+          {/* Pinnacle sharp reference row */}
+          <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
+            <td className="px-4 py-2" />
+            <td className="px-4 py-2" />
+            <td className="px-4 py-2" />
+            <td className="whitespace-nowrap px-4 py-2 text-blue-400">
+              <span className="font-medium">Pinnacle</span>
+              <span className="ml-2 rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-400">
+                Sharp
+              </span>
+            </td>
+            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300">
+              {formatOdds(trueProbToAmericanOdds(opp.true_prob ?? 0.5))}
+            </td>
+            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300/70">
+              {pct((opp.true_prob ?? 0) * 100)}
+            </td>
+            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300/70">
+              {pct((opp.true_prob ?? 0) * 100)}
+            </td>
+            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
+              0.0%
+            </td>
+            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
+              0.0%
+            </td>
+          </tr>
+        </>
+      )}
       {isExpanded &&
         group.rest.map((alt) => (
           <tr key={alt.id} className="bg-[#1e1e20]">

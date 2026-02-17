@@ -23,6 +23,7 @@ interface Signal {
   steam_score: number;
   projection_score: number | null;
   consensus_score: number;
+  true_prob: number | null;
   edge_percentage: number;
   kelly_size: number | null;
   created_at: string;
@@ -97,6 +98,13 @@ function sportLabel(sport: string): string {
 
 function formatOdds(odds: number): string {
   return odds > 0 ? `+${odds}` : String(odds);
+}
+
+/** Convert a true probability (0–1) to American odds. */
+function trueProbToAmericanOdds(prob: number): number {
+  if (prob <= 0 || prob >= 1) return -110; // fallback
+  if (prob > 0.5) return Math.round((-100 * prob) / (1 - prob));
+  return Math.round((100 * (1 - prob)) / prob);
 }
 
 function strengthColor(strength: number): string {
@@ -238,9 +246,16 @@ export default function DashboardPage() {
                   <p className={`text-lg font-bold ${strengthColor(sig.signal_strength ?? 0)}`}>
                     {(sig.signal_strength ?? 0).toFixed(1)}
                   </p>
-                  <p className="font-mono text-sm text-gray-400">
-                    {formatOdds(sig.book_odds ?? -110)}
-                  </p>
+                  <div className="flex items-baseline justify-end gap-1.5">
+                    <span className="font-mono text-sm text-gray-400">
+                      {formatOdds(sig.book_odds ?? -110)}
+                    </span>
+                    {sig.true_prob != null && sig.true_prob > 0 && (
+                      <span className="font-mono text-[11px] text-blue-400/70">
+                        PIN {formatOdds(trueProbToAmericanOdds(sig.true_prob))}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-emerald-400">
                     +{(sig.edge_percentage ?? 0).toFixed(1)}% EV
                   </p>
