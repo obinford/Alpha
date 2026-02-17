@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useBankroll } from "@/lib/bankroll-context";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -33,7 +34,6 @@ interface Opportunity {
   games: Game;
 }
 
-/** A group of opportunities for the same game + market + side. */
 interface OppGroup {
   key: string;
   game: Game | null;
@@ -41,9 +41,7 @@ interface OppGroup {
   market_type: string;
   side: string;
   sport: string;
-  /** Best opportunity (highest EV%) shown in the collapsed row. */
   best: Opportunity;
-  /** All other opportunities sorted by EV% descending. */
   rest: Opportunity[];
 }
 
@@ -80,14 +78,30 @@ function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-/** Convert a true probability (0–1) to American odds. */
 function trueProbToAmericanOdds(prob: number): number {
-  if (prob <= 0 || prob >= 1) return -110; // fallback
+  if (prob <= 0 || prob >= 1) return -110;
   if (prob > 0.5) return Math.round((-100 * prob) / (1 - prob));
   return Math.round((100 * (1 - prob)) / prob);
 }
 
-/** Group flat opportunity list into OppGroup[] keyed by game+market+side. */
+/** Determine the calendar date label for a start_time string. */
+function dateLabel(isoString: string): string {
+  const d = new Date(isoString);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const dayAfter = new Date(tomorrow);
+  dayAfter.setDate(dayAfter.getDate() + 1);
+
+  const gameDay = new Date(d);
+  gameDay.setHours(0, 0, 0, 0);
+
+  if (gameDay.getTime() === today.getTime()) return "Today";
+  if (gameDay.getTime() === tomorrow.getTime()) return "Tomorrow";
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
 function groupOpportunities(opps: Opportunity[]): OppGroup[] {
   const map = new Map<string, Opportunity[]>();
 
@@ -103,7 +117,6 @@ function groupOpportunities(opps: Opportunity[]): OppGroup[] {
 
   const groups: OppGroup[] = [];
   for (const [key, list] of Array.from(map.entries())) {
-    // Sort by EV% descending — first item is the best.
     list.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
     const best = list[0];
     groups.push({
@@ -118,8 +131,9 @@ function groupOpportunities(opps: Opportunity[]): OppGroup[] {
     });
   }
 
-  // Sort groups by best EV% descending.
-  groups.sort((a, b) => (b.best.ev_percentage ?? 0) - (a.best.ev_percentage ?? 0));
+  groups.sort(
+    (a, b) => (b.best.ev_percentage ?? 0) - (a.best.ev_percentage ?? 0),
+  );
   return groups;
 }
 
@@ -133,6 +147,13 @@ export default function EVScannerPage() {
   const [error, setError] = useState<string | null>(null);
   const [sportFilter, setSportFilter] = useState<SportFilter>("all");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+
+  // Book filter state
+  const [selectedBooks, setSelectedBooks] = useState<Set<string> | null>(null); // null = all
+  // Day filter state
+  const [selectedDays, setSelectedDays] = useState<Set<string> | null>(null); // null = all
+
+  const { bankroll, kellyMultiplier, kellyBetSize } = useBankroll();
 
   useEffect(() => {
     setLoading(true);
@@ -149,12 +170,44 @@ export default function EVScannerPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered =
-    sportFilter === "all"
-      ? opportunities
-      : opportunities.filter(
-          (o) => o.games?.sport === sportFilter,
-        );
+  // Derive unique books & days from all opportunities
+  const allBooks = useMemo(() => {
+    const s = new Set<string>();
+    for (const o of opportunities) s.add(o.sportsbook);
+    return Array.from(s).sort();
+  }, [opportunities]);
+
+  const allDays = useMemo(() => {
+    const s = new Set<string>();
+    for (const o of opportunities) {
+      if (o.games?.start_time) s.add(dateLabel(o.games.start_time));
+    }
+    // Sort: Today first, Tomorrow second, then alphabetical
+    const order = ["Today", "Tomorrow"];
+    return Array.from(s).sort((a, b) => {
+      const ai = order.indexOf(a);
+      const bi = order.indexOf(b);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [opportunities]);
+
+  // Apply all three filters (AND logic)
+  const filtered = useMemo(() => {
+    return opportunities.filter((o) => {
+      // Sport filter
+      if (sportFilter !== "all" && o.games?.sport !== sportFilter) return false;
+      // Book filter
+      if (selectedBooks != null && !selectedBooks.has(o.sportsbook)) return false;
+      // Day filter
+      if (selectedDays != null && o.games?.start_time) {
+        if (!selectedDays.has(dateLabel(o.games.start_time))) return false;
+      }
+      return true;
+    });
+  }, [opportunities, sportFilter, selectedBooks, selectedDays]);
 
   const groups = groupOpportunities(filtered);
 
@@ -166,6 +219,54 @@ export default function EVScannerPage() {
       return next;
     });
   }
+
+  function toggleBook(book: string) {
+    setSelectedBooks((prev) => {
+      if (prev == null) {
+        // Currently "all" — switch to all-except-this
+        const next = new Set(allBooks);
+        next.delete(book);
+        return next;
+      }
+      const next = new Set(prev);
+      if (next.has(book)) {
+        next.delete(book);
+      } else {
+        next.add(book);
+      }
+      // If all are selected, go back to null (show all)
+      if (next.size === allBooks.length) return null;
+      return next;
+    });
+  }
+
+  function toggleDay(day: string) {
+    setSelectedDays((prev) => {
+      if (prev == null) {
+        const next = new Set(allDays);
+        next.delete(day);
+        return next;
+      }
+      const next = new Set(prev);
+      if (next.has(day)) {
+        next.delete(day);
+      } else {
+        next.add(day);
+      }
+      if (next.size === allDays.length) return null;
+      return next;
+    });
+  }
+
+  function isBookSelected(book: string): boolean {
+    return selectedBooks == null || selectedBooks.has(book);
+  }
+
+  function isDaySelected(day: string): boolean {
+    return selectedDays == null || selectedDays.has(day);
+  }
+
+  const showBetSize = bankroll != null;
 
   return (
     <div>
@@ -191,16 +292,94 @@ export default function EVScannerPage() {
         ))}
       </div>
 
+      {/* Day filter */}
+      {allDays.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-gray-600">
+            Day:
+          </span>
+          <button
+            onClick={() => setSelectedDays(null)}
+            className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+              selectedDays == null
+                ? "bg-[#2c2c2e] text-white"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            All
+          </button>
+          {allDays.map((day) => (
+            <button
+              key={day}
+              onClick={() => toggleDay(day)}
+              className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+                isDaySelected(day) && selectedDays != null
+                  ? "bg-[#2c2c2e] text-white"
+                  : isDaySelected(day)
+                    ? "text-gray-400 hover:text-gray-200"
+                    : "text-gray-600 hover:text-gray-400"
+              }`}
+            >
+              {day}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Book filter */}
+      {allBooks.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-gray-600">
+            Books:
+          </span>
+          <button
+            onClick={() => setSelectedBooks(null)}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              selectedBooks == null
+                ? "bg-emerald-600 text-white"
+                : "bg-[#2c2c2e] text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setSelectedBooks(new Set())}
+            className="rounded-full bg-[#2c2c2e] px-2.5 py-1 text-[11px] text-gray-500 transition-colors hover:text-gray-300"
+          >
+            Clear
+          </button>
+          {allBooks.map((book) => (
+            <button
+              key={book}
+              onClick={() => toggleBook(book)}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                isBookSelected(book)
+                  ? "bg-emerald-600/80 text-white"
+                  : "bg-[#2c2c2e] text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              {book}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Status bar */}
       <div className="mt-4 flex items-center gap-3">
         <span className="text-xs text-gray-500">
-          {groups.length} market{groups.length === 1 ? "" : "s"} &middot;{" "}
-          {filtered.length} opportunit{filtered.length === 1 ? "y" : "ies"}
+          Showing {filtered.length} of {opportunities.length} opportunit
+          {opportunities.length === 1 ? "y" : "ies"} &middot; {groups.length}{" "}
+          market{groups.length === 1 ? "" : "s"}
         </span>
         {!loading && !error && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Live
+          </span>
+        )}
+        {showBetSize && (
+          <span className="text-xs text-gray-600">
+            Bankroll: ${bankroll!.toLocaleString()}
           </span>
         )}
       </div>
@@ -230,6 +409,9 @@ export default function EVScannerPage() {
                 <th className="px-4 py-3 text-right">Book%</th>
                 <th className="px-4 py-3 text-right">EV%</th>
                 <th className="px-4 py-3 text-right">Kelly%</th>
+                {showBetSize && (
+                  <th className="px-4 py-3 text-right">Bet Size</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -246,6 +428,8 @@ export default function EVScannerPage() {
                     isExpanded={isExpanded}
                     moreCount={moreCount}
                     onToggle={() => toggleExpanded(g.key)}
+                    showBetSize={showBetSize}
+                    kellyBetSize={kellyBetSize}
                   />
                 );
               })}
@@ -267,13 +451,19 @@ function GroupRows({
   isExpanded,
   moreCount,
   onToggle,
+  showBetSize,
+  kellyBetSize,
 }: {
   group: OppGroup;
   opp: Opportunity;
   isExpanded: boolean;
   moreCount: number;
   onToggle: () => void;
+  showBetSize: boolean;
+  kellyBetSize: (fraction: number) => number | null;
 }) {
+  const betAmt = showBetSize ? kellyBetSize(opp.kelly_fraction ?? 0) : null;
+
   return (
     <>
       {/* Primary row (best EV%) */}
@@ -320,66 +510,81 @@ function GroupRows({
         <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-gray-300">
           {pct((opp.kelly_fraction ?? 0) * 100)}
         </td>
+        {showBetSize && (
+          <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-emerald-300">
+            {betAmt != null ? `$${betAmt.toFixed(2)}` : "—"}
+          </td>
+        )}
       </tr>
 
-      {/* Expanded sub-rows */}
+      {/* Expanded: Pinnacle sharp reference row */}
       {isExpanded && (
-        <>
-          {/* Pinnacle sharp reference row */}
-          <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
-            <td className="px-4 py-2" />
-            <td className="px-4 py-2" />
-            <td className="px-4 py-2" />
-            <td className="whitespace-nowrap px-4 py-2 text-blue-400">
-              <span className="font-medium">Pinnacle</span>
-              <span className="ml-2 rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-400">
-                Sharp
-              </span>
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300">
-              {formatOdds(trueProbToAmericanOdds(opp.true_prob ?? 0.5))}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300/70">
-              {pct((opp.true_prob ?? 0) * 100)}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300/70">
-              {pct((opp.true_prob ?? 0) * 100)}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
-              0.0%
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
-              0.0%
-            </td>
-          </tr>
-        </>
+        <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
+          <td className="px-4 py-2" />
+          <td className="px-4 py-2" />
+          <td className="px-4 py-2" />
+          <td className="whitespace-nowrap px-4 py-2 text-blue-400">
+            <span className="font-medium">Pinnacle</span>
+            <span className="ml-2 rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-400">
+              Sharp
+            </span>
+          </td>
+          <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300">
+            {formatOdds(trueProbToAmericanOdds(opp.true_prob ?? 0.5))}
+          </td>
+          <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300/70">
+            {pct((opp.true_prob ?? 0) * 100)}
+          </td>
+          <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-blue-300/70">
+            {pct((opp.true_prob ?? 0) * 100)}
+          </td>
+          <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
+            0.0%
+          </td>
+          <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
+            0.0%
+          </td>
+          {showBetSize && <td className="px-4 py-2" />}
+        </tr>
       )}
+
+      {/* Expanded sub-rows */}
       {isExpanded &&
-        group.rest.map((alt) => (
-          <tr key={alt.id} className="bg-[#1e1e20]">
-            <td className="px-4 py-2" />
-            <td className="px-4 py-2" />
-            <td className="px-4 py-2" />
-            <td className="whitespace-nowrap px-4 py-2 text-gray-500">
-              {alt.sportsbook}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-400">
-              {formatOdds(alt.book_odds)}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
-              {pct((alt.true_prob ?? 0) * 100)}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
-              {pct((alt.book_implied_prob ?? 0) * 100)}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-emerald-400/70">
-              +{pct(alt.ev_percentage ?? 0)}
-            </td>
-            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
-              {pct((alt.kelly_fraction ?? 0) * 100)}
-            </td>
-          </tr>
-        ))}
+        group.rest.map((alt) => {
+          const altBet = showBetSize
+            ? kellyBetSize(alt.kelly_fraction ?? 0)
+            : null;
+          return (
+            <tr key={alt.id} className="bg-[#1e1e20]">
+              <td className="px-4 py-2" />
+              <td className="px-4 py-2" />
+              <td className="px-4 py-2" />
+              <td className="whitespace-nowrap px-4 py-2 text-gray-500">
+                {alt.sportsbook}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-400">
+                {formatOdds(alt.book_odds)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
+                {pct((alt.true_prob ?? 0) * 100)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
+                {pct((alt.book_implied_prob ?? 0) * 100)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-emerald-400/70">
+                +{pct(alt.ev_percentage ?? 0)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
+                {pct((alt.kelly_fraction ?? 0) * 100)}
+              </td>
+              {showBetSize && (
+                <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-emerald-300/60">
+                  {altBet != null ? `$${altBet.toFixed(2)}` : "—"}
+                </td>
+              )}
+            </tr>
+          );
+        })}
     </>
   );
 }
