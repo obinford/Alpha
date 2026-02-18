@@ -22,7 +22,7 @@ from api.routes import (
     picks, odds, models as models_router, copilot, ev,
     line_movements, steam_alerts, sharp_dashboard, usage, clv,
     performance, props, recap, bankroll, odds_screen, signal,
-    intelligence,
+    intelligence, kenpom,
 )
 
 load_dotenv()
@@ -58,6 +58,7 @@ app.include_router(bankroll.router, prefix="/api/bankroll", tags=["bankroll"])
 app.include_router(odds_screen.router, prefix="/api/odds-screen", tags=["odds-screen"])
 app.include_router(signal.router, prefix="/api/signals", tags=["signals"])
 app.include_router(intelligence.router, prefix="/api/intelligence", tags=["intelligence"])
+app.include_router(kenpom.router, prefix="/api/kenpom", tags=["kenpom"])
 
 
 @app.get("/health")

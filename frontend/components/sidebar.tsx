@@ -7,6 +7,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/ev-scanner", label: "EV Scanner" },
   { href: "/picks", label: "Picks" },
+  { href: "/kenpom", label: "KP Edge Finder" },
   { href: "/performance", label: "Performance" },
   { href: "/settings", label: "Settings" },
 ];

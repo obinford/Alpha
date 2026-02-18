@@ -1414,6 +1414,16 @@ def run_scan(sport_keys: list[str]) -> int:
             print(f"  Warning: KenPom refresh failed ({e}).")
         print(f"  [TIMING] KenPom refresh: {time.time() - t0_kp:.1f}s")
 
+    # --- KenPom daily snapshots (projections + Pinnacle odds) ---
+    if db is not None and game_projections:
+        t0_snap = time.time()
+        try:
+            from intelligence.kenpom_snapshots import save_kenpom_snapshots
+            snap_count = save_kenpom_snapshots(db, game_projections, all_games)
+        except Exception as e:
+            print(f"  Warning: KenPom snapshot save failed ({e}).")
+        print(f"  [TIMING] KenPom snapshots: {time.time() - t0_snap:.1f}s")
+
     # --- Intelligence Layers ---
     if db is not None and all_games:
         t0_intel = time.time()
@@ -1566,6 +1576,16 @@ def run_scan(sport_keys: list[str]) -> int:
             grade_result = grade_opportunities(db)
         except Exception as e:
             print(f"Warning: Auto-grading failed ({e}).")
+
+        # Grade KenPom snapshots against final scores.
+        try:
+            from intelligence.kenpom_snapshots import grade_kenpom_snapshots
+            kp_grade = grade_kenpom_snapshots(db)
+            if kp_grade["graded"] > 0:
+                print(f"KenPom grading: {kp_grade['graded']} game(s) graded.")
+        except Exception as e:
+            print(f"Warning: KenPom grading failed ({e}).")
+
         print(f"[TIMING] Scores & grading: {time.time() - t0:.1f}s")
 
     # --- RTM Signal generation ---

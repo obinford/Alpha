@@ -12,7 +12,8 @@
     "@whop/sdk": "latest",
     "next": "14.2.x",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "recharts": "^3.7.0"
   },
   "devDependencies": {
     "@types/node": "^20",
