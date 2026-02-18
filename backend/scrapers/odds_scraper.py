@@ -1420,8 +1420,14 @@ def run_scan(sport_keys: list[str]) -> int:
         try:
             from intelligence.kenpom_snapshots import save_kenpom_snapshots
             snap_count = save_kenpom_snapshots(db, game_projections, all_games)
+            if snap_count:
+                print(f"  [KENPOM SNAPSHOT] {snap_count} snapshots persisted.")
+            else:
+                print(f"  [KENPOM SNAPSHOT] No new snapshots saved (may already exist for today).")
         except Exception as e:
-            print(f"  Warning: KenPom snapshot save failed ({e}).")
+            import traceback
+            print(f"  [KENPOM SNAPSHOT] ERROR: Snapshot save failed: {e}")
+            traceback.print_exc()
         print(f"  [TIMING] KenPom snapshots: {time.time() - t0_snap:.1f}s")
 
     # --- Intelligence Layers ---
@@ -1582,9 +1588,11 @@ def run_scan(sport_keys: list[str]) -> int:
             from intelligence.kenpom_snapshots import grade_kenpom_snapshots
             kp_grade = grade_kenpom_snapshots(db)
             if kp_grade["graded"] > 0:
-                print(f"KenPom grading: {kp_grade['graded']} game(s) graded.")
+                print(f"  [KENPOM GRADING] {kp_grade['graded']} game(s) graded.")
         except Exception as e:
-            print(f"Warning: KenPom grading failed ({e}).")
+            import traceback
+            print(f"  [KENPOM GRADING] ERROR: Grading failed: {e}")
+            traceback.print_exc()
 
         print(f"[TIMING] Scores & grading: {time.time() - t0:.1f}s")
 

@@ -11,11 +11,17 @@ router = APIRouter()
 
 def _get_snapshots_for_date(client: SupabaseClient, target_date: date) -> list[dict]:
     """Fetch all KenPom snapshots for a specific date, sorted by absolute spread edge."""
-    rows = client._get(
-        "kenpom_snapshots",
-        filters={"snapshot_date": f"eq.{target_date.isoformat()}"},
-        order="created_at.desc",
-    )
+    try:
+        rows = client._get(
+            "kenpom_snapshots",
+            filters={"snapshot_date": f"eq.{target_date.isoformat()}"},
+            order="created_at.desc",
+        )
+    except Exception as e:
+        err_str = str(e).lower()
+        if "does not exist" in err_str or "relation" in err_str or "404" in err_str:
+            return []  # Table not yet created
+        raise
 
     now = datetime.now(timezone.utc)
     for r in rows:
@@ -49,7 +55,11 @@ def get_today() -> dict:
     client = get_supabase()
     today = date.today()
     snapshots = _get_snapshots_for_date(client, today)
-    return {"date": today.isoformat(), "snapshots": snapshots}
+    return {
+        "date": today.isoformat(),
+        "snapshots": snapshots,
+        "message": "Waiting for scanner to run — snapshots populate after KenPom + Pinnacle data loads" if not snapshots else None,
+    }
 
 
 @router.get("/tomorrow")
@@ -117,6 +127,24 @@ def _count_results(rows: list[dict]) -> dict:
     }
 
 
+def _safe_get_graded(client: SupabaseClient, extra_filters: dict | None = None) -> list[dict]:
+    """Fetch graded snapshots, returning [] if table is missing."""
+    filters: dict[str, str] = {"graded": "eq.true"}
+    if extra_filters:
+        filters.update(extra_filters)
+    try:
+        return client._get(
+            "kenpom_snapshots",
+            filters=filters,
+            order="snapshot_date.asc",
+        )
+    except Exception as e:
+        err_str = str(e).lower()
+        if "does not exist" in err_str or "relation" in err_str or "404" in err_str:
+            return []
+        raise
+
+
 @router.get("/performance")
 def get_performance(
     days: int = Query(30, ge=1, le=365),
@@ -125,14 +153,7 @@ def get_performance(
     client = get_supabase()
     since = (date.today() - timedelta(days=days)).isoformat()
 
-    rows = client._get(
-        "kenpom_snapshots",
-        filters={
-            "graded": "eq.true",
-            "snapshot_date": f"gte.{since}",
-        },
-        order="snapshot_date.asc",
-    )
+    rows = _safe_get_graded(client, {"snapshot_date": f"gte.{since}"})
 
     # Group by date.
     daily: dict[str, list[dict]] = {}
@@ -180,21 +201,13 @@ def get_performance_season() -> dict:
     """Full season aggregated stats with edge bucket analysis and rolling accuracy."""
     client = get_supabase()
 
-    rows = client._get(
-        "kenpom_snapshots",
-        filters={"graded": "eq.true"},
-        order="snapshot_date.asc",
-    )
+    rows = _safe_get_graded(client)
 
     # Method B: manual count (trustworthy).
     season = _count_results(rows)
     season["total_games_graded"] = len(rows)
 
     # Verify W + L = total games that had non-null results.
-    spread_total = season["spread_wins"] + season["spread_losses"]
-    total_total = season["total_wins"] + season["total_losses"]
-    ml_total = season["ml_wins"] + season["ml_losses"]
-
     season["spread_record"] = f"{season['spread_wins']}-{season['spread_losses']}"
     season["total_record"] = f"{season['total_wins']}-{season['total_losses']}"
     season["ml_record"] = f"{season['ml_wins']}-{season['ml_losses']}"

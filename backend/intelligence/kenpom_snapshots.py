@@ -15,25 +15,130 @@ Edge sign conventions:
     ml_edge = kp_home_win_prob - pinnacle_home_implied_prob
         positive → KP more bullish on home than Pinnacle
 
-Grading example:
-    KP: Home 80, Away 72 (spread=8, total=152, home WP=75%)
-    Pinnacle: Home -5.5, total 148.5, home implied 65%
-    Edges: spread=+2.5, total=+3.5, ml=+10%
-
-    Actual: Home 78, Away 71 (actual_spread=7, actual_total=149)
-    spread_edge > 0 (KP favors home more), actual_spread(7) > PIN spread(5.5) → TRUE
-    total_edge > 0 (KP says higher), actual_total(149) > PIN total(148.5) → TRUE
-    kp_home_win_prob(0.75) > 0.5, home won → TRUE
+ATS grading formula:
+    ats_margin = actual_spread + pinnacle_spread_home
+    ats_margin > 0 → home covers
+    ats_margin < 0 → away covers
+    ats_margin == 0 → push
 """
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import date, datetime, timezone
 from typing import Any
 
 from models.ev_calculator import american_to_implied_prob
 
+# ---------------------------------------------------------------------------
+# Auto-table creation
+# ---------------------------------------------------------------------------
+
+_TABLE_VERIFIED = False
+
+_CREATE_TABLE_DDL = [
+    """CREATE TABLE IF NOT EXISTS kenpom_snapshots (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    snapshot_date DATE NOT NULL,
+    game_id TEXT NOT NULL,
+    sport TEXT DEFAULT 'basketball_ncaab',
+    home_team TEXT NOT NULL,
+    away_team TEXT NOT NULL,
+    commence_time TIMESTAMPTZ,
+    kp_home_score REAL,
+    kp_away_score REAL,
+    kp_home_win_prob REAL,
+    kp_projected_total REAL,
+    kp_projected_spread REAL,
+    pinnacle_spread_home REAL,
+    pinnacle_total REAL,
+    pinnacle_home_ml INTEGER,
+    pinnacle_away_ml INTEGER,
+    pinnacle_home_implied_prob REAL,
+    spread_edge REAL,
+    total_edge REAL,
+    ml_edge REAL,
+    result_home_score INTEGER,
+    result_away_score INTEGER,
+    result_spread_correct BOOLEAN,
+    result_total_correct BOOLEAN,
+    result_ml_correct BOOLEAN,
+    graded BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(snapshot_date, game_id)
+)""",
+    "CREATE INDEX IF NOT EXISTS idx_kenpom_snapshots_date ON kenpom_snapshots(snapshot_date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_kenpom_snapshots_game ON kenpom_snapshots(game_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kenpom_snapshots_graded ON kenpom_snapshots(graded)",
+]
+
+
+def _ensure_table(db_client: Any) -> bool:
+    """Verify kenpom_snapshots table exists; auto-create if missing.
+
+    Uses a module-level flag so we only probe once per process lifetime.
+    Returns True if the table is ready, False otherwise.
+    """
+    global _TABLE_VERIFIED
+    if _TABLE_VERIFIED:
+        return True
+
+    # Probe: try a lightweight query.
+    try:
+        db_client._get("kenpom_snapshots", select="id", limit=1)
+        _TABLE_VERIFIED = True
+        return True
+    except Exception as probe_err:
+        err_str = str(probe_err).lower()
+        # If it's not a "table missing" error, assume the table exists
+        # but there's some transient issue.
+        if "does not exist" not in err_str and "relation" not in err_str and "404" not in err_str:
+            print(f"  [KENPOM SNAPSHOT] Probe query failed (non-fatal): {probe_err}")
+            _TABLE_VERIFIED = True
+            return True
+
+    # Table missing — attempt auto-creation via the Supabase SDK.
+    print("  [KENPOM SNAPSHOT] Table 'kenpom_snapshots' not found — auto-creating...")
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        print(
+            "  [KENPOM SNAPSHOT] ERROR: Cannot auto-create table — "
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY env vars required. "
+            "Run: python scripts/create_kenpom_table.py"
+        )
+        return False
+
+    try:
+        from supabase import create_client
+        sdk_client = create_client(url, key)
+        for i, ddl in enumerate(_CREATE_TABLE_DDL, 1):
+            preview = ddl[:80].replace("\n", " ")
+            print(f"    [{i}/{len(_CREATE_TABLE_DDL)}] {preview}...")
+            try:
+                sdk_client.postgrest.rpc("exec_sql", {"query": ddl}).execute()
+            except Exception as stmt_err:
+                if "already exists" in str(stmt_err).lower():
+                    print(f"    (already exists, OK)")
+                else:
+                    raise stmt_err
+        _TABLE_VERIFIED = True
+        print("  [KENPOM SNAPSHOT] Table created successfully.")
+        return True
+    except Exception as e:
+        print(
+            f"  [KENPOM SNAPSHOT] ERROR: Auto-create failed: {e}\n"
+            f"  → Create the table manually: run 'python scripts/create_kenpom_table.py'\n"
+            f"  → Or paste scripts/008_kenpom_snapshots.sql into the Supabase SQL Editor."
+        )
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Pinnacle odds extraction
+# ---------------------------------------------------------------------------
 
 def _extract_pinnacle_odds(game: Any) -> dict[str, Any] | None:
     """Extract Pinnacle's spread, total, and ML from a game's bookmakers.
@@ -90,6 +195,10 @@ def _extract_pinnacle_odds(game: Any) -> dict[str, Any] | None:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Snapshot persistence
+# ---------------------------------------------------------------------------
+
 def save_kenpom_snapshots(
     db_client: Any,
     game_projections: dict[str, dict],
@@ -108,7 +217,18 @@ def save_kenpom_snapshots(
 
     Returns number of snapshots saved.
     """
+    print(
+        f"  [KENPOM SNAPSHOT] Starting snapshot save... "
+        f"({len(game_projections)} KP projections, {len(all_games)} total games)"
+    )
+
     if not db_client or not game_projections:
+        print("  [KENPOM SNAPSHOT] Skipped — no DB client or no projections.")
+        return 0
+
+    # Ensure table exists (auto-create on first run).
+    if not _ensure_table(db_client):
+        print("  [KENPOM SNAPSHOT] Aborted — table does not exist.")
         return 0
 
     t0 = time.time()
@@ -122,7 +242,7 @@ def save_kenpom_snapshots(
         chunk = game_ids[i : i + 50]
         id_list = ",".join(chunk)
         try:
-            rows = db_client._get(
+            existing_rows = db_client._get(
                 "kenpom_snapshots",
                 select="game_id",
                 filters={
@@ -130,15 +250,21 @@ def save_kenpom_snapshots(
                     "game_id": f"in.({id_list})",
                 },
             )
-            existing_ids.update(r["game_id"] for r in rows)
-        except Exception:
-            pass
+            existing_ids.update(r["game_id"] for r in existing_rows)
+        except Exception as e:
+            print(f"  [KENPOM SNAPSHOT] Warning: existing-check failed ({e})")
 
-    # Build game lookup.
+    if existing_ids:
+        print(f"  [KENPOM SNAPSHOT] {len(existing_ids)} games already have snapshots for {today_str}, skipping those.")
+
+    # Build game lookup (CBB only).
     game_map = {g.id: g for g in all_games if g.sport_key == "basketball_ncaab"}
+    print(f"  [KENPOM SNAPSHOT] {len(game_map)} CBB games in all_games.")
 
     rows: list[dict] = []
-    debug_count = 0
+    pin_found = 0
+    pin_missing = 0
+    no_game = 0
 
     for game_id, proj in game_projections.items():
         if game_id in existing_ids:
@@ -146,6 +272,7 @@ def save_kenpom_snapshots(
 
         game = game_map.get(game_id)
         if game is None:
+            no_game += 1
             continue
 
         # KenPom data.
@@ -158,6 +285,10 @@ def save_kenpom_snapshots(
 
         # Pinnacle data.
         pin = _extract_pinnacle_odds(game)
+        if pin:
+            pin_found += 1
+        else:
+            pin_missing += 1
         pin_spread = pin.get("spread_home") if pin else None
         pin_total = pin.get("total") if pin else None
         pin_home_ml = pin.get("home_ml") if pin else None
@@ -170,14 +301,13 @@ def save_kenpom_snapshots(
         ml_edge = (kp_wp - pin_home_ip) if pin_home_ip is not None else None
 
         # Debug first 3 games.
-        if debug_count < 3:
-            debug_count += 1
+        if len(rows) < 3:
             ip_str = f"{pin_home_ip:.3f}" if pin_home_ip else "N/A"
             se_str = f"{spread_edge:+.1f}" if spread_edge is not None else "N/A"
             te_str = f", total={total_edge:+.1f}" if total_edge is not None else ""
             me_str = f", ml={ml_edge:+.3f}" if ml_edge is not None else ""
             print(
-                f"  [KENPOM SNAPSHOT DEBUG {debug_count}/3] "
+                f"  [KENPOM SNAPSHOT DEBUG {len(rows)+1}/3] "
                 f"{game.away_team} @ {game.home_team} | "
                 f"KP: {kp_away:.0f}-{kp_home:.0f} (spread={kp_spread:+.1f}, total={kp_total:.1f}, WP={kp_wp:.1%}) | "
                 f"PIN: spread={pin_spread}, total={pin_total}, ML={pin_home_ml}/{pin_away_ml} (IP={ip_str}) | "
@@ -198,15 +328,23 @@ def save_kenpom_snapshots(
             "kp_projected_spread": round(kp_spread, 1),
             "pinnacle_spread_home": pin_spread,
             "pinnacle_total": pin_total,
-            "pinnacle_home_ml": pin_home_ml,
-            "pinnacle_away_ml": pin_away_ml,
+            "pinnacle_home_ml": int(pin_home_ml) if pin_home_ml is not None else None,
+            "pinnacle_away_ml": int(pin_away_ml) if pin_away_ml is not None else None,
             "pinnacle_home_implied_prob": round(pin_home_ip, 4) if pin_home_ip else None,
             "spread_edge": round(spread_edge, 2) if spread_edge is not None else None,
             "total_edge": round(total_edge, 2) if total_edge is not None else None,
             "ml_edge": round(ml_edge, 4) if ml_edge is not None else None,
         })
 
+    print(
+        f"  [KENPOM SNAPSHOT] Found {len(game_projections)} games with KP data, "
+        f"{pin_found} with Pinnacle odds, {pin_missing} without Pinnacle"
+        + (f", {no_game} KP games not in all_games" if no_game else "")
+        + (f", {len(existing_ids)} already saved" if existing_ids else "")
+    )
+
     if not rows:
+        print(f"  [KENPOM SNAPSHOT] Nothing new to save for {today_str}.")
         return 0
 
     try:
@@ -215,13 +353,25 @@ def save_kenpom_snapshots(
         )
         elapsed = time.time() - t0
         print(
-            f"  [KENPOM SNAPSHOT] Saved {len(rows)} game projections for {today_str} ({elapsed:.1f}s)"
+            f"  [KENPOM SNAPSHOT] Saved {len(rows)} snapshots for {today_str} ({elapsed:.1f}s)"
         )
         return len(rows)
     except Exception as e:
-        print(f"  Warning: KenPom snapshot save failed ({e})")
+        err_str = str(e).lower()
+        if "does not exist" in err_str or "relation" in err_str:
+            print(
+                f"  [KENPOM SNAPSHOT] ERROR: Table 'kenpom_snapshots' does not exist!\n"
+                f"  → Run: python scripts/create_kenpom_table.py\n"
+                f"  → Or paste scripts/008_kenpom_snapshots.sql into the Supabase SQL Editor."
+            )
+        else:
+            print(f"  [KENPOM SNAPSHOT] ERROR: Save failed: {e}")
         return 0
 
+
+# ---------------------------------------------------------------------------
+# Grading
+# ---------------------------------------------------------------------------
 
 def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     """Grade ungraded KenPom snapshots against final game scores.
@@ -243,15 +393,20 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     if db_client is None:
         return result
 
+    # Ensure table exists before querying.
+    if not _ensure_table(db_client):
+        return result
+
     # Fetch ungraded snapshots.
     try:
         ungraded = db_client._get(
             "kenpom_snapshots",
-            select="id,game_id,kp_projected_spread,kp_projected_total,kp_home_win_prob,"
+            select="id,game_id,snapshot_date,kp_projected_spread,kp_projected_total,kp_home_win_prob,"
                    "pinnacle_spread_home,pinnacle_total,spread_edge,total_edge,ml_edge",
             filters={"graded": "eq.false"},
         )
-    except Exception:
+    except Exception as e:
+        print(f"  [KENPOM GRADING] Failed to fetch ungraded snapshots: {e}")
         return result
 
     if not ungraded:
@@ -373,7 +528,7 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
                 "kenpom_snapshots", update_rows, on_conflict="snapshot_date,game_id"
             )
         except Exception as e:
-            print(f"  Warning: KenPom grading update failed ({e})")
+            print(f"  [KENPOM GRADING] Update failed: {e}")
             return result
 
     # Log summary.
