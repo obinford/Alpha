@@ -345,88 +345,82 @@ def save_kenpom_snapshots(
     today = snapshot_dt or date.today()
     today_str = today.isoformat()
 
-    # Check which games already have snapshots for today, and their source.
-    # Fanmatch snapshots are kept; ratings snapshots are overwritten if we
-    # now have fanmatch data for that game.
-    game_ids = list(game_projections.keys())
-    existing_fanmatch_ids: set[str] = set()
-    existing_ratings_ids: set[str] = set()
-    for i in range(0, len(game_ids), 50):
-        chunk = game_ids[i : i + 50]
-        id_list = ",".join(chunk)
-        try:
-            existing_rows = db_client._get(
-                "kenpom_snapshots",
-                select="game_id,projection_source",
-                filters={
-                    "snapshot_date": f"eq.{today_str}",
-                    "game_id": f"in.({id_list})",
-                },
+    # Classify projections by source.
+    fanmatch_ids = [gid for gid, p in game_projections.items() if "fanmatch" in p.get("source", "")]
+    ratings_ids = [gid for gid, p in game_projections.items() if "fanmatch" not in p.get("source", "")]
+    print(
+        f"  [KENPOM SNAPSHOT] Projections: {len(fanmatch_ids)} fanmatch, {len(ratings_ids)} ratings"
+    )
+
+    # -----------------------------------------------------------------------
+    # PURGE: If we have fanmatch data, DELETE all non-fanmatch rows for today.
+    # This guarantees stale ratings rows can never block fanmatch insertion.
+    # -----------------------------------------------------------------------
+    if fanmatch_ids:
+        purged = 0
+        for source_filter in ["is.null", "neq.kenpom_fanmatch"]:
+            try:
+                resp = db_client._http.delete(
+                    f"{db_client.base_url}/kenpom_snapshots",
+                    headers={**db_client.headers, "Prefer": "return=representation"},
+                    params={
+                        "snapshot_date": f"eq.{today_str}",
+                        "projection_source": source_filter,
+                    },
+                    timeout=15,
+                )
+                if resp.status_code < 400:
+                    body = resp.json() if resp.text.strip() else []
+                    purged += len(body)
+            except Exception as e:
+                print(f"  [KENPOM SNAPSHOT] Purge failed ({source_filter}): {e}")
+        if purged:
+            print(f"  [KENPOM SNAPSHOT] Purged {purged} non-fanmatch snapshots for {today_str}")
+
+    # For ratings-only projections, check which games already have ANY
+    # snapshot for today (fanmatch rows we want to keep).
+    existing_snapshot_ids: set[str] = set()
+    if ratings_ids:
+        for i in range(0, len(ratings_ids), 50):
+            chunk = ratings_ids[i : i + 50]
+            id_list = ",".join(chunk)
+            try:
+                existing_rows = db_client._get(
+                    "kenpom_snapshots",
+                    select="game_id",
+                    filters={
+                        "snapshot_date": f"eq.{today_str}",
+                        "game_id": f"in.({id_list})",
+                    },
+                )
+                existing_snapshot_ids.update(r["game_id"] for r in existing_rows)
+            except Exception:
+                pass
+        if existing_snapshot_ids:
+            print(
+                f"  [KENPOM SNAPSHOT] {len(existing_snapshot_ids)} ratings games already have "
+                f"snapshots (fanmatch), skipping those"
             )
-            for r in existing_rows:
-                src = r.get("projection_source") or ""
-                if "fanmatch" in src:
-                    existing_fanmatch_ids.add(r["game_id"])
-                else:
-                    # ratings, null, or unknown — eligible for overwrite
-                    existing_ratings_ids.add(r["game_id"])
-        except Exception as e:
-            print(f"  [KENPOM SNAPSHOT] Warning: existing-check failed ({e})")
-
-    # Count how many ratings snapshots will be overwritten by fanmatch.
-    overwrite_count = 0
-    for gid in existing_ratings_ids:
-        proj_src = game_projections.get(gid, {}).get("source", "")
-        if "fanmatch" in proj_src:
-            overwrite_count += 1
-
-    if existing_fanmatch_ids:
-        print(f"  [KENPOM SNAPSHOT] {len(existing_fanmatch_ids)} games already have fanmatch snapshots for {today_str}, skipping those.")
-    if overwrite_count:
-        print(f"  [KENPOM SNAPSHOT] {overwrite_count} ratings snapshots will be OVERWRITTEN with fanmatch data.")
 
     # Build game lookup (CBB only).
     game_map = {g.id: g for g in all_games if getattr(g, "sport_key", "") == "basketball_ncaab"}
-
-    # Debug: inspect first CBB game to diagnose Pinnacle extraction issues.
-    if game_map:
-        g0_id = next(iter(game_map))
-        g0 = game_map[g0_id]
-        bks = getattr(g0, "bookmakers", None)
-        print(
-            f"  [KENPOM SNAPSHOT DEBUG] First CBB game: type={type(g0).__name__}, "
-            f"id={g0_id}, has bookmakers={bks is not None}, "
-            f"count={len(bks) if bks else 0}"
-        )
-        if bks:
-            bk_keys = [getattr(bk, "key", "?") for bk in bks]
-            print(f"  [KENPOM SNAPSHOT DEBUG] Bookmaker keys: {bk_keys}")
-            pin_bks = [bk for bk in bks if (getattr(bk, "key", "") or "").lower() == "pinnacle"]
-            if pin_bks:
-                mkts = getattr(pin_bks[0], "markets", [])
-                mkt_info = [(getattr(m, "key", "?"), len(getattr(m, "outcomes", []))) for m in mkts]
-                print(f"  [KENPOM SNAPSHOT DEBUG] Pinnacle markets: {mkt_info}")
-            else:
-                print(f"  [KENPOM SNAPSHOT DEBUG] 'pinnacle' NOT in bookmaker keys")
-        else:
-            print(f"  [KENPOM SNAPSHOT DEBUG] Game has NO bookmakers — odds data not attached to game objects")
 
     rows: list[dict] = []
     pin_found = 0
     pin_missing = 0
     no_game = 0
+    save_count_fanmatch = 0
+    save_count_ratings = 0
 
-    # First pass: extract Pinnacle from in-memory game objects.
-    games_needing_pin: list[str] = []  # game_ids where extraction failed
+    # Build rows: fanmatch ALWAYS upserts, ratings only fill gaps.
+    games_needing_pin: list[str] = []
     debug_count = 0
     for game_id, proj in game_projections.items():
-        # Skip games that already have fanmatch snapshots.
-        # But ALLOW overwrite of ratings snapshots with fanmatch data.
-        if game_id in existing_fanmatch_ids:
-            continue
         new_source = proj.get("source", "unknown")
-        if game_id in existing_ratings_ids and "fanmatch" not in new_source:
-            # Existing is ratings, new is also ratings — no improvement, skip.
+        is_fanmatch = "fanmatch" in new_source
+
+        # Ratings only upsert if NO snapshot exists for this game today.
+        if not is_fanmatch and game_id in existing_snapshot_ids:
             continue
 
         # Debug: log first 3 games for source chain verification.
@@ -438,6 +432,11 @@ def save_kenpom_snapshots(
                 f"source={new_source}, home={kp_h:.1f}, away={kp_a:.1f}"
             )
             debug_count += 1
+
+        if is_fanmatch:
+            save_count_fanmatch += 1
+        else:
+            save_count_ratings += 1
 
         game = game_map.get(game_id)
         if game is None:
@@ -535,16 +534,24 @@ def save_kenpom_snapshots(
             print(f"  [KENPOM SNAPSHOT] DB fallback filled Pinnacle data for {backfilled} games")
 
     print(
-        f"  [KENPOM SNAPSHOT] {len(game_projections)} KP projections, "
-        f"{pin_found} with Pinnacle, {pin_missing} without Pinnacle"
+        f"  [KENPOM SNAPSHOT] Saving {save_count_fanmatch} fanmatch + "
+        f"{save_count_ratings} ratings projections | "
+        f"{pin_found} with Pinnacle, {pin_missing} without"
         + (f", {no_game} not in all_games" if no_game else "")
-        + (f", {len(existing_fanmatch_ids)} already fanmatch" if existing_fanmatch_ids else "")
-        + (f", {overwrite_count} ratings->fanmatch upgrades" if overwrite_count else "")
     )
 
     if not rows:
         print(f"  [KENPOM SNAPSHOT] Nothing new to save for {today_str}.")
         return 0
+
+    # Log first 3 rows being saved.
+    for i, row in enumerate(rows[:3]):
+        print(
+            f"  [KENPOM SNAPSHOT] Saved: "
+            f"{row['away_team']} @ {row['home_team']} "
+            f"source={row['projection_source']} "
+            f"home={row['kp_home_score']} away={row['kp_away_score']}"
+        )
 
     try:
         db_client._upsert_many(
@@ -554,11 +561,30 @@ def save_kenpom_snapshots(
         print(
             f"  [KENPOM SNAPSHOT] Saved {len(rows)} snapshots for {today_str} ({elapsed:.1f}s)"
         )
-        return len(rows)
     except Exception as e:
         print(f"  [KENPOM SNAPSHOT] ERROR saving snapshots: {e}")
         traceback.print_exc()
         return 0
+
+    # Verify: query back source counts to confirm the save worked.
+    try:
+        verify_rows = db_client._get(
+            "kenpom_snapshots",
+            select="projection_source",
+            filters={"snapshot_date": f"eq.{today_str}"},
+        )
+        source_counts: dict[str, int] = {}
+        for vr in verify_rows:
+            src = vr.get("projection_source") or "null"
+            source_counts[src] = source_counts.get(src, 0) + 1
+        print(
+            f"  [KENPOM SNAPSHOT] Verify: {len(verify_rows)} total snapshots for {today_str} — "
+            + ", ".join(f"{src}={cnt}" for src, cnt in sorted(source_counts.items()))
+        )
+    except Exception as e:
+        print(f"  [KENPOM SNAPSHOT] Verify query failed: {e}")
+
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------
