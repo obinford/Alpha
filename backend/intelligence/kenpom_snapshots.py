@@ -24,26 +24,88 @@ ATS grading formula:
 
 from __future__ import annotations
 
+import os
 import time
 import traceback
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from models.ev_calculator import american_to_implied_prob
 
 # ---------------------------------------------------------------------------
-# Table existence check — uses the same db_client the scanner passes in.
+# Table auto-creation via RPC — uses the same db_client the scanner uses.
 # ---------------------------------------------------------------------------
 
 _TABLE_VERIFIED = False
 
+# Path to the migration SQL that defines kenpom_snapshots.
+_SQL_PATH = Path(__file__).resolve().parent.parent.parent / "scripts" / "008_kenpom_snapshots.sql"
+
+
+def _try_create_table_via_rpc(db_client: Any) -> bool:
+    """Attempt to create kenpom_snapshots via PostgREST RPC exec_sql.
+
+    Uses the same httpx client and service-role credentials that the scanner
+    uses for ev_opportunities, signals, etc.  Requires an ``exec_sql(query)``
+    Postgres function on the Supabase instance (common in many setups).
+
+    Returns True if the table was successfully created (or already exists).
+    """
+    if not _SQL_PATH.exists():
+        print(f"  [KENPOM SNAPSHOT] SQL migration not found at {_SQL_PATH}")
+        return False
+
+    sql_text = _SQL_PATH.read_text()
+    statements = [
+        s.strip()
+        for s in sql_text.split(";")
+        if s.strip() and not s.strip().startswith("--")
+    ]
+    if not statements:
+        return False
+
+    rpc_url = f"{db_client.base_url}/rpc/exec_sql"
+    print(f"  [KENPOM SNAPSHOT] Attempting auto-create via RPC ({len(statements)} statements)...")
+
+    for i, stmt in enumerate(statements, 1):
+        preview = stmt[:80].replace("\n", " ")
+        try:
+            resp = db_client._http.post(
+                rpc_url,
+                headers=db_client.headers,
+                json={"query": stmt},
+                timeout=15,
+            )
+            if resp.status_code < 400:
+                print(f"    [{i}/{len(statements)}] OK: {preview}")
+                continue
+            body = resp.text.lower()
+            if "already exists" in body:
+                print(f"    [{i}/{len(statements)}] Already exists (OK)")
+                continue
+            # RPC function doesn't exist or other error — bail out.
+            print(f"    [{i}/{len(statements)}] Failed (HTTP {resp.status_code}): {resp.text[:200]}")
+            return False
+        except Exception as e:
+            print(f"    [{i}/{len(statements)}] Exception: {e}")
+            return False
+
+    print("  [KENPOM SNAPSHOT] Table created successfully via RPC.")
+    return True
+
 
 def _ensure_table(db_client: Any) -> bool:
-    """Verify kenpom_snapshots table exists via a lightweight probe.
+    """Verify kenpom_snapshots table exists; auto-create if missing.
 
     Uses a module-level flag so we only probe once per process lifetime.
     The db_client is the same SupabaseClient used by the rest of the scanner
     (created via get_supabase() in odds_scraper.py).
+
+    If the table is missing, attempts to create it via PostgREST RPC
+    using the same credentials.  Falls back to clear manual instructions
+    if auto-creation fails.
+
     Returns True if the table is ready, False otherwise.
     """
     global _TABLE_VERIFIED
@@ -61,12 +123,25 @@ def _ensure_table(db_client: Any) -> bool:
         if "does not exist" not in err_str and "relation" not in err_str and "404" not in err_str:
             _TABLE_VERIFIED = True
             return True
-        print(
-            f"  [KENPOM SNAPSHOT] ERROR: Table 'kenpom_snapshots' does not exist.\n"
-            f"  → Create it in Supabase SQL Editor with: scripts/008_kenpom_snapshots.sql\n"
-            f"  → Or run: python scripts/create_kenpom_table.py"
-        )
-        return False
+
+    # Table is missing — try to auto-create it.
+    print("  [KENPOM SNAPSHOT] Table 'kenpom_snapshots' not found — attempting auto-create...")
+    if _try_create_table_via_rpc(db_client):
+        # Verify the table is now queryable.
+        try:
+            db_client._get("kenpom_snapshots", select="id", limit=1)
+            _TABLE_VERIFIED = True
+            return True
+        except Exception:
+            pass
+
+    # Auto-creation failed — give clear instructions.
+    print(
+        f"  [KENPOM SNAPSHOT] Auto-create failed. Create the table manually:\n"
+        f"  → Paste scripts/008_kenpom_snapshots.sql into Supabase SQL Editor\n"
+        f"  → Or run: python scripts/create_kenpom_table.py"
+    )
+    return False
 
 
 # ---------------------------------------------------------------------------

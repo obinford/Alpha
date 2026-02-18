@@ -1422,7 +1422,7 @@ def run_scan(sport_keys: list[str]) -> int:
     elif not game_projections:
         print("[KENPOM SNAPSHOT] Skipping snapshot save — no game_projections (no CBB games or KenPom disabled).")
     else:
-        print(f"[KENPOM SNAPSHOT] Calling save_kenpom_snapshots(db, {len(game_projections)} projections, {len(all_games)} games)")
+        print(f"[KENPOM SNAPSHOT] db={type(db).__name__} (not None), {len(game_projections)} projections, {len(all_games)} games")
         t0_snap = time.time()
         try:
             from intelligence.kenpom_snapshots import save_kenpom_snapshots
