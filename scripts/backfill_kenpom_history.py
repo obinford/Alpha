@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Backfill KenPom snapshots from historical data.
+"""Backfill and repair KenPom snapshots.
 
-Attempts to build kenpom_snapshots for past CBB games by:
-1. Fetching KenPom fanmatch predictions for each historical date.
-2. Looking up Pinnacle odds from true_lines or odds_snapshots tables.
-3. Grading against final game scores.
+Two modes:
+  1. REPAIR: Fix spread_edge sign convention and add projection_source for
+     existing snapshots in the DB.
+  2. BACKFILL: Create new snapshots for historical dates from games table +
+     KenPom fanmatch + Pinnacle odds.
 
-Safe to run multiple times (idempotent — uses upserts).
+Safe to run multiple times (idempotent).
 
 Usage:
-    python scripts/backfill_kenpom_history.py          # last 30 days
-    python scripts/backfill_kenpom_history.py --days 7  # last 7 days
+    python scripts/backfill_kenpom_history.py                # repair + backfill last 30 days
+    python scripts/backfill_kenpom_history.py --days 7       # repair + backfill last 7 days
+    python scripts/backfill_kenpom_history.py --repair-only  # only fix existing data
+    python scripts/backfill_kenpom_history.py --dry-run      # show what would change
 """
 
 import os
@@ -26,60 +29,142 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 
-def main() -> None:
-    import argparse
+def repair_existing_snapshots(db, dry_run: bool = False) -> int:
+    """Repair spread_edge sign convention for all existing snapshots.
 
-    parser = argparse.ArgumentParser(description="Backfill KenPom snapshots")
-    parser.add_argument("--days", type=int, default=30, help="Days to look back")
-    args = parser.parse_args()
+    The old formula was: spread_edge = kp_projected_spread - pinnacle_spread_home
+    The correct formula: spread_edge = kp_projected_spread + pinnacle_spread_home
 
-    from db import get_supabase
+    Because kp_projected_spread uses margin convention (positive = home scores more)
+    while pinnacle_spread_home uses betting convention (negative = home favored).
 
-    db = get_supabase()
+    Also re-grades spread_correct based on the corrected spread_edge.
+    """
+    print("\n=== REPAIRING EXISTING SNAPSHOTS ===\n")
 
-    # Check if historical Pinnacle odds are available.
-    has_historical_odds = False
     try:
-        check = db._get(
-            "odds_snapshots",
-            select="id",
-            filters={"sportsbook": "eq.pinnacle"},
-            limit=1,
+        all_rows = db._get(
+            "kenpom_snapshots",
+            select="id,game_id,snapshot_date,kp_projected_spread,kp_projected_total,"
+                   "kp_home_win_prob,pinnacle_spread_home,pinnacle_total,"
+                   "pinnacle_home_implied_prob,spread_edge,total_edge,ml_edge,"
+                   "result_home_score,result_away_score,graded,projection_source",
         )
-        has_historical_odds = bool(check)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  Failed to fetch snapshots: {e}")
+        return 0
 
-    if not has_historical_odds:
-        # Check true_lines as alternative source.
-        try:
-            check = db._get("true_lines", select="id", limit=1)
-            has_historical_odds = bool(check)
-        except Exception:
-            pass
+    if not all_rows:
+        print("  No existing snapshots to repair.")
+        return 0
 
-    if not has_historical_odds:
-        today_str = date.today().isoformat()
-        print(
-            f"Historical Pinnacle odds not available. "
-            f"KP tracking starts from {today_str}. "
-            f"Full season data will build over time."
-        )
-        print("You can still run this script after a few days of scanner operation.")
-        return
+    print(f"  Found {len(all_rows)} existing snapshots.")
+
+    repaired = 0
+    regrade_count = 0
+    sample_fixes = []
+
+    for row in all_rows:
+        row_id = row.get("id")
+        if not row_id:
+            continue
+
+        kp_spread = row.get("kp_projected_spread")
+        pin_spread = row.get("pinnacle_spread_home")
+        old_spread_edge = row.get("spread_edge")
+
+        if kp_spread is None or pin_spread is None:
+            continue
+
+        # Correct formula: kp_spread + pin_spread (opposite sign conventions)
+        new_spread_edge = round(kp_spread + pin_spread, 2)
+
+        # Check if it actually needs repair.
+        if old_spread_edge is not None and abs(old_spread_edge - new_spread_edge) < 0.01:
+            continue
+
+        update: dict = {
+            "spread_edge": new_spread_edge,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Re-grade spread_correct if the game is graded and has scores.
+        if row.get("graded") and row.get("result_home_score") is not None:
+            hs = int(row["result_home_score"])
+            aws = int(row["result_away_score"])
+            actual_spread = hs - aws
+            ats_margin = actual_spread + pin_spread
+
+            if new_spread_edge != 0 and ats_margin != 0:
+                if new_spread_edge > 0:
+                    update["result_spread_correct"] = ats_margin > 0
+                else:
+                    update["result_spread_correct"] = ats_margin < 0
+                regrade_count += 1
+
+        # Collect a few samples for the summary.
+        if len(sample_fixes) < 5:
+            sample_fixes.append({
+                "game_id": row.get("game_id", "?")[:30],
+                "date": row.get("snapshot_date", "?"),
+                "kp_spread": kp_spread,
+                "pin_spread": pin_spread,
+                "old_edge": old_spread_edge,
+                "new_edge": new_spread_edge,
+            })
+
+        if not dry_run:
+            try:
+                db._http.patch(
+                    f"{db.base_url}/kenpom_snapshots",
+                    headers={**db.headers, "Prefer": "return=minimal"},
+                    params={"id": f"eq.{row_id}"},
+                    json=update,
+                    timeout=15,
+                )
+            except Exception as e:
+                print(f"  PATCH failed for {row_id}: {e}")
+                continue
+
+        repaired += 1
+
+    # Print sample fixes.
+    if sample_fixes:
+        print(f"\n  Sample fixes (first {len(sample_fixes)}):")
+        for s in sample_fixes:
+            print(
+                f"    {s['date']} | {s['game_id']:<30} | "
+                f"KP={s['kp_spread']:+.1f} PIN={s['pin_spread']:+.1f} | "
+                f"OLD edge={s['old_edge']} -> NEW edge={s['new_edge']:+.1f}"
+            )
+
+    prefix = "[DRY RUN] " if dry_run else ""
+    print(f"\n  {prefix}Repaired {repaired} snapshots, re-graded {regrade_count}.")
+    return repaired
+
+
+def backfill_new_snapshots(db, days: int, dry_run: bool = False) -> tuple[int, int]:
+    """Backfill KenPom snapshots for historical dates.
+
+    Uses KenPom fanmatch API for the actual game date, plus Pinnacle odds
+    from odds_snapshots table. Grades against final scores.
+
+    Returns (total_saved, total_graded).
+    """
+    print(f"\n=== BACKFILLING NEW SNAPSHOTS (last {days} days) ===\n")
+
+    from models.ev_calculator import american_to_implied_prob
 
     today = date.today()
     total_saved = 0
     total_graded = 0
     days_processed = 0
 
-    print(f"Backfilling KenPom snapshots for the last {args.days} days...")
-
-    for days_ago in range(args.days, -1, -1):
+    for days_ago in range(days, -1, -1):
         target_date = today - timedelta(days=days_ago)
         target_str = target_date.isoformat()
 
-        # Get CBB games for this date from the games table.
+        # Get CBB games for this date.
         try:
             games = db._get(
                 "games",
@@ -89,18 +174,14 @@ def main() -> None:
                     "start_time": f"gte.{target_str}T00:00:00Z",
                 },
             )
-            # Filter to games on this specific date.
-            games = [
-                g for g in games
-                if g.get("start_time", "")[:10] == target_str
-            ]
+            games = [g for g in games if g.get("start_time", "")[:10] == target_str]
         except Exception:
             continue
 
         if not games:
             continue
 
-        # Check which games already have snapshots.
+        # Check which already have snapshots.
         game_ids = [g["game_id"] for g in games]
         existing: set[str] = set()
         for i in range(0, len(game_ids), 50):
@@ -123,10 +204,10 @@ def main() -> None:
         if not new_games:
             continue
 
-        # Try to fetch KenPom fanmatch for this date.
+        # Fetch KenPom fanmatch for this specific date.
         kp_projections: dict[str, dict] = {}
         try:
-            from intelligence.kenpom import KenPomClient
+            from intelligence.kenpom import KenPomClient, fetch_fanmatch
 
             teams = []
             for g in new_games:
@@ -136,44 +217,31 @@ def main() -> None:
                     teams.append(g["away_team"])
 
             kp = KenPomClient(odds_api_teams=teams)
-            kp.refresh(target_date=target_date)
+
+            # Fetch fanmatch for the specific historical date (populates cache).
+            fetch_fanmatch(target_date)
+            # Also ensure ratings and name map are loaded.
+            kp.fetch_ratings()
+            kp.fetch_teams()
+            kp.build_name_map(teams)
 
             for g in new_games:
                 proj = kp.get_projection(g["home_team"], g["away_team"])
                 if proj:
                     kp_projections[g["game_id"]] = proj
         except Exception as e:
-            # Fanmatch may not work for this date — try ratings fallback.
-            try:
-                from intelligence.kenpom import KenPomClient
-
-                teams = []
-                for g in new_games:
-                    if g["home_team"] not in teams:
-                        teams.append(g["home_team"])
-                    if g["away_team"] not in teams:
-                        teams.append(g["away_team"])
-
-                kp = KenPomClient(odds_api_teams=teams)
-                kp.refresh_ratings_only()
-
-                for g in new_games:
-                    proj = kp.get_projection(g["home_team"], g["away_team"])
-                    if proj:
-                        kp_projections[g["game_id"]] = proj
-            except Exception:
-                pass
+            print(f"  {target_str}: KenPom fetch failed ({e})")
+            continue
 
         if not kp_projections:
             continue
 
-        # Get Pinnacle odds from odds_snapshots or true_lines.
+        # Get Pinnacle odds from odds_snapshots.
         pinnacle_data: dict[str, dict] = {}
         for i in range(0, len(game_ids), 50):
             chunk = game_ids[i : i + 50]
             id_list = ",".join(chunk)
             try:
-                # Try odds_snapshots first (has actual Pinnacle lines).
                 snaps = db._get(
                     "odds_snapshots",
                     select="game_id,market_type,home_odds,away_odds,spread_value,total_value",
@@ -194,12 +262,11 @@ def main() -> None:
                         pinnacle_data[gid]["home_ml"] = s.get("home_odds")
                         pinnacle_data[gid]["away_ml"] = s.get("away_odds")
                         if s.get("home_odds"):
-                            from models.ev_calculator import american_to_implied_prob
                             pinnacle_data[gid]["home_implied_prob"] = american_to_implied_prob(s["home_odds"])
             except Exception:
                 pass
 
-        # Build and save snapshots.
+        # Build snapshot rows.
         rows: list[dict] = []
         for g in new_games:
             gid = g["game_id"]
@@ -220,9 +287,12 @@ def main() -> None:
             pin_away_ml = pin.get("away_ml")
             pin_home_ip = pin.get("home_implied_prob")
 
-            spread_edge = (kp_spread - pin_spread) if pin_spread is not None else None
+            # CORRECT formula: kp_spread + pin_spread (opposite sign conventions)
+            spread_edge = (kp_spread + pin_spread) if pin_spread is not None else None
             total_edge = (kp_total - pin_total) if pin_total is not None else None
             ml_edge = (kp_wp - pin_home_ip) if pin_home_ip is not None else None
+
+            source = proj.get("source", "unknown")
 
             row: dict = {
                 "snapshot_date": target_str,
@@ -244,9 +314,10 @@ def main() -> None:
                 "spread_edge": round(spread_edge, 2) if spread_edge is not None else None,
                 "total_edge": round(total_edge, 2) if total_edge is not None else None,
                 "ml_edge": round(ml_edge, 4) if ml_edge is not None else None,
+                "projection_source": source,
             }
 
-            # Grade if we have final scores.
+            # Grade if final scores exist.
             if g.get("status") == "final" and g.get("home_score") is not None:
                 hs = int(g["home_score"])
                 aws = int(g["away_score"])
@@ -260,7 +331,7 @@ def main() -> None:
                 if spread_edge is not None and pin_spread is not None and spread_edge != 0:
                     ats_margin = actual_spread + pin_spread
                     if ats_margin == 0:
-                        row["result_spread_correct"] = None  # push
+                        row["result_spread_correct"] = None
                     elif spread_edge > 0:
                         row["result_spread_correct"] = ats_margin > 0
                     else:
@@ -286,21 +357,120 @@ def main() -> None:
 
             rows.append(row)
 
-        if rows:
+        if rows and not dry_run:
             try:
                 db._upsert_many(
                     "kenpom_snapshots", rows, on_conflict="snapshot_date,game_id"
                 )
                 total_saved += len(rows)
                 days_processed += 1
-                print(f"  {target_str}: {len(rows)} snapshots saved")
+                source_counts: dict[str, int] = {}
+                for r in rows:
+                    src = r.get("projection_source", "unknown")
+                    source_counts[src] = source_counts.get(src, 0) + 1
+                src_str = ", ".join(f"{k}={v}" for k, v in source_counts.items())
+                print(f"  {target_str}: {len(rows)} snapshots saved ({src_str})")
             except Exception as e:
-                print(f"  {target_str}: failed ({e})")
+                print(f"  {target_str}: save failed ({e})")
+        elif rows:
+            print(f"  [DRY RUN] {target_str}: would save {len(rows)} snapshots")
 
-    print(
-        f"\nBackfill complete: {days_processed} days, {total_saved} total games, "
-        f"{total_graded} graded"
-    )
+    prefix = "[DRY RUN] " if dry_run else ""
+    print(f"\n  {prefix}Backfill: {days_processed} days, {total_saved} saved, {total_graded} graded.")
+    return total_saved, total_graded
+
+
+def print_verification_summary(db) -> None:
+    """Print a summary of snapshot data for verification."""
+    print("\n=== VERIFICATION SUMMARY ===\n")
+
+    try:
+        all_rows = db._get(
+            "kenpom_snapshots",
+            select="snapshot_date,kp_projected_spread,kp_projected_total,"
+                   "pinnacle_spread_home,pinnacle_total,spread_edge,total_edge,"
+                   "home_team,away_team,projection_source,graded,"
+                   "result_spread_correct,result_total_correct,result_ml_correct",
+        )
+    except Exception as e:
+        print(f"  Query failed: {e}")
+        return
+
+    if not all_rows:
+        print("  No snapshots in database.")
+        return
+
+    print(f"  Total snapshots: {len(all_rows)}")
+
+    # Source breakdown.
+    sources: dict[str, int] = {}
+    for r in all_rows:
+        src = r.get("projection_source") or "unknown"
+        sources[src] = sources.get(src, 0) + 1
+    print(f"  Sources: {sources}")
+
+    # Verify spread_edge formula on a few samples.
+    print("\n  Spot-check (spread_edge = kp_spread + pin_spread):")
+    samples = [r for r in all_rows if r.get("pinnacle_spread_home") is not None][:5]
+    for s in samples:
+        kp_sp = s.get("kp_projected_spread", 0)
+        pin_sp = s.get("pinnacle_spread_home", 0)
+        stored_edge = s.get("spread_edge")
+        expected = round(kp_sp + pin_sp, 2)
+        match = "OK" if stored_edge is not None and abs(stored_edge - expected) < 0.01 else "MISMATCH"
+        print(
+            f"    {s.get('away_team', '?')[:20]} @ {s.get('home_team', '?')[:20]} | "
+            f"KP={kp_sp:+.1f} PIN={pin_sp:+.1f} | "
+            f"edge={stored_edge} (expected {expected:+.1f}) [{match}]"
+        )
+
+    # Grading summary.
+    graded = [r for r in all_rows if r.get("graded")]
+    if graded:
+        sw = sum(1 for r in graded if r.get("result_spread_correct") is True)
+        sl = sum(1 for r in graded if r.get("result_spread_correct") is False)
+        tw = sum(1 for r in graded if r.get("result_total_correct") is True)
+        tl = sum(1 for r in graded if r.get("result_total_correct") is False)
+        mw = sum(1 for r in graded if r.get("result_ml_correct") is True)
+        ml_ = sum(1 for r in graded if r.get("result_ml_correct") is False)
+        sp = f"{sw / (sw + sl) * 100:.1f}%" if (sw + sl) > 0 else "N/A"
+        tp = f"{tw / (tw + tl) * 100:.1f}%" if (tw + tl) > 0 else "N/A"
+        mp = f"{mw / (mw + ml_) * 100:.1f}%" if (mw + ml_) > 0 else "N/A"
+        print(
+            f"\n  Graded: {len(graded)} games | "
+            f"Spread: {sw}-{sl} ({sp}), Total: {tw}-{tl} ({tp}), ML: {mw}-{ml_} ({mp})"
+        )
+    else:
+        print("\n  No graded snapshots yet.")
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Backfill and repair KenPom snapshots")
+    parser.add_argument("--days", type=int, default=30, help="Days to look back for backfill")
+    parser.add_argument("--repair-only", action="store_true", help="Only repair existing data")
+    parser.add_argument("--dry-run", action="store_true", help="Show plan without changing data")
+    args = parser.parse_args()
+
+    from db import get_supabase
+
+    db = get_supabase()
+
+    # Step 1: Always repair existing data first.
+    repaired = repair_existing_snapshots(db, dry_run=args.dry_run)
+
+    # Step 2: Backfill new snapshots (unless repair-only).
+    if not args.repair_only:
+        saved, graded = backfill_new_snapshots(db, args.days, dry_run=args.dry_run)
+    else:
+        print("\n  --repair-only: Skipping backfill.")
+
+    # Step 3: Print verification summary.
+    if not args.dry_run:
+        print_verification_summary(db)
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":

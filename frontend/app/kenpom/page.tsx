@@ -47,6 +47,7 @@ interface Snapshot {
   result_total_correct: boolean | null;
   result_ml_correct: boolean | null;
   graded: boolean;
+  projection_source?: string | null;
   status?: string;
   hours_until_start?: number;
 }
@@ -137,6 +138,18 @@ function totalPickText(snap: Snapshot): string {
   return `KP: ${kpTotal.toFixed(1)} (PIN: ${pinTotal.toFixed(1)}) \u2192 Take Under`;
 }
 
+function sourceBadge(snap: Snapshot): JSX.Element | null {
+  const src = snap.projection_source;
+  if (!src) return null;
+  if (src.includes("fanmatch")) {
+    return <span className="ml-1 rounded bg-emerald-900/40 px-1 py-0.5 text-[9px] font-medium text-emerald-400">FM</span>;
+  }
+  if (src.includes("ratings")) {
+    return <span className="ml-1 rounded bg-amber-900/40 px-1 py-0.5 text-[9px] font-medium text-amber-400">RTG</span>;
+  }
+  return null;
+}
+
 function timeLabel(snap: Snapshot): JSX.Element | null {
   if (snap.status === "final") return <span className="rounded bg-gray-700 px-1.5 py-0.5 text-[9px] text-gray-400">FINAL</span>;
   if (snap.status === "live") return <span className="rounded bg-red-600/30 px-1.5 py-0.5 text-[9px] text-red-400">LIVE</span>;
@@ -194,7 +207,10 @@ function SpreadEdgesTable({ snapshots, label }: { snapshots: Snapshot[]; label: 
               {filtered.map((s) => (
                 <tr key={s.game_id}>
                   <td className="px-2 py-2">
-                    <div className="text-gray-300">{s.away_team} @ {s.home_team}</div>
+                    <div className="text-gray-300">
+                      {s.away_team} @ {s.home_team}
+                      {sourceBadge(s)}
+                    </div>
                     <div className="text-[10px] text-gray-600">
                       KP: {s.away_team.split(" ").pop()} {s.kp_away_score.toFixed(0)}, {s.home_team.split(" ").pop()} {s.kp_home_score.toFixed(0)}
                     </div>
@@ -248,7 +264,10 @@ function TotalEdgesTable({ snapshots, label }: { snapshots: Snapshot[]; label: s
               {filtered.map((s) => (
                 <tr key={s.game_id}>
                   <td className="px-2 py-2">
-                    <div className="text-gray-300">{s.away_team} @ {s.home_team}</div>
+                    <div className="text-gray-300">
+                      {s.away_team} @ {s.home_team}
+                      {sourceBadge(s)}
+                    </div>
                     <div className="text-[10px] text-gray-600">
                       KP: {s.away_team.split(" ").pop()} {s.kp_away_score.toFixed(0)}, {s.home_team.split(" ").pop()} {s.kp_home_score.toFixed(0)}
                     </div>

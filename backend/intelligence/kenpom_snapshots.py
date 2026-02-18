@@ -7,8 +7,18 @@ projections and Pinnacle odds are loaded.
 Grading is run when final scores arrive — compares KenPom's edges
 against actual results.
 
-Edge sign conventions:
-    spread_edge = kp_projected_spread - pinnacle_spread_home
+Sign conventions:
+    kp_projected_spread: positive = home projects to win by that many points
+        (margin convention, like a final score diff)
+    pinnacle_spread_home: negative = home is favored by that many points
+        (betting convention, as displayed by sportsbooks)
+
+Edge calculation:
+    spread_edge = kp_projected_spread + pinnacle_spread_home
+        Both conventions must be combined (not subtracted) because they
+        use OPPOSITE signs for the same direction.
+        Example: KP projects home -6 (kp_spread=+6), Pinnacle has home
+        at -5.5 (pin_spread=-5.5) → edge = 6 + (-5.5) = +0.5
         positive → KP sees more home advantage than Pinnacle
     total_edge = kp_projected_total - pinnacle_total
         positive → KP projects higher scoring than Pinnacle
@@ -421,7 +431,7 @@ def save_kenpom_snapshots(
         pin_away_ml = pin.get("away_ml") if pin else None
         pin_home_ip = pin.get("home_implied_prob") if pin else None
 
-        spread_edge = (kp_spread - pin_spread) if pin_spread is not None else None
+        spread_edge = (kp_spread + pin_spread) if pin_spread is not None else None
         total_edge = (kp_total - pin_total) if pin_total is not None else None
         ml_edge = (kp_wp - pin_home_ip) if pin_home_ip is not None else None
 
@@ -445,6 +455,7 @@ def save_kenpom_snapshots(
             "spread_edge": round(spread_edge, 2) if spread_edge is not None else None,
             "total_edge": round(total_edge, 2) if total_edge is not None else None,
             "ml_edge": round(ml_edge, 4) if ml_edge is not None else None,
+            "projection_source": proj.get("source", "unknown"),
         })
 
     # Fallback: if in-memory extraction missed games, try the DB.
@@ -470,7 +481,7 @@ def save_kenpom_snapshots(
 
             if pin_spread is not None:
                 row["pinnacle_spread_home"] = pin_spread
-                row["spread_edge"] = round(row["kp_projected_spread"] - pin_spread, 2)
+                row["spread_edge"] = round(row["kp_projected_spread"] + pin_spread, 2)
             if pin_total is not None:
                 row["pinnacle_total"] = pin_total
                 row["total_edge"] = round(row["kp_projected_total"] - pin_total, 2)

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS kenpom_snapshots (
     spread_edge REAL,
     total_edge REAL,
     ml_edge REAL,
+    projection_source TEXT,
     result_home_score INTEGER,
     result_away_score INTEGER,
     result_spread_correct BOOLEAN,

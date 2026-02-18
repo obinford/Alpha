@@ -2,6 +2,7 @@
 
 Verifies:
 - Edge sign conventions are correct
+- spread_edge = kp_spread + pin_spread (opposite sign conventions combined)
 - Grading logic matches expected outcomes
 - Edge cases: ties, pushes, zero edges
 """
@@ -11,27 +12,63 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # Edge calculation tests
+#
+# kp_projected_spread: positive = home projects to win (margin convention)
+# pinnacle_spread_home: negative = home favored (betting convention)
+# spread_edge = kp_projected_spread + pinnacle_spread_home
+#   (added, not subtracted, because conventions use OPPOSITE signs)
 # ---------------------------------------------------------------------------
 
 def test_spread_edge_positive_means_kp_favors_home():
-    """spread_edge > 0 means KP sees more home advantage than Pinnacle."""
-    # KP: home by 8, PIN: home -5.5 → edge = 8 - (-5.5) = +13.5
+    """spread_edge > 0 means KP sees more home advantage than Pinnacle.
+
+    KP: home by 8 (kp_spread=+8), PIN: home -5.5 (pin_spread=-5.5)
+    edge = 8 + (-5.5) = +2.5 — KP thinks home is 2.5 pts more favored.
+    """
     kp_spread = 8.0
     pin_spread_home = -5.5
-    edge = kp_spread - pin_spread_home
-    # 8 - (-5.5) = 13.5, positive = KP favors home more.
+    edge = kp_spread + pin_spread_home
+    assert edge == pytest.approx(2.5)
     assert edge > 0, "KP more bullish on home should yield positive edge"
 
 
 def test_spread_edge_negative_means_kp_favors_away():
-    """spread_edge < 0 means KP sees less home advantage than Pinnacle."""
-    # KP: away by 3 (home loses) → kp_spread = -3
-    # PIN: home -1.5 → pin_spread = -1.5
-    # edge = -3 - (-1.5) = -1.5 — KP favors away more.
+    """spread_edge < 0 means KP sees less home advantage than Pinnacle.
+
+    KP: away by 3 (kp_spread=-3), PIN: home -1.5 (pin_spread=-1.5)
+    edge = -3 + (-1.5) = -4.5 — KP thinks home is 4.5 pts less favored.
+    """
     kp_spread = -3.0
     pin_spread_home = -1.5
-    edge = kp_spread - pin_spread_home
+    edge = kp_spread + pin_spread_home
+    assert edge == pytest.approx(-4.5)
     assert edge < 0, "KP favoring away more should yield negative edge"
+
+
+def test_spread_edge_near_zero_when_agree():
+    """When KP and Pinnacle agree, edge should be near zero.
+
+    KP: home by 6 (kp_spread=+6), PIN: home -5.5 (pin_spread=-5.5)
+    edge = 6 + (-5.5) = +0.5 — minimal disagreement.
+    """
+    kp_spread = 6.0
+    pin_spread_home = -5.5
+    edge = kp_spread + pin_spread_home
+    assert edge == pytest.approx(0.5)
+    assert abs(edge) < 1.0, "When both agree home is favored ~6, edge should be small"
+
+
+def test_spread_edge_home_dog_kp_agrees():
+    """Both see home as underdog — small positive edge.
+
+    KP: away by 2 (kp_spread=-2), PIN: home +3.5 (pin_spread=+3.5)
+    edge = -2 + 3.5 = +1.5 — KP thinks home is slightly better than PIN does.
+    """
+    kp_spread = -2.0
+    pin_spread_home = 3.5
+    edge = kp_spread + pin_spread_home
+    assert edge == pytest.approx(1.5)
+    assert edge > 0
 
 
 def test_total_edge_positive_means_kp_higher():
@@ -107,13 +144,13 @@ def test_grading_full_example():
 
     KP: Home 80, Away 72 (spread=8, total=152, home WP=75%)
     Pinnacle: Home -5.5, total 148.5, home implied 65%
-    Edges: spread = 8 - (-5.5) = +13.5, total = +3.5, ml = +10%
+    Edges: spread = 8 + (-5.5) = +2.5, total = +3.5, ml = +10%
 
     Actual: Home 78, Away 71 (actual_spread=7, actual_total=149)
     """
     kp_spread = 8.0
     pin_spread_home = -5.5
-    spread_edge = kp_spread - pin_spread_home  # +13.5
+    spread_edge = kp_spread + pin_spread_home  # +2.5
 
     kp_total = 152.0
     pin_total = 148.5
@@ -126,6 +163,8 @@ def test_grading_full_example():
     actual_spread = actual_home - actual_away  # 7
     actual_total = actual_home + actual_away  # 149
 
+    assert spread_edge == pytest.approx(2.5)
+
     # Spread: edge > 0 (take home), ats_margin = 7 + (-5.5) = 1.5 > 0 → TRUE (home covers)
     assert _grade_spread(spread_edge, actual_spread, pin_spread_home) is True
 
@@ -137,14 +176,18 @@ def test_grading_full_example():
 
 
 def test_grading_home_loses():
-    """Test when the home team loses and away covers."""
-    # KP: Home 70, Away 75 → kp_spread = -5
-    # PIN: Home -2.5 → pin_spread = -2.5
-    # Edge = -5 - (-2.5) = -2.5 (KP favors away more)
-    spread_edge = -2.5
+    """Test when the home team loses and away covers.
+
+    KP: Home 70, Away 75 → kp_spread = -5
+    PIN: Home -2.5 → pin_spread = -2.5
+    Edge = -5 + (-2.5) = -7.5 (KP favors away much more)
+    """
+    kp_spread = -5.0
     pin_spread = -2.5
+    spread_edge = kp_spread + pin_spread  # -7.5
     actual_spread = -6
 
+    assert spread_edge == pytest.approx(-7.5)
     # edge < 0 → take away ATS
     # ats_margin = -6 + (-2.5) = -8.5 < 0 → away covered → TRUE
     assert _grade_spread(spread_edge, actual_spread, pin_spread) is True
@@ -153,14 +196,16 @@ def test_grading_home_loses():
 def test_grading_spread_loss_home_fav():
     """Home fav -5.5, KP says take home, but home only wins by 3 → LOSS.
 
-    This is the critical case that validates the corrected ATS formula.
-    Old bug: actual_spread(3) > pin_spread(-5.5) → True (WRONG).
-    Fixed:  ats_margin = 3 + (-5.5) = -2.5 < 0 → False (CORRECT).
+    KP spread = +8, PIN spread = -5.5
+    spread_edge = 8 + (-5.5) = +2.5 (take home)
+    Actual: home wins by 3 → ats_margin = 3 + (-5.5) = -2.5 < 0 → LOSS.
     """
-    spread_edge = 13.5  # positive → take home
-    actual_spread = 3
+    kp_spread = 8.0
     pin_spread = -5.5
+    spread_edge = kp_spread + pin_spread  # +2.5
+    actual_spread = 3
 
+    assert spread_edge == pytest.approx(2.5)
     # Home is -5.5 favorite, wins by only 3. Doesn't cover.
     # ats_margin = 3 + (-5.5) = -2.5 < 0 → home didn't cover → False
     assert _grade_spread(spread_edge, actual_spread, pin_spread) is False
@@ -168,19 +213,24 @@ def test_grading_spread_loss_home_fav():
 
 def test_grading_spread_home_dog_covers():
     """Home underdog +3.5, loses by 2 → covers the spread."""
-    spread_edge = 5.0  # positive → take home
-    actual_spread = -2  # home lost by 2
+    kp_spread = 2.0  # KP still thinks home is slightly better
     pin_spread = 3.5  # home is +3.5 underdog
+    spread_edge = kp_spread + pin_spread  # +5.5
 
+    actual_spread = -2  # home lost by 2
+
+    assert spread_edge == pytest.approx(5.5)
     # ats_margin = -2 + 3.5 = 1.5 > 0 → home covers → True
     assert _grade_spread(spread_edge, actual_spread, pin_spread) is True
 
 
 def test_grading_spread_home_dog_doesnt_cover():
     """Home underdog +3.5, loses by 5 → doesn't cover."""
-    spread_edge = 5.0
-    actual_spread = -5
+    kp_spread = 2.0
     pin_spread = 3.5
+    spread_edge = kp_spread + pin_spread  # +5.5
+
+    actual_spread = -5
 
     # ats_margin = -5 + 3.5 = -1.5 < 0 → home doesn't cover → False
     assert _grade_spread(spread_edge, actual_spread, pin_spread) is False
@@ -240,8 +290,10 @@ def test_ats_coverage_formula():
 
 def test_grading_take_away_wins():
     """spread_edge < 0 → take away ATS. Away covers when ats_margin < 0."""
-    spread_edge = -3.0
-    pin_spread = -7.5  # home is big favorite
+    # KP: home by 2 (kp_spread=+2), PIN: home -7.5 (pin_spread=-7.5)
+    # edge = 2 + (-7.5) = -5.5 (take away)
+    spread_edge = -5.5
+    pin_spread = -7.5
     actual_spread = 2  # home wins by only 2
 
     # ats_margin = 2 + (-7.5) = -5.5 < 0 → away covered → True
@@ -250,8 +302,10 @@ def test_grading_take_away_wins():
 
 def test_grading_take_away_loses():
     """spread_edge < 0 → take away ATS. Away doesn't cover."""
-    spread_edge = -3.0
-    pin_spread = -1.5  # home slight favorite
+    # KP: home by 1 (kp_spread=+1), PIN: home -1.5 (pin_spread=-1.5)
+    # edge = 1 + (-1.5) = -0.5 (take away)
+    spread_edge = -0.5
+    pin_spread = -1.5
     actual_spread = 5  # home wins big
 
     # ats_margin = 5 + (-1.5) = 3.5 > 0 → home covered, away didn't → False
