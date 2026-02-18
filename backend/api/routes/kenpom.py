@@ -115,8 +115,9 @@ def get_edges(
 
 
 def _count_results(rows: list[dict]) -> dict:
-    """Count wins/losses from raw graded snapshot rows."""
+    """Count wins/losses and sum units from raw graded snapshot rows."""
     sw = sl = tw = tl = mw = ml = 0
+    s_units = t_units = m_units = 0.0
     for r in rows:
         if r.get("result_spread_correct") is True:
             sw += 1
@@ -130,13 +131,26 @@ def _count_results(rows: list[dict]) -> dict:
             mw += 1
         elif r.get("result_ml_correct") is False:
             ml += 1
+        # Sum unit results.
+        su = r.get("spread_unit_result")
+        tu = r.get("total_unit_result")
+        mu = r.get("ml_unit_result")
+        if su is not None:
+            s_units += su
+        if tu is not None:
+            t_units += tu
+        if mu is not None:
+            m_units += mu
     return {
         "spread_wins": sw, "spread_losses": sl,
         "spread_pct": round(sw / (sw + sl) * 100, 1) if (sw + sl) > 0 else 0,
+        "spread_units": round(s_units, 2),
         "total_wins": tw, "total_losses": tl,
         "total_pct": round(tw / (tw + tl) * 100, 1) if (tw + tl) > 0 else 0,
+        "total_units": round(t_units, 2),
         "ml_wins": mw, "ml_losses": ml,
         "ml_pct": round(mw / (mw + ml) * 100, 1) if (mw + ml) > 0 else 0,
+        "ml_units": round(m_units, 2),
     }
 
 
@@ -198,7 +212,7 @@ def get_performance(
             round(sum(total_winner_edges) / len(total_winner_edges), 2)
             if total_winner_edges else 0
         )
-
+        # Units are already in stats from _count_results (spread_units, total_units, ml_units).
         daily_stats.append(stats)
 
     season = _count_results(rows)
@@ -245,6 +259,8 @@ def get_performance_season() -> dict:
             "games": len(bucket_rows),
             "spread_accuracy": b_stats["spread_pct"],
             "total_accuracy": b_stats["total_pct"],
+            "spread_units": b_stats["spread_units"],
+            "total_units": b_stats["total_units"],
         })
 
     daily_map: dict[str, list[dict]] = {}

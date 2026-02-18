@@ -310,3 +310,51 @@ def test_grading_take_away_loses():
 
     # ats_margin = 5 + (-1.5) = 3.5 > 0 → home covered, away didn't → False
     assert _grade_spread(spread_edge, actual_spread, pin_spread) is False
+
+
+# ---------------------------------------------------------------------------
+# Unit P/L calculation tests
+# ---------------------------------------------------------------------------
+
+def _calc_unit_result(odds: int | None, correct: bool | None) -> float | None:
+    """Replicate _calc_unit_result from kenpom_snapshots.py."""
+    if correct is None or odds is None:
+        return None
+    if correct:
+        if odds > 0:
+            return round(odds / 100.0, 4)
+        elif odds < 0:
+            return round(100.0 / abs(odds), 4)
+        return 0.0
+    return -1.0
+
+
+def test_unit_win_minus_110():
+    """Win at -110 → profit = 100/110 = +0.9091."""
+    result = _calc_unit_result(-110, True)
+    assert result is not None
+    assert result == pytest.approx(0.9091, abs=0.001)
+
+
+def test_unit_win_plus_150():
+    """Win at +150 → profit = 150/100 = +1.50."""
+    result = _calc_unit_result(150, True)
+    assert result is not None
+    assert result == pytest.approx(1.50)
+
+
+def test_unit_loss():
+    """Loss at any odds → -1.0."""
+    assert _calc_unit_result(-110, False) == -1.0
+    assert _calc_unit_result(200, False) == -1.0
+
+
+def test_unit_push():
+    """Push (correct=None) → None."""
+    assert _calc_unit_result(-110, None) is None
+
+
+def test_unit_no_odds():
+    """No odds → None."""
+    assert _calc_unit_result(None, True) is None
+    assert _calc_unit_result(None, False) is None

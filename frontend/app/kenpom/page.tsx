@@ -12,6 +12,7 @@ import {
   ReferenceLine,
   BarChart,
   Bar,
+  Cell,
   Legend,
 } from "recharts";
 
@@ -38,6 +39,10 @@ interface Snapshot {
   pinnacle_home_ml: number | null;
   pinnacle_away_ml: number | null;
   pinnacle_home_implied_prob: number | null;
+  pinnacle_spread_home_odds: number | null;
+  pinnacle_spread_away_odds: number | null;
+  pinnacle_over_odds: number | null;
+  pinnacle_under_odds: number | null;
   spread_edge: number | null;
   total_edge: number | null;
   ml_edge: number | null;
@@ -46,6 +51,9 @@ interface Snapshot {
   result_spread_correct: boolean | null;
   result_total_correct: boolean | null;
   result_ml_correct: boolean | null;
+  spread_unit_result: number | null;
+  total_unit_result: number | null;
+  ml_unit_result: number | null;
   graded: boolean;
   projection_source?: string | null;
   status?: string;
@@ -58,14 +66,17 @@ interface SeasonStats {
   spread_losses: number;
   spread_pct: number;
   spread_record: string;
+  spread_units: number;
   total_wins: number;
   total_losses: number;
   total_pct: number;
   total_record: string;
+  total_units: number;
   ml_wins: number;
   ml_losses: number;
   ml_pct: number;
   ml_record: string;
+  ml_units: number;
   last_updated: string;
 }
 
@@ -74,6 +85,8 @@ interface EdgeBucket {
   games: number;
   spread_accuracy: number;
   total_accuracy: number;
+  spread_units: number;
+  total_units: number;
 }
 
 interface RollingPoint {
@@ -87,12 +100,15 @@ interface DailyStats {
   spread_wins: number;
   spread_losses: number;
   spread_pct: number;
+  spread_units: number;
   total_wins: number;
   total_losses: number;
   total_pct: number;
+  total_units: number;
   ml_wins: number;
   ml_losses: number;
   ml_pct: number;
+  ml_units: number;
   avg_spread_edge_winners: number;
   avg_total_edge_winners: number;
 }
@@ -118,24 +134,30 @@ function formatPct(p: number): string {
   return `${p.toFixed(1)}%`;
 }
 
+function formatUnits(u: number): string {
+  return `${u >= 0 ? "+" : ""}${u.toFixed(2)}u`;
+}
+
 function spreadPickText(snap: Snapshot): string {
   if (snap.spread_edge == null || snap.pinnacle_spread_home == null) return "\u2014";
-  const kpSpread = snap.kp_projected_spread;
   const pinSpread = snap.pinnacle_spread_home;
   if (snap.spread_edge > 0) {
-    return `KP: Home ${kpSpread > 0 ? "-" : "+"}${Math.abs(kpSpread).toFixed(1)} (PIN: ${pinSpread > 0 ? "+" : ""}${pinSpread.toFixed(1)}) \u2192 Take Home`;
+    // Take home at Pinnacle's home spread
+    const fmt = pinSpread > 0 ? `+${pinSpread.toFixed(1)}` : pinSpread.toFixed(1);
+    return `Take ${snap.home_team} ${fmt}`;
   }
-  return `KP: Away covers (PIN: Home ${pinSpread > 0 ? "+" : ""}${pinSpread.toFixed(1)}) \u2192 Take Away`;
+  // Take away = opposite of home spread
+  const awaySpread = -pinSpread;
+  const fmt = awaySpread > 0 ? `+${awaySpread.toFixed(1)}` : awaySpread.toFixed(1);
+  return `Take ${snap.away_team} ${fmt}`;
 }
 
 function totalPickText(snap: Snapshot): string {
   if (snap.total_edge == null || snap.pinnacle_total == null) return "\u2014";
-  const kpTotal = snap.kp_projected_total;
-  const pinTotal = snap.pinnacle_total;
   if (snap.total_edge > 0) {
-    return `KP: ${kpTotal.toFixed(1)} (PIN: ${pinTotal.toFixed(1)}) \u2192 Take Over`;
+    return `Take Over ${snap.pinnacle_total.toFixed(1)}`;
   }
-  return `KP: ${kpTotal.toFixed(1)} (PIN: ${pinTotal.toFixed(1)}) \u2192 Take Under`;
+  return `Take Under ${snap.pinnacle_total.toFixed(1)}`;
 }
 
 function sourceBadge(snap: Snapshot): JSX.Element | null {
@@ -398,15 +420,15 @@ export default function KenPomPage() {
           <div className="mt-3 flex flex-wrap items-center gap-4 rounded-xl bg-[#1c1c1e] px-4 py-2.5">
             <span className="text-xs font-semibold text-gray-300">Season:</span>
             <span className="text-xs text-gray-400">
-              Spread {season.spread_record} ({formatPct(season.spread_pct)})
+              Spread {season.spread_record} ({formatUnits(season.spread_units ?? 0)})
             </span>
             <span className="text-xs text-gray-600">|</span>
             <span className="text-xs text-gray-400">
-              Total {season.total_record} ({formatPct(season.total_pct)})
+              Total {season.total_record} ({formatUnits(season.total_units ?? 0)})
             </span>
             <span className="text-xs text-gray-600">|</span>
             <span className="text-xs text-gray-400">
-              ML {season.ml_record} ({formatPct(season.ml_pct)})
+              ML {season.ml_record} ({formatUnits(season.ml_units ?? 0)})
             </span>
             <span className="ml-auto text-[10px] text-gray-600">
               Games graded: {season.total_games_graded}
@@ -483,19 +505,19 @@ export default function KenPomPage() {
             <StatCard
               title="Spread ATS"
               value={season.spread_record}
-              sub={`${formatPct(season.spread_pct)} accuracy`}
+              sub={`${formatPct(season.spread_pct)} | ${formatUnits(season.spread_units ?? 0)}`}
               accent={season.spread_pct >= 52.4 ? "green" : "red"}
             />
             <StatCard
               title="Totals O/U"
               value={season.total_record}
-              sub={`${formatPct(season.total_pct)} accuracy`}
+              sub={`${formatPct(season.total_pct)} | ${formatUnits(season.total_units ?? 0)}`}
               accent={season.total_pct >= 52.4 ? "green" : "red"}
             />
             <StatCard
               title="Moneyline"
               value={season.ml_record}
-              sub={`${formatPct(season.ml_pct)} accuracy`}
+              sub={`${formatPct(season.ml_pct)} | ${formatUnits(season.ml_units ?? 0)}`}
               accent={season.ml_pct >= 50 ? "green" : "red"}
             />
             <StatCard
@@ -535,19 +557,31 @@ export default function KenPomPage() {
         <div>
           <h2 className="mb-3 text-lg font-semibold text-gray-200">Edge Size vs Accuracy</h2>
           <div className="rounded-2xl bg-[#1c1c1e] p-5">
-            <p className="mb-3 text-xs text-gray-500">Do bigger KP edges lead to higher accuracy?</p>
+            <p className="mb-3 text-xs text-gray-500">Accuracy vs 52.4% breakeven — green above, red below</p>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={edgeBuckets}>
+              <BarChart data={edgeBuckets.map(b => ({
+                ...b,
+                spread_vs_be: +(b.spread_accuracy - 52.4).toFixed(1),
+                total_vs_be: +(b.total_accuracy - 52.4).toFixed(1),
+              }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                 <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#888" }} label={{ value: "Edge (pts)", position: "insideBottom", offset: -2, fontSize: 10, fill: "#666" }} />
-                <YAxis tick={{ fontSize: 10, fill: "#888" }} tickFormatter={(v: number) => `${v}%`} />
+                <YAxis tick={{ fontSize: 10, fill: "#888" }} tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v}%`} />
                 <Tooltip
                   contentStyle={{ backgroundColor: "#1c1c1e", border: "1px solid #333", borderRadius: 8 }}
-                  formatter={(value: number | undefined) => value != null ? `${value.toFixed(1)}%` : ""}
+                  formatter={(value: number | undefined) => value != null ? `${value > 0 ? "+" : ""}${value.toFixed(1)}% vs BE` : ""}
                 />
-                <ReferenceLine y={52.4} stroke="#555" strokeDasharray="4 4" />
-                <Bar dataKey="spread_accuracy" name="Spread" fill="#34d399" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="total_accuracy" name="Total" fill="#60a5fa" radius={[4, 4, 0, 0]} />
+                <ReferenceLine y={0} stroke="#555" strokeDasharray="4 4" label={{ value: "52.4% BE", fill: "#666", fontSize: 10 }} />
+                <Bar dataKey="spread_vs_be" name="Spread vs BE">
+                  {edgeBuckets.map((b, i) => (
+                    <Cell key={i} fill={b.spread_accuracy >= 52.4 ? "#34d399" : "#f87171"} />
+                  ))}
+                </Bar>
+                <Bar dataKey="total_vs_be" name="Total vs BE">
+                  {edgeBuckets.map((b, i) => (
+                    <Cell key={i} fill={b.total_accuracy >= 52.4 ? "#60a5fa" : "#f87171"} />
+                  ))}
+                </Bar>
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </BarChart>
             </ResponsiveContainer>
@@ -558,7 +592,9 @@ export default function KenPomPage() {
                     <th className="px-2 py-1">Edge Bucket</th>
                     <th className="px-2 py-1 text-right">Games</th>
                     <th className="px-2 py-1 text-right">Spread %</th>
+                    <th className="px-2 py-1 text-right">Spread U</th>
                     <th className="px-2 py-1 text-right">Total %</th>
+                    <th className="px-2 py-1 text-right">Total U</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/50">
@@ -567,7 +603,13 @@ export default function KenPomPage() {
                       <td className="px-2 py-1 text-gray-400">{b.bucket} pts</td>
                       <td className="px-2 py-1 text-right font-mono text-gray-500">{b.games}</td>
                       <td className="px-2 py-1 text-right font-mono text-gray-400">{formatPct(b.spread_accuracy)}</td>
+                      <td className={`px-2 py-1 text-right font-mono ${(b.spread_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {formatUnits(b.spread_units ?? 0)}
+                      </td>
                       <td className="px-2 py-1 text-right font-mono text-gray-400">{formatPct(b.total_accuracy)}</td>
+                      <td className={`px-2 py-1 text-right font-mono ${(b.total_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {formatUnits(b.total_units ?? 0)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -607,13 +649,22 @@ export default function KenPomPage() {
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-500">{d.games_graded}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-400">
-                          {d.spread_wins}-{d.spread_losses} ({formatPct(d.spread_pct)})
+                          {d.spread_wins}-{d.spread_losses}
+                          <span className={`ml-1 ${(d.spread_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {formatUnits(d.spread_units ?? 0)}
+                          </span>
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-400">
-                          {d.total_wins}-{d.total_losses} ({formatPct(d.total_pct)})
+                          {d.total_wins}-{d.total_losses}
+                          <span className={`ml-1 ${(d.total_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {formatUnits(d.total_units ?? 0)}
+                          </span>
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-400">
-                          {d.ml_wins}-{d.ml_losses} ({formatPct(d.ml_pct)})
+                          {d.ml_wins}-{d.ml_losses}
+                          <span className={`ml-1 ${(d.ml_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {formatUnits(d.ml_units ?? 0)}
+                          </span>
                         </td>
                       </tr>
                       {expandedDay === d.date && dayGames.length > 0 && (
@@ -626,8 +677,10 @@ export default function KenPomPage() {
                                   <th className="py-1 text-right">Score</th>
                                   <th className="py-1 text-right">Spread Edge</th>
                                   <th className="py-1 text-right">ATS</th>
+                                  <th className="py-1 text-right">Spr U</th>
                                   <th className="py-1 text-right">Total Edge</th>
                                   <th className="py-1 text-right">O/U</th>
+                                  <th className="py-1 text-right">Tot U</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -646,6 +699,9 @@ export default function KenPomPage() {
                                       {g.result_spread_correct === false && <span className="text-red-400">L</span>}
                                       {g.result_spread_correct == null && <span className="text-gray-600">\u2014</span>}
                                     </td>
+                                    <td className={`py-1 text-right font-mono text-[10px] ${(g.spread_unit_result ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      {g.spread_unit_result != null ? formatUnits(g.spread_unit_result) : "\u2014"}
+                                    </td>
                                     <td className={`py-1 text-right font-mono ${edgeColor(g.total_edge)}`}>
                                       {formatEdge(g.total_edge)}
                                     </td>
@@ -653,6 +709,9 @@ export default function KenPomPage() {
                                       {g.result_total_correct === true && <span className="text-emerald-400">W</span>}
                                       {g.result_total_correct === false && <span className="text-red-400">L</span>}
                                       {g.result_total_correct == null && <span className="text-gray-600">\u2014</span>}
+                                    </td>
+                                    <td className={`py-1 text-right font-mono text-[10px] ${(g.total_unit_result ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      {g.total_unit_result != null ? formatUnits(g.total_unit_result) : "\u2014"}
                                     </td>
                                   </tr>
                                 ))}

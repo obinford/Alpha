@@ -207,16 +207,24 @@ def _extract_pinnacle_odds(game: Any, debug: bool = False) -> dict[str, Any] | N
             for o in outcomes:
                 if getattr(o, "name", "") == home_team and o.point is not None:
                     result["spread_home"] = o.point
-                    break
+                    result["spread_home_odds"] = o.price
+                elif getattr(o, "name", "") != home_team:
+                    result["spread_away_odds"] = getattr(o, "price", None)
             # Fallback: first outcome's point
             if "spread_home" not in result and outcomes[0].point is not None:
                 result["spread_home"] = outcomes[0].point
+                result["spread_home_odds"] = getattr(outcomes[0], "price", None)
+                if len(outcomes) > 1:
+                    result["spread_away_odds"] = getattr(outcomes[1], "price", None)
 
         elif mkt_key == "totals" and len(outcomes) >= 2:
             for o in outcomes:
-                if getattr(o, "name", "").lower() == "over" and o.point is not None:
+                oname = getattr(o, "name", "").lower()
+                if oname == "over" and o.point is not None:
                     result["total"] = o.point
-                    break
+                    result["over_odds"] = o.price
+                elif oname == "under":
+                    result["under_odds"] = getattr(o, "price", None)
 
         elif mkt_key == "h2h" and len(outcomes) >= 2:
             for o in outcomes:
@@ -486,6 +494,10 @@ def save_kenpom_snapshots(
             "pinnacle_home_ml": int(pin_home_ml) if pin_home_ml is not None else None,
             "pinnacle_away_ml": int(pin_away_ml) if pin_away_ml is not None else None,
             "pinnacle_home_implied_prob": round(pin_home_ip, 4) if pin_home_ip else None,
+            "pinnacle_spread_home_odds": int(pin.get("spread_home_odds")) if pin and pin.get("spread_home_odds") is not None else None,
+            "pinnacle_spread_away_odds": int(pin.get("spread_away_odds")) if pin and pin.get("spread_away_odds") is not None else None,
+            "pinnacle_over_odds": int(pin.get("over_odds")) if pin and pin.get("over_odds") is not None else None,
+            "pinnacle_under_odds": int(pin.get("under_odds")) if pin and pin.get("under_odds") is not None else None,
             "spread_edge": round(spread_edge, 2) if spread_edge is not None else None,
             "total_edge": round(total_edge, 2) if total_edge is not None else None,
             "ml_edge": round(ml_edge, 4) if ml_edge is not None else None,
@@ -637,6 +649,165 @@ def purge_stale_ratings_snapshots(
 
 
 # ---------------------------------------------------------------------------
+# Unit P/L calculation
+# ---------------------------------------------------------------------------
+
+def _calc_unit_result(odds: int | None, correct: bool | None) -> float | None:
+    """Calculate unit profit/loss for a 1-unit bet at American odds.
+
+    WIN at -110: profit = 100/110 = +0.91
+    WIN at +150: profit = 150/100 = +1.50
+    LOSS: always -1.0
+    PUSH (correct=None): None (excluded from sums)
+    """
+    if correct is None or odds is None:
+        return None
+    if correct:
+        if odds > 0:
+            return round(odds / 100.0, 4)
+        elif odds < 0:
+            return round(100.0 / abs(odds), 4)
+        return 0.0
+    return -1.0
+
+
+# ---------------------------------------------------------------------------
+# Backfill missing Pinnacle data from pinnacle_odds_history
+# ---------------------------------------------------------------------------
+
+def _backfill_pinnacle_for_grading(
+    db_client: Any,
+    snapshots: list[dict],
+) -> int:
+    """Backfill missing pinnacle_spread_home / pinnacle_total from history tables.
+
+    Tries pinnacle_odds_history first (closing lines), then line_movements.
+    Updates snapshot rows in-place AND patches the DB.
+
+    Returns count of snapshots backfilled.
+    """
+    missing_ids = list({
+        s["game_id"] for s in snapshots
+        if s.get("pinnacle_spread_home") is None or s.get("pinnacle_total") is None
+    })
+    if not missing_ids:
+        return 0
+
+    # Try pinnacle_odds_history first (closing lines have odds).
+    pin_by_game: dict[str, dict] = {}
+    for i in range(0, len(missing_ids), 50):
+        chunk = missing_ids[i : i + 50]
+        id_list = ",".join(chunk)
+        try:
+            rows = db_client._get(
+                "pinnacle_odds_history",
+                select="game_id,market_type,line_value,home_odds,away_odds,over_odds,under_odds,home_prob",
+                filters={
+                    "game_id": f"in.({id_list})",
+                    "snapshot_type": "eq.closing",
+                },
+            )
+            for r in rows:
+                gid = r["game_id"]
+                if gid not in pin_by_game:
+                    pin_by_game[gid] = {}
+                d = pin_by_game[gid]
+                mkt = r.get("market_type", "")
+                if mkt == "spreads" and "spread_home" not in d:
+                    d["spread_home"] = r.get("line_value")
+                    d["spread_home_odds"] = r.get("home_odds")
+                    d["spread_away_odds"] = r.get("away_odds")
+                elif mkt == "totals" and "total" not in d:
+                    d["total"] = r.get("line_value")
+                    d["over_odds"] = r.get("over_odds")
+                    d["under_odds"] = r.get("under_odds")
+                elif mkt == "h2h" and "home_ml" not in d:
+                    d["home_ml"] = r.get("home_odds")
+                    d["away_ml"] = r.get("away_odds")
+                    d["home_prob"] = r.get("home_prob")
+        except Exception as e:
+            print(f"  [KENPOM GRADING] pinnacle_odds_history query failed: {e}")
+
+    # For games still missing, try line_movements.
+    still_missing = [gid for gid in missing_ids if gid not in pin_by_game]
+    if still_missing:
+        lm_data = _fetch_pinnacle_from_db(db_client, still_missing)
+        for gid, d in lm_data.items():
+            if gid not in pin_by_game and d:
+                pin_by_game[gid] = d
+
+    if not pin_by_game:
+        return 0
+
+    # PATCH each snapshot with the backfilled data.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    backfilled = 0
+    for snap in snapshots:
+        gid = snap["game_id"]
+        row_id = snap.get("id")
+        if gid not in pin_by_game or row_id is None:
+            continue
+        pin = pin_by_game[gid]
+        update: dict[str, Any] = {}
+
+        if snap.get("pinnacle_spread_home") is None and pin.get("spread_home") is not None:
+            spread_val = pin["spread_home"]
+            update["pinnacle_spread_home"] = spread_val
+            kp_spread = snap.get("kp_projected_spread", 0)
+            update["spread_edge"] = round(kp_spread + spread_val, 2)
+            snap["pinnacle_spread_home"] = spread_val
+            snap["spread_edge"] = update["spread_edge"]
+
+        if snap.get("pinnacle_total") is None and pin.get("total") is not None:
+            total_val = pin["total"]
+            update["pinnacle_total"] = total_val
+            kp_total = snap.get("kp_projected_total", 0)
+            update["total_edge"] = round(kp_total - total_val, 2)
+            snap["pinnacle_total"] = total_val
+            snap["total_edge"] = update["total_edge"]
+
+        # Backfill odds columns.
+        for src_key, db_key in [
+            ("spread_home_odds", "pinnacle_spread_home_odds"),
+            ("spread_away_odds", "pinnacle_spread_away_odds"),
+            ("over_odds", "pinnacle_over_odds"),
+            ("under_odds", "pinnacle_under_odds"),
+        ]:
+            if snap.get(db_key) is None and pin.get(src_key) is not None:
+                update[db_key] = int(pin[src_key])
+                snap[db_key] = update[db_key]
+
+        # Backfill ML if missing.
+        if snap.get("pinnacle_home_ml") is None and pin.get("home_ml") is not None:
+            update["pinnacle_home_ml"] = int(pin["home_ml"])
+            snap["pinnacle_home_ml"] = update["pinnacle_home_ml"]
+            if pin.get("away_ml") is not None:
+                update["pinnacle_away_ml"] = int(pin["away_ml"])
+                snap["pinnacle_away_ml"] = update["pinnacle_away_ml"]
+            ip = pin.get("home_prob") or american_to_implied_prob(pin["home_ml"])
+            update["pinnacle_home_implied_prob"] = round(ip, 4)
+            update["ml_edge"] = round(snap.get("kp_home_win_prob", 0.5) - ip, 4)
+            snap["pinnacle_home_implied_prob"] = update["pinnacle_home_implied_prob"]
+            snap["ml_edge"] = update["ml_edge"]
+
+        if update:
+            update["updated_at"] = now_iso
+            try:
+                db_client._http.patch(
+                    f"{db_client.base_url}/kenpom_snapshots",
+                    headers={**db_client.headers, "Prefer": "return=minimal"},
+                    params={"id": f"eq.{row_id}"},
+                    json=update,
+                    timeout=15,
+                )
+                backfilled += 1
+            except Exception as e:
+                print(f"  [KENPOM GRADING] Backfill PATCH failed for {gid}: {e}")
+
+    return backfilled
+
+
+# ---------------------------------------------------------------------------
 # Grading — UPDATE-only, never INSERT new rows
 # ---------------------------------------------------------------------------
 
@@ -650,15 +821,18 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     - result_spread_correct: Did KP's spread edge predict ATS correctly?
     - result_total_correct: Did KP's total edge predict O/U correctly?
     - result_ml_correct: Did KP's home win prob predict the winner?
+    - spread_unit_result / total_unit_result / ml_unit_result: P/L in units
 
     Returns dict with keys: graded, spread_wins, spread_losses,
-    total_wins, total_losses, ml_wins, ml_losses.
+    total_wins, total_losses, ml_wins, ml_losses,
+    spread_units, total_units, ml_units.
     """
-    result = {
+    result: dict[str, Any] = {
         "graded": 0,
         "spread_wins": 0, "spread_losses": 0,
         "total_wins": 0, "total_losses": 0,
         "ml_wins": 0, "ml_losses": 0,
+        "spread_units": 0.0, "total_units": 0.0, "ml_units": 0.0,
     }
     if db_client is None:
         return result
@@ -667,12 +841,16 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     if not _ensure_table(db_client):
         return result
 
-    # Fetch ungraded snapshots — we need the row 'id' for PATCH.
+    # Fetch ungraded snapshots — include all fields needed for grading + units.
     try:
         ungraded = db_client._get(
             "kenpom_snapshots",
-            select="id,game_id,snapshot_date,kp_projected_spread,kp_projected_total,kp_home_win_prob,"
-                   "pinnacle_spread_home,pinnacle_total,spread_edge,total_edge,ml_edge",
+            select="id,game_id,snapshot_date,home_team,away_team,"
+                   "kp_projected_spread,kp_projected_total,kp_home_win_prob,"
+                   "pinnacle_spread_home,pinnacle_total,spread_edge,total_edge,ml_edge,"
+                   "pinnacle_spread_home_odds,pinnacle_spread_away_odds,"
+                   "pinnacle_over_odds,pinnacle_under_odds,"
+                   "pinnacle_home_ml,pinnacle_away_ml",
             filters={"graded": "eq.false"},
         )
     except Exception as e:
@@ -682,11 +860,36 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     if not ungraded:
         return result
 
-    # Get game_ids for lookup.
-    game_ids = list({s["game_id"] for s in ungraded})
+    print(f"  [KENPOM GRADING] {len(ungraded)} ungraded snapshots found")
 
-    # Batch-fetch final scores.
+    # Debug: sample game_ids and snapshot dates.
+    sample_ids = [s["game_id"] for s in ungraded[:3]]
+    snap_dates = sorted({s.get("snapshot_date", "")[:10] for s in ungraded})
+    print(f"  [KENPOM GRADING] Snapshot dates: {snap_dates}")
+    print(f"  [KENPOM GRADING] Sample game_ids: {sample_ids}")
+
+    # Step 1: backfill missing Pinnacle data from history tables.
+    missing_pin_spread = sum(1 for s in ungraded if s.get("pinnacle_spread_home") is None)
+    missing_pin_total = sum(1 for s in ungraded if s.get("pinnacle_total") is None)
+    if missing_pin_spread or missing_pin_total:
+        print(
+            f"  [KENPOM GRADING] {missing_pin_spread} missing Pinnacle spread, "
+            f"{missing_pin_total} missing Pinnacle total — backfilling..."
+        )
+        backfilled = _backfill_pinnacle_for_grading(db_client, ungraded)
+        if backfilled:
+            print(f"  [KENPOM GRADING] Backfilled Pinnacle data for {backfilled} games")
+        recovered_spread = missing_pin_spread - sum(1 for s in ungraded if s.get("pinnacle_spread_home") is None)
+        recovered_total = missing_pin_total - sum(1 for s in ungraded if s.get("pinnacle_total") is None)
+        print(
+            f"  [KENPOM GRADING] Recovered: {recovered_spread} spread, {recovered_total} total"
+        )
+
+    # Step 2: fetch final scores.
+    game_ids = list({s["game_id"] for s in ungraded})
     final_scores: dict[str, dict] = {}
+
+    # Try the 'games' table first.
     for i in range(0, len(game_ids), 50):
         chunk = game_ids[i : i + 50]
         id_list = ",".join(chunk)
@@ -702,15 +905,51 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             for g in games:
                 if g.get("home_score") is not None and g.get("away_score") is not None:
                     final_scores[g["game_id"]] = g
-        except Exception:
-            pass
+        except Exception as e:
+            if "does not exist" in str(e).lower() or "404" in str(e):
+                print(f"  [KENPOM GRADING] 'games' table not found: {e}")
+            break
+
+    print(
+        f"  [KENPOM GRADING] {len(final_scores)} final scores from 'games' table "
+        f"(of {len(game_ids)} game_ids)"
+    )
+
+    # Fallback: try 'scores' table if 'games' returned very few.
+    if len(final_scores) < len(game_ids) * 0.5:
+        remaining_ids = [gid for gid in game_ids if gid not in final_scores]
+        for i in range(0, len(remaining_ids), 50):
+            chunk = remaining_ids[i : i + 50]
+            id_list = ",".join(chunk)
+            for table_name in ["scores", "game_results"]:
+                try:
+                    rows = db_client._get(
+                        table_name,
+                        select="game_id,home_score,away_score,status",
+                        filters={
+                            "game_id": f"in.({id_list})",
+                            "status": "eq.final",
+                        },
+                    )
+                    for g in rows:
+                        if g.get("home_score") is not None and g.get("away_score") is not None:
+                            final_scores[g["game_id"]] = g
+                    if rows:
+                        print(f"  [KENPOM GRADING] Found {len(rows)} more scores in '{table_name}'")
+                except Exception:
+                    pass  # table may not exist
 
     if not final_scores:
+        print(
+            f"  [KENPOM GRADING] No final scores found for any of {len(game_ids)} game_ids. "
+            f"Check that finished games are stored in 'games' table with status='final'."
+        )
         return result
 
-    # Grade each snapshot — collect row IDs and grading data for PATCH.
+    # Step 3: Grade each snapshot.
     graded_ids: list[str] = []
     grade_data_by_id: dict[str, dict] = {}
+    examples: list[str] = []
 
     for snap in ungraded:
         gid = snap["game_id"]
@@ -731,37 +970,70 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
         spread_edge = snap.get("spread_edge")
         total_edge = snap.get("total_edge")
         kp_wp = snap.get("kp_home_win_prob")
+        home_team = snap.get("home_team", "Home")
+        away_team = snap.get("away_team", "Away")
 
-        # Spread grading (ATS coverage).
+        # --- Spread grading (ATS coverage) ---
+        # "If I bet 1 unit on KP's recommended side at Pinnacle's spread, did I win?"
         spread_correct = None
         if spread_edge is not None and pin_spread is not None and spread_edge != 0:
             ats_margin = actual_spread + pin_spread
             if ats_margin == 0:
                 spread_correct = None  # push
             elif spread_edge > 0:
+                # KP says take home ATS
                 spread_correct = ats_margin > 0
             else:
+                # KP says take away ATS
                 spread_correct = ats_margin < 0
 
-        # Total grading.
+        # --- Total grading ---
         total_correct = None
         if total_edge is not None and pin_total is not None and total_edge != 0:
-            if total_edge > 0:
+            if actual_total == pin_total:
+                total_correct = None  # push
+            elif total_edge > 0:
                 total_correct = actual_total > pin_total
             else:
                 total_correct = actual_total < pin_total
-            if actual_total == pin_total:
-                total_correct = None  # push
 
-        # ML grading.
+        # --- ML grading ---
         ml_correct = None
         if kp_wp is not None and kp_wp != 0.5:
-            if kp_wp > 0.5:
+            if actual_spread == 0:
+                ml_correct = None
+            elif kp_wp > 0.5:
                 ml_correct = actual_spread > 0
             else:
                 ml_correct = actual_spread < 0
-            if actual_spread == 0:
-                ml_correct = None
+
+        # --- Unit P/L ---
+        # Spread: bet on the side KP recommends, at that side's Pinnacle odds.
+        if spread_edge is not None and spread_edge > 0:
+            s_odds = snap.get("pinnacle_spread_home_odds") or -110
+        elif spread_edge is not None and spread_edge < 0:
+            s_odds = snap.get("pinnacle_spread_away_odds") or -110
+        else:
+            s_odds = None
+        spread_units = _calc_unit_result(s_odds, spread_correct)
+
+        # Total: over or under at those odds.
+        if total_edge is not None and total_edge > 0:
+            t_odds = snap.get("pinnacle_over_odds") or -110
+        elif total_edge is not None and total_edge < 0:
+            t_odds = snap.get("pinnacle_under_odds") or -110
+        else:
+            t_odds = None
+        total_units = _calc_unit_result(t_odds, total_correct)
+
+        # ML: home or away ML.
+        if kp_wp is not None and kp_wp > 0.5:
+            ml_odds = snap.get("pinnacle_home_ml")
+        elif kp_wp is not None and kp_wp < 0.5:
+            ml_odds = snap.get("pinnacle_away_ml")
+        else:
+            ml_odds = None
+        ml_units = _calc_unit_result(ml_odds, ml_correct)
 
         graded_ids.append(row_id)
         grade_data_by_id[row_id] = {
@@ -770,6 +1042,9 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             "result_spread_correct": spread_correct,
             "result_total_correct": total_correct,
             "result_ml_correct": ml_correct,
+            "spread_unit_result": spread_units,
+            "total_unit_result": total_units,
+            "ml_unit_result": ml_units,
         }
 
         result["graded"] += 1
@@ -785,13 +1060,36 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             result["ml_wins"] += 1
         elif ml_correct is False:
             result["ml_losses"] += 1
+        if spread_units is not None:
+            result["spread_units"] += spread_units
+        if total_units is not None:
+            result["total_units"] += total_units
+        if ml_units is not None:
+            result["ml_units"] += ml_units
+
+        # Collect verification examples (first 3 graded games).
+        if len(examples) < 3 and spread_correct is not None:
+            kp_spr = snap.get("kp_projected_spread", 0)
+            pick_team = home_team if (spread_edge or 0) > 0 else away_team
+            pick_line = pin_spread if (spread_edge or 0) > 0 else (-pin_spread if pin_spread else 0)
+            result_str = "WIN" if spread_correct else "LOSS"
+            examples.append(
+                f"{away_team} @ {home_team}: "
+                f"KP spread={kp_spr:+.1f}, PIN={pin_spread}, "
+                f"Pick=Take {pick_team} {pick_line:+.1f}, "
+                f"Actual={home_score}-{away_score} (margin={actual_spread:+d}), "
+                f"ATS margin={actual_spread + (pin_spread or 0):+.1f} → {result_str}"
+                + (f" ({spread_units:+.2f}u)" if spread_units is not None else "")
+            )
+
+    # Print verification examples.
+    for ex in examples:
+        print(f"  [KENPOM GRADING EXAMPLE] {ex}")
 
     # Batch PATCH — UPDATE-only, never INSERT.
-    # Group by identical grade data to minimize PATCH calls.
     if graded_ids:
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            # PATCH each row individually by ID — ensures UPDATE-only.
             for row_id in graded_ids:
                 update_data = {
                     **grade_data_by_id[row_id],
@@ -809,6 +1107,11 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             print(f"  [KENPOM GRADING] Update failed: {e}")
             return result
 
+    # Round unit totals.
+    result["spread_units"] = round(result["spread_units"], 2)
+    result["total_units"] = round(result["total_units"], 2)
+    result["ml_units"] = round(result["ml_units"], 2)
+
     # Log summary.
     sw, sl = result["spread_wins"], result["spread_losses"]
     tw, tl = result["total_wins"], result["total_losses"]
@@ -816,9 +1119,12 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     sp = f"{sw / (sw + sl) * 100:.0f}%" if (sw + sl) > 0 else "N/A"
     tp = f"{tw / (tw + tl) * 100:.0f}%" if (tw + tl) > 0 else "N/A"
     mp = f"{mw / (mw + ml_) * 100:.0f}%" if (mw + ml_) > 0 else "N/A"
+    su = f"{result['spread_units']:+.2f}u"
+    tu = f"{result['total_units']:+.2f}u"
+    mu = f"{result['ml_units']:+.2f}u"
     print(
         f"  [KENPOM GRADING] Graded {result['graded']} games — "
-        f"Spread: {sw}-{sl} ({sp}), Total: {tw}-{tl} ({tp}), ML: {mw}-{ml_} ({mp})"
+        f"Spread: {sw}-{sl} ({sp}, {su}), Total: {tw}-{tl} ({tp}, {tu}), ML: {mw}-{ml_} ({mp}, {mu})"
     )
 
     return result
