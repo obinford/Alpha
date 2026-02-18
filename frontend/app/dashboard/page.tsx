@@ -209,9 +209,9 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
   );
 }
 
-/** Fix 5: Bet link button */
-function BetLink({ book }: { book: string }) {
-  const url = getSportsbookUrl(book);
+/** Fix 5: Bet link button — links to sport-specific page when available */
+function BetLink({ book, sport }: { book: string; sport?: string }) {
+  const url = getSportsbookUrl(book, sport);
   if (!url) return null;
   return (
     <a
@@ -504,7 +504,7 @@ function SignalDetail({
                 {formatOdds(sig.book_odds ?? -110)}
               </span>
               <span className="text-gray-500"> at {sig.sportsbook}</span>
-              <BetLink book={sig.sportsbook} />
+              <BetLink book={sig.sportsbook} sport={sig.sport} />
             </p>
             {pinOdds != null && (
               <p className="mt-0.5 text-xs text-blue-400/70">
@@ -620,7 +620,7 @@ function SignalDetail({
                   <tr key={opp.id} className={i % 2 === 0 ? "bg-[#1e1e20]" : ""}>
                     <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                       {opp.sportsbook}
-                      <BetLink book={opp.sportsbook} />
+                      <BetLink book={opp.sportsbook} sport={sig.sport} />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                       {formatOdds(opp.book_odds)}
@@ -647,7 +647,7 @@ function SignalDetail({
                   <tr className="bg-[#1e1e20]">
                     <td className="whitespace-nowrap px-3 py-2 text-gray-300">
                       {sig.sportsbook}
-                      <BetLink book={sig.sportsbook} />
+                      <BetLink book={sig.sportsbook} sport={sig.sport} />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                       {formatOdds(sig.book_odds)}
@@ -671,7 +671,7 @@ function SignalDetail({
                     <tr key={ob.sportsbook}>
                       <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                         {ob.sportsbook}
-                        <BetLink book={ob.sportsbook} />
+                        <BetLink book={ob.sportsbook} sport={sig.sport} />
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-400">
                         {formatOdds(ob.book_odds)}

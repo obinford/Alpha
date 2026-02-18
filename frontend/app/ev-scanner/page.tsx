@@ -128,9 +128,9 @@ function TimeBadge({ startTime }: { startTime: string }) {
   return null;
 }
 
-/** Fix 5: Bet link button */
-function BetLink({ book }: { book: string }) {
-  const url = getSportsbookUrl(book);
+/** Fix 5: Bet link button — links to sport-specific page when available */
+function BetLink({ book, sport }: { book: string; sport?: string }) {
+  const url = getSportsbookUrl(book, sport);
   if (!url) return null;
   return (
     <a
@@ -549,7 +549,7 @@ function GroupRows({
         <td className="px-4 py-3 text-gray-300">{opp.side}</td>
         <td className="whitespace-nowrap px-4 py-3 text-gray-400">
           <span>{opp.sportsbook}</span>
-          <BetLink book={opp.sportsbook} />
+          <BetLink book={opp.sportsbook} sport={opp.games?.sport} />
           {moreCount > 0 && (
             <span className="ml-2 rounded bg-[#2c2c2e] px-1.5 py-0.5 text-xs text-gray-500">
               +{moreCount} more
@@ -622,7 +622,7 @@ function GroupRows({
               <td className="px-4 py-2" />
               <td className="whitespace-nowrap px-4 py-2 text-gray-500">
                 {alt.sportsbook}
-                <BetLink book={alt.sportsbook} />
+                <BetLink book={alt.sportsbook} sport={opp.games?.sport} />
               </td>
               <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-400">
                 {formatOdds(alt.book_odds)}

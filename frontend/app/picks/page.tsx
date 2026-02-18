@@ -177,9 +177,9 @@ function TimeBadge({ startTime }: { startTime: string }) {
   return null;
 }
 
-/** Fix 5: Bet link button */
-function BetLink({ book }: { book: string }) {
-  const url = getSportsbookUrl(book);
+/** Fix 5: Bet link button — links to sport-specific page when available */
+function BetLink({ book, sport }: { book: string; sport?: string }) {
+  const url = getSportsbookUrl(book, sport);
   if (!url) return null;
   return (
     <a
@@ -509,7 +509,7 @@ function BooksTable({
               <tr key={opp.id} className={i % 2 === 0 ? "bg-[#1e1e20]" : ""}>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                   {opp.sportsbook}
-                  <BetLink book={opp.sportsbook} />
+                  <BetLink book={opp.sportsbook} sport={sig.sport} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                   {formatOdds(opp.book_odds)}
@@ -536,7 +536,7 @@ function BooksTable({
               <tr className="bg-[#1e1e20]">
                 <td className="whitespace-nowrap px-3 py-2 text-gray-300">
                   {sig.sportsbook}
-                  <BetLink book={sig.sportsbook} />
+                  <BetLink book={sig.sportsbook} sport={sig.sport} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                   {formatOdds(sig.book_odds)}
@@ -560,7 +560,7 @@ function BooksTable({
                 <tr key={ob.sportsbook}>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                     {ob.sportsbook}
-                    <BetLink book={ob.sportsbook} />
+                    <BetLink book={ob.sportsbook} sport={sig.sport} />
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-400">
                     {formatOdds(ob.book_odds)}
@@ -678,7 +678,7 @@ function SignalCard({
         <div className="mt-3 flex items-center justify-between">
           <span className="text-sm text-gray-400">
             {sig.sportsbook}
-            <BetLink book={sig.sportsbook} />
+            <BetLink book={sig.sportsbook} sport={sig.sport} />
           </span>
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-lg font-bold text-gray-200">

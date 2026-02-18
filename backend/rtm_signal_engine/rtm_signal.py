@@ -626,7 +626,7 @@ class RTMSignal:
         """
         num_books = 0
         if self._consensus_map is not None:
-            key = (game_id, market_type, _normalize_side(side))
+            key = (game_id, market_type, _dedup_side(side, market_type))
             books = self._consensus_map.get(key, set())
             num_books = len(books)
 
@@ -845,14 +845,15 @@ class RTMSignal:
 
         Returns list of signal dicts sorted by strength descending.
         """
-        # Build consensus map: count distinct sportsbooks per (game, market, side).
+        # Build consensus map: count distinct sportsbooks per (game, market, team/direction).
+        # Uses _dedup_side so "Team -3.5" and "Team -5.5" count toward the same consensus.
         self._consensus_map = {}
         for opp in opportunities:
             gid = opp.get("game_id", "")
             mkt = opp.get("market_type", "")
             side_raw = opp.get("side", "")
             book = opp.get("sportsbook", "")
-            key = (gid, mkt, _normalize_side(side_raw))
+            key = (gid, mkt, _dedup_side(side_raw, mkt))
             self._consensus_map.setdefault(key, set()).add(book)
 
         projections = player_projections or {}
@@ -932,27 +933,37 @@ class RTMSignal:
                     f"opp game_ids: {sample_opp_ids}"
                 )
 
-        # Deduplicate: keep the strongest signal per (game_id, market_type, side).
+        # Deduplicate: keep the strongest signal per (game_id, market_type, team/direction).
+        # Uses _dedup_side to strip point values so "Team -3.5" and "Team -5.5" merge.
         # Collect all books for each play to populate other_books.
         groups: dict[tuple[str, str, str], list[dict]] = {}
         for sig in all_signals:
-            key = (sig["game_id"], sig["market_type"], _normalize_side(sig["side"]))
+            key = (sig["game_id"], sig["market_type"], _dedup_side(sig["side"], sig["market_type"]))
             groups.setdefault(key, []).append(sig)
 
         signals = []
         for key, group in groups.items():
-            # Sort by signal_strength desc, pick best.
-            group.sort(key=lambda s: s["signal_strength"], reverse=True)
+            # Sort by signal_strength desc, then EV desc as tiebreaker.
+            group.sort(
+                key=lambda s: (s["signal_strength"], s.get("edge_percentage", 0)),
+                reverse=True,
+            )
             best = group[0]
-            # Attach other books (excluding featured book and blocked books).
+            # Attach other books/lines (excluding featured book and blocked books).
+            # Includes alternate point values from other books.
             other_books = []
+            seen_books: set[str] = {best["sportsbook"]}
             for alt in group[1:]:
                 if alt["sportsbook"] in _BLOCKED_SIGNAL_BOOKS:
                     continue
+                if alt["sportsbook"] in seen_books:
+                    continue
+                seen_books.add(alt["sportsbook"])
                 other_books.append({
                     "sportsbook": alt["sportsbook"],
                     "book_odds": alt["book_odds"],
                     "ev_pct": alt["edge_percentage"],
+                    "side": alt["side"],
                 })
             best["other_books"] = other_books
             signals.append(best)
@@ -1161,6 +1172,29 @@ def _normalize_side(side: str) -> str:
     (e.g. "Team A -3.5" from different books) groups together.
     """
     return side.strip().lower()
+
+
+def _dedup_side(side: str, market_type: str) -> str:
+    """Extract team name or direction for deduplication, stripping point values.
+
+    Different books may offer different lines for the same team (e.g. -3.5 vs -5.5).
+    We want ONE signal per team per game per market, not one per line.
+
+    spreads:  "Miami (OH) RedHawks -5.5" → "miami (oh) redhawks"
+    totals:   "Over 145.5"               → "over"
+    h2h:      "Miami (OH) RedHawks"       → "miami (oh) redhawks"
+    props:    "Player Name Over 25.5"     → "player name over"
+    """
+    s = side.strip().lower()
+    if market_type == "totals":
+        # For totals, just keep the over/under direction.
+        if "over" in s:
+            return "over"
+        if "under" in s:
+            return "under"
+        return s
+    # Strip trailing point value: " -5.5", " +3.5", " 145.5", etc.
+    return re.sub(r'\s*[-+]?\d+\.?\d*$', '', s).strip()
 
 
 def _sides_match(bet_side: str, alert_side: str) -> bool:
