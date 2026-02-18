@@ -114,6 +114,16 @@ function americanOddsToImpliedProb(odds: number): number {
   return 0.5;
 }
 
+/** Pick first positive true_prob from a list of opportunities. */
+function findTrueProb(opps: Opportunity[], gameId: string): number | null {
+  for (const o of opps) {
+    if (o.game_id === gameId && o.true_prob != null && o.true_prob > 0) {
+      return o.true_prob;
+    }
+  }
+  return null;
+}
+
 function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
@@ -418,24 +428,26 @@ function BooksTable({
   // Sort by EV% descending
   matchingOpps.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
 
-  // Robust trueProb resolution chain:
-  // 1. Signal's own true_prob
-  // 2. First matching opportunity's true_prob
-  // 3. Derive from signal's fair_odds (if available)
-  // 4. Broadest search: any opportunity for same game_id
-  let trueProb: number | null =
-    sig.true_prob ??
-    (matchingOpps.length > 0 ? matchingOpps[0].true_prob : null);
-
-  if (trueProb == null && sig.fair_odds != null) {
-    trueProb = americanOddsToImpliedProb(sig.fair_odds);
+  // Robust trueProb — explicitly require positive values at each step.
+  // Using > 0 checks instead of ?? to avoid 0 values short-circuiting the chain.
+  let trueProb: number | null = null;
+  if (sig.true_prob != null && sig.true_prob > 0) {
+    trueProb = sig.true_prob;
   }
-
   if (trueProb == null) {
-    const anyOpp = opportunities.find(
-      (o) => o.game_id === sig.game_id && o.true_prob != null && o.true_prob > 0,
-    );
-    if (anyOpp) trueProb = anyOpp.true_prob;
+    for (const opp of matchingOpps) {
+      if (opp.true_prob != null && opp.true_prob > 0) {
+        trueProb = opp.true_prob;
+        break;
+      }
+    }
+  }
+  if (trueProb == null && sig.fair_odds != null) {
+    const derived = americanOddsToImpliedProb(sig.fair_odds);
+    if (derived > 0 && derived < 1) trueProb = derived;
+  }
+  if (trueProb == null) {
+    trueProb = findTrueProb(opportunities, sig.game_id);
   }
 
   const hasOpps = matchingOpps.length > 0;
@@ -459,8 +471,8 @@ function BooksTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800/50">
-          {/* Pinnacle reference row — always on top */}
-          {trueProb != null && trueProb > 0 && (
+          {/* Pinnacle reference row — always on top (trueProb guaranteed > 0 by resolution) */}
+          {trueProb != null && (
             <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
               <td className="whitespace-nowrap px-3 py-2 text-blue-400">
                 <span className="font-medium">Pinnacle</span>
