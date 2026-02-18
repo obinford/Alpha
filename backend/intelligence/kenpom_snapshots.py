@@ -24,7 +24,6 @@ ATS grading formula:
 
 from __future__ import annotations
 
-import os
 import time
 import traceback
 from datetime import date, datetime, timezone
@@ -33,155 +32,41 @@ from typing import Any
 from models.ev_calculator import american_to_implied_prob
 
 # ---------------------------------------------------------------------------
-# Auto-table creation
+# Table existence check — uses the same db_client the scanner passes in.
 # ---------------------------------------------------------------------------
 
 _TABLE_VERIFIED = False
 
-_CREATE_TABLE_DDL = [
-    """CREATE TABLE IF NOT EXISTS kenpom_snapshots (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    snapshot_date DATE NOT NULL,
-    game_id TEXT NOT NULL,
-    sport TEXT DEFAULT 'basketball_ncaab',
-    home_team TEXT NOT NULL,
-    away_team TEXT NOT NULL,
-    commence_time TIMESTAMPTZ,
-    kp_home_score REAL,
-    kp_away_score REAL,
-    kp_home_win_prob REAL,
-    kp_projected_total REAL,
-    kp_projected_spread REAL,
-    pinnacle_spread_home REAL,
-    pinnacle_total REAL,
-    pinnacle_home_ml INTEGER,
-    pinnacle_away_ml INTEGER,
-    pinnacle_home_implied_prob REAL,
-    spread_edge REAL,
-    total_edge REAL,
-    ml_edge REAL,
-    result_home_score INTEGER,
-    result_away_score INTEGER,
-    result_spread_correct BOOLEAN,
-    result_total_correct BOOLEAN,
-    result_ml_correct BOOLEAN,
-    graded BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(snapshot_date, game_id)
-)""",
-    "CREATE INDEX IF NOT EXISTS idx_kenpom_snapshots_date ON kenpom_snapshots(snapshot_date DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_kenpom_snapshots_game ON kenpom_snapshots(game_id)",
-    "CREATE INDEX IF NOT EXISTS idx_kenpom_snapshots_graded ON kenpom_snapshots(graded)",
-]
-
-
-def _try_create_via_sdk_rpc(url: str, key: str) -> bool:
-    """Approach A: use supabase-py SDK's postgrest.rpc('exec_sql')."""
-    try:
-        from supabase import create_client
-        sdk = create_client(url, key)
-        for i, ddl in enumerate(_CREATE_TABLE_DDL, 1):
-            preview = ddl[:80].replace("\n", " ")
-            print(f"    [A-{i}/{len(_CREATE_TABLE_DDL)}] {preview}...")
-            try:
-                sdk.postgrest.rpc("exec_sql", {"query": ddl}).execute()
-            except Exception as stmt_err:
-                if "already exists" in str(stmt_err).lower():
-                    print("    (already exists, OK)")
-                else:
-                    raise
-        return True
-    except Exception as e:
-        print(f"    Approach A (SDK rpc) failed: {e}")
-        return False
-
-
-def _try_create_via_http_rpc(url: str, key: str) -> bool:
-    """Approach B: raw HTTP POST to /rest/v1/rpc/exec_sql."""
-    try:
-        import httpx
-        for i, ddl in enumerate(_CREATE_TABLE_DDL, 1):
-            preview = ddl[:80].replace("\n", " ")
-            print(f"    [B-{i}/{len(_CREATE_TABLE_DDL)}] {preview}...")
-            resp = httpx.post(
-                f"{url}/rest/v1/rpc/exec_sql",
-                headers={
-                    "apikey": key,
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                },
-                json={"query": ddl},
-                timeout=15,
-            )
-            if resp.status_code >= 400:
-                if "already exists" in resp.text.lower():
-                    print("    (already exists, OK)")
-                else:
-                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
-        return True
-    except Exception as e:
-        print(f"    Approach B (HTTP rpc) failed: {e}")
-        return False
-
 
 def _ensure_table(db_client: Any) -> bool:
-    """Verify kenpom_snapshots table exists; auto-create if missing.
+    """Verify kenpom_snapshots table exists via a lightweight probe.
 
     Uses a module-level flag so we only probe once per process lifetime.
-    Tries multiple creation approaches if the table is missing.
+    The db_client is the same SupabaseClient used by the rest of the scanner
+    (created via get_supabase() in odds_scraper.py).
     Returns True if the table is ready, False otherwise.
     """
     global _TABLE_VERIFIED
     if _TABLE_VERIFIED:
         return True
 
-    # Probe: try a lightweight query.
+    # Probe: try a lightweight query against PostgREST.
     try:
         db_client._get("kenpom_snapshots", select="id", limit=1)
         _TABLE_VERIFIED = True
-        print("  [KENPOM SNAPSHOT] Table probe OK — table exists.")
         return True
     except Exception as probe_err:
         err_str = str(probe_err).lower()
-        # If it's not a "table missing" error, assume transient issue.
+        # If it's not a "table missing" error, assume transient issue and proceed.
         if "does not exist" not in err_str and "relation" not in err_str and "404" not in err_str:
-            print(f"  [KENPOM SNAPSHOT] Probe returned non-fatal error (assuming table exists): {probe_err}")
             _TABLE_VERIFIED = True
             return True
-        print(f"  [KENPOM SNAPSHOT] Table 'kenpom_snapshots' does not exist — attempting auto-creation...")
-
-    # Table missing — attempt auto-creation.
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
-    if not url or not key:
         print(
-            "  [KENPOM SNAPSHOT] ERROR: No SUPABASE_URL / SUPABASE_SERVICE_KEY in env.\n"
-            "  → Cannot auto-create table.\n"
-            "  → Set env vars, then run: python scripts/create_kenpom_table.py\n"
-            "  → Or paste scripts/008_kenpom_snapshots.sql into Supabase SQL Editor"
+            f"  [KENPOM SNAPSHOT] ERROR: Table 'kenpom_snapshots' does not exist.\n"
+            f"  → Create it in Supabase SQL Editor with: scripts/008_kenpom_snapshots.sql\n"
+            f"  → Or run: python scripts/create_kenpom_table.py"
         )
         return False
-
-    # Try multiple approaches.
-    if _try_create_via_sdk_rpc(url, key):
-        _TABLE_VERIFIED = True
-        print("  [KENPOM SNAPSHOT] Table created successfully (via SDK RPC).")
-        return True
-
-    if _try_create_via_http_rpc(url, key):
-        _TABLE_VERIFIED = True
-        print("  [KENPOM SNAPSHOT] Table created successfully (via HTTP RPC).")
-        return True
-
-    print(
-        "  [KENPOM SNAPSHOT] ERROR: All auto-create approaches failed.\n"
-        "  → Create the table manually:\n"
-        "    1. Go to Supabase Dashboard → SQL Editor\n"
-        "    2. Paste and run: scripts/008_kenpom_snapshots.sql\n"
-        "    3. Restart the scanner"
-    )
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -263,38 +148,34 @@ def save_kenpom_snapshots(
     Only saves once per day per game (uses upsert on snapshot_date+game_id).
 
     Args:
-        db_client: Supabase client.
+        db_client: Supabase client (same one used by scanner for EV, signals, etc.).
         game_projections: dict of game_id -> KenPom projection dict.
         all_games: list of Game objects (has bookmakers with Pinnacle).
         snapshot_dt: Override snapshot date (defaults to today UTC).
 
     Returns number of snapshots saved.
     """
-    # Unconditional entry log — prints before ANY guard/try/catch.
-    print("[KENPOM SNAPSHOT] Function called")
     print(
-        f"  [KENPOM SNAPSHOT] Starting snapshot save... "
-        f"(db_client={'OK' if db_client else 'NONE'}, "
-        f"{len(game_projections)} KP projections, "
-        f"{len(all_games)} total games)"
+        f"  [KENPOM SNAPSHOT] save_kenpom_snapshots called — "
+        f"db_client={type(db_client).__name__}, "
+        f"{len(game_projections)} projections, "
+        f"{len(all_games)} games"
     )
 
     if not db_client:
-        print("  [KENPOM SNAPSHOT] Skipped — no DB client (Supabase not connected).")
+        print("  [KENPOM SNAPSHOT] Skipped — no DB client.")
         return 0
     if not game_projections:
         print("  [KENPOM SNAPSHOT] Skipped — game_projections is empty.")
         return 0
 
-    # Ensure table exists (auto-create on first run).
+    # Ensure table exists (probe once per process).
     if not _ensure_table(db_client):
-        print("  [KENPOM SNAPSHOT] Aborted — table does not exist.")
         return 0
 
     t0 = time.time()
     today = snapshot_dt or date.today()
     today_str = today.isoformat()
-    print(f"  [KENPOM SNAPSHOT] Snapshot date: {today_str}")
 
     # Check which games already have snapshots for today.
     game_ids = list(game_projections.keys())
@@ -320,13 +201,6 @@ def save_kenpom_snapshots(
 
     # Build game lookup (CBB only).
     game_map = {g.id: g for g in all_games if g.sport_key == "basketball_ncaab"}
-    print(f"  [KENPOM SNAPSHOT] {len(game_map)} CBB games in all_games.")
-
-    # Debug: print first game's bookmaker keys to verify Pinnacle presence.
-    if game_map:
-        first_game = next(iter(game_map.values()))
-        bk_keys = [bk.key for bk in first_game.bookmakers]
-        print(f"  [KENPOM SNAPSHOT] First CBB game bookmakers: {bk_keys}")
 
     rows: list[dict] = []
     pin_found = 0
@@ -350,9 +224,8 @@ def save_kenpom_snapshots(
         # Positive = home favored (home scores more).
         kp_spread = kp_home - kp_away
 
-        # Pinnacle data — debug first game.
-        debug_pin = (len(rows) == 0)
-        pin = _extract_pinnacle_odds(game, debug=debug_pin)
+        # Pinnacle data.
+        pin = _extract_pinnacle_odds(game)
         if pin:
             pin_found += 1
         else:
@@ -367,20 +240,6 @@ def save_kenpom_snapshots(
         spread_edge = (kp_spread - pin_spread) if pin_spread is not None else None
         total_edge = (kp_total - pin_total) if pin_total is not None else None
         ml_edge = (kp_wp - pin_home_ip) if pin_home_ip is not None else None
-
-        # Debug first 3 games.
-        if len(rows) < 3:
-            ip_str = f"{pin_home_ip:.3f}" if pin_home_ip else "N/A"
-            se_str = f"{spread_edge:+.1f}" if spread_edge is not None else "N/A"
-            te_str = f", total={total_edge:+.1f}" if total_edge is not None else ""
-            me_str = f", ml={ml_edge:+.3f}" if ml_edge is not None else ""
-            print(
-                f"  [KENPOM SNAPSHOT DEBUG {len(rows)+1}/3] "
-                f"{game.away_team} @ {game.home_team} | "
-                f"KP: {kp_away:.0f}-{kp_home:.0f} (spread={kp_spread:+.1f}, total={kp_total:.1f}, WP={kp_wp:.1%}) | "
-                f"PIN: spread={pin_spread}, total={pin_total}, ML={pin_home_ml}/{pin_away_ml} (IP={ip_str}) | "
-                f"Edges: spread={se_str}{te_str}{me_str}"
-            )
 
         rows.append({
             "snapshot_date": today_str,
@@ -405,9 +264,9 @@ def save_kenpom_snapshots(
         })
 
     print(
-        f"  [KENPOM SNAPSHOT] Found {len(game_projections)} games with KP data, "
-        f"{pin_found} with Pinnacle odds, {pin_missing} without Pinnacle"
-        + (f", {no_game} KP games not in all_games" if no_game else "")
+        f"  [KENPOM SNAPSHOT] {len(game_projections)} KP projections, "
+        f"{pin_found} with Pinnacle, {pin_missing} without Pinnacle"
+        + (f", {no_game} not in all_games" if no_game else "")
         + (f", {len(existing_ids)} already saved" if existing_ids else "")
     )
 
@@ -425,16 +284,8 @@ def save_kenpom_snapshots(
         )
         return len(rows)
     except Exception as e:
-        err_str = str(e).lower()
-        if "does not exist" in err_str or "relation" in err_str:
-            print(
-                f"  [KENPOM SNAPSHOT] ERROR: Table 'kenpom_snapshots' does not exist!\n"
-                f"  → Run: python scripts/create_kenpom_table.py\n"
-                f"  → Or paste scripts/008_kenpom_snapshots.sql into the Supabase SQL Editor."
-            )
-        else:
-            print(f"  [KENPOM SNAPSHOT] ERROR: Save failed: {e}")
-            traceback.print_exc()
+        print(f"  [KENPOM SNAPSHOT] ERROR saving snapshots: {e}")
+        traceback.print_exc()
         return 0
 
 

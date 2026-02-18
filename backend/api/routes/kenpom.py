@@ -1,23 +1,13 @@
 """KenPom Edge Finder API — projections vs Pinnacle odds with performance tracking."""
 
-import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from db import SupabaseClient
+from db import get_supabase
 
 router = APIRouter()
-
-
-def _get_client() -> SupabaseClient | None:
-    """Get Supabase client, returning None if credentials are missing."""
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
-    if not url or not key:
-        return None
-    return SupabaseClient(url, key)
 
 
 def _table_missing_error(err: Exception) -> bool:
@@ -26,10 +16,10 @@ def _table_missing_error(err: Exception) -> bool:
     return "does not exist" in s or "relation" in s or "404" in s
 
 
-def _get_snapshots_for_date(client: SupabaseClient, target_date: date) -> list[dict]:
+def _get_snapshots_for_date(db: Any, target_date: date) -> list[dict]:
     """Fetch all KenPom snapshots for a specific date, sorted by absolute spread edge."""
     try:
-        rows = client._get(
+        rows = db._get(
             "kenpom_snapshots",
             filters={"snapshot_date": f"eq.{target_date.isoformat()}"},
             order="created_at.desc",
@@ -66,19 +56,12 @@ def _get_snapshots_for_date(client: SupabaseClient, target_date: date) -> list[d
 @router.get("/today")
 def get_today() -> dict:
     """All KenPom snapshots for today's games."""
-    print("[KENPOM API] /today called")
-    client = _get_client()
-    if client is None:
-        print("[KENPOM API] No Supabase credentials — returning empty")
-        return {
-            "date": date.today().isoformat(),
-            "snapshots": [],
-            "message": "Backend not connected to Supabase — set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env",
-        }
+    try:
+        db = get_supabase()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     today = date.today()
-    print(f"[KENPOM API] Querying snapshots for {today.isoformat()}")
-    snapshots = _get_snapshots_for_date(client, today)
-    print(f"[KENPOM API] Found {len(snapshots)} snapshots for today")
+    snapshots = _get_snapshots_for_date(db, today)
     return {
         "date": today.isoformat(),
         "snapshots": snapshots,
@@ -89,16 +72,12 @@ def get_today() -> dict:
 @router.get("/tomorrow")
 def get_tomorrow() -> dict:
     """All KenPom snapshots for tomorrow's games."""
-    print("[KENPOM API] /tomorrow called")
-    client = _get_client()
-    if client is None:
-        return {
-            "date": (date.today() + timedelta(days=1)).isoformat(),
-            "snapshots": [],
-            "message": "Backend not connected to Supabase",
-        }
+    try:
+        db = get_supabase()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     tomorrow = date.today() + timedelta(days=1)
-    snapshots = _get_snapshots_for_date(client, tomorrow)
+    snapshots = _get_snapshots_for_date(db, tomorrow)
     message = None
     if not snapshots:
         message = "Waiting for Pinnacle to open tomorrow's lines"
@@ -110,12 +89,12 @@ def get_edges(
     target_date: str = Query(None, alias="date", description="YYYY-MM-DD"),
 ) -> dict:
     """Games for a specific date, separated into spread and total edge arrays."""
-    client = _get_client()
-    if client is None:
-        dt = date.fromisoformat(target_date) if target_date else date.today()
-        return {"date": dt.isoformat(), "spread_edges": [], "total_edges": []}
+    try:
+        db = get_supabase()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     dt = date.fromisoformat(target_date) if target_date else date.today()
-    all_snaps = _get_snapshots_for_date(client, dt)
+    all_snaps = _get_snapshots_for_date(db, dt)
 
     spread_edges = sorted(
         [s for s in all_snaps if s.get("spread_edge") is not None],
@@ -161,13 +140,13 @@ def _count_results(rows: list[dict]) -> dict:
     }
 
 
-def _safe_get_graded(client: SupabaseClient, extra_filters: dict | None = None) -> list[dict]:
+def _safe_get_graded(db: Any, extra_filters: dict | None = None) -> list[dict]:
     """Fetch graded snapshots, returning [] if table is missing."""
     filters: dict[str, str] = {"graded": "eq.true"}
     if extra_filters:
         filters.update(extra_filters)
     try:
-        return client._get(
+        return db._get(
             "kenpom_snapshots",
             filters=filters,
             order="snapshot_date.asc",
@@ -183,12 +162,13 @@ def get_performance(
     days: int = Query(30, ge=1, le=365),
 ) -> dict:
     """Aggregated daily performance stats for graded games over the last N days."""
-    client = _get_client()
-    if client is None:
-        return {"season": _count_results([]), "daily": []}
+    try:
+        db = get_supabase()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     since = (date.today() - timedelta(days=days)).isoformat()
 
-    rows = _safe_get_graded(client, {"snapshot_date": f"gte.{since}"})
+    rows = _safe_get_graded(db, {"snapshot_date": f"gte.{since}"})
 
     daily: dict[str, list[dict]] = {}
     for r in rows:
@@ -231,13 +211,12 @@ def get_performance(
 @router.get("/performance/season")
 def get_performance_season() -> dict:
     """Full season aggregated stats with edge bucket analysis and rolling accuracy."""
-    client = _get_client()
-    if client is None:
-        empty = _count_results([])
-        empty.update({"total_games_graded": 0, "spread_record": "0-0", "total_record": "0-0", "ml_record": "0-0", "last_updated": datetime.now(timezone.utc).isoformat()})
-        return {"season": empty, "edge_buckets": [], "rolling_7day": {"spread": [], "total": [], "ml": []}}
+    try:
+        db = get_supabase()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    rows = _safe_get_graded(client)
+    rows = _safe_get_graded(db)
 
     season = _count_results(rows)
     season["total_games_graded"] = len(rows)
@@ -309,21 +288,22 @@ def diagnostic() -> dict:
     """Full diagnostic — checks DB connection, table existence, row count."""
     diag: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
-        "supabase_key_set": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
+        "db_connected": False,
         "table_exists": False,
         "row_count": 0,
         "today_count": 0,
         "errors": [],
     }
 
-    client = _get_client()
-    if client is None:
-        diag["errors"].append("SUPABASE_URL or SUPABASE_SERVICE_KEY not set in environment")
+    try:
+        db = get_supabase()
+        diag["db_connected"] = True
+    except Exception as e:
+        diag["errors"].append(f"get_supabase() failed: {e}")
         return diag
 
     try:
-        rows = client._get("kenpom_snapshots", select="id", limit=1)
+        rows = db._get("kenpom_snapshots", select="id", limit=1)
         diag["table_exists"] = True
     except Exception as e:
         if _table_missing_error(e):
@@ -333,7 +313,7 @@ def diagnostic() -> dict:
         return diag
 
     try:
-        all_rows = client._get("kenpom_snapshots", select="id,snapshot_date")
+        all_rows = db._get("kenpom_snapshots", select="id,snapshot_date")
         diag["row_count"] = len(all_rows)
         today_str = date.today().isoformat()
         diag["today_count"] = sum(1 for r in all_rows if r.get("snapshot_date", "")[:10] == today_str)
@@ -346,13 +326,12 @@ def diagnostic() -> dict:
 @router.post("/seed-test-data")
 def seed_test_data() -> dict:
     """Insert 3 realistic test snapshots for today. For development testing only."""
-    print("[KENPOM API] Seeding test data...")
-    client = _get_client()
-    if client is None:
-        return {"error": "No Supabase credentials. Set SUPABASE_URL and SUPABASE_SERVICE_KEY."}
+    try:
+        db = get_supabase()
+    except Exception as e:
+        return {"error": f"get_supabase() failed: {e}"}
 
     today_str = date.today().isoformat()
-    now_iso = datetime.now(timezone.utc).isoformat()
     two_hours = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 
     test_rows = [
@@ -425,10 +404,9 @@ def seed_test_data() -> dict:
     ]
 
     try:
-        client._upsert_many(
+        db._upsert_many(
             "kenpom_snapshots", test_rows, on_conflict="snapshot_date,game_id"
         )
-        print(f"[KENPOM API] Seeded {len(test_rows)} test snapshots for {today_str}")
         return {
             "success": True,
             "message": f"Inserted {len(test_rows)} test snapshots for {today_str}",
@@ -436,11 +414,9 @@ def seed_test_data() -> dict:
         }
     except Exception as e:
         err_str = str(e)
-        print(f"[KENPOM API] Seed failed: {err_str}")
         if _table_missing_error(e):
             return {
                 "error": "Table kenpom_snapshots does not exist",
                 "fix": "Run: python scripts/create_kenpom_table.py — or paste scripts/008_kenpom_snapshots.sql into Supabase SQL Editor",
             }
         return {"error": err_str}
-
