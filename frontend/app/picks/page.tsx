@@ -107,6 +107,13 @@ function trueProbToAmericanOdds(prob: number): number {
   return Math.round((100 * (1 - prob)) / prob);
 }
 
+/** Convert American odds to implied probability (0–1). */
+function americanOddsToImpliedProb(odds: number): number {
+  if (odds < 0) return -odds / (-odds + 100);
+  if (odds > 0) return 100 / (odds + 100);
+  return 0.5;
+}
+
 function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
@@ -390,7 +397,7 @@ function BooksTable({
   opportunities: Opportunity[];
   oppsLoading: boolean;
 }) {
-  // Fix 1: Flexible matching — try exact, then fuzzy
+  // Flexible matching — try exact, then fuzzy (relaxed side), then broadest (game_id only)
   let matchingOpps = opportunities.filter(
     (o) =>
       o.game_id === sig.game_id &&
@@ -408,13 +415,32 @@ function BooksTable({
     );
   }
 
-  // Fix 3: Sort by EV% descending
+  // Sort by EV% descending
   matchingOpps.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
 
-  const trueProb = sig.true_prob ?? (matchingOpps.length > 0 ? matchingOpps[0].true_prob : null);
+  // Robust trueProb resolution chain:
+  // 1. Signal's own true_prob
+  // 2. First matching opportunity's true_prob
+  // 3. Derive from signal's fair_odds (if available)
+  // 4. Broadest search: any opportunity for same game_id
+  let trueProb: number | null =
+    sig.true_prob ??
+    (matchingOpps.length > 0 ? matchingOpps[0].true_prob : null);
+
+  if (trueProb == null && sig.fair_odds != null) {
+    trueProb = americanOddsToImpliedProb(sig.fair_odds);
+  }
+
+  if (trueProb == null) {
+    const anyOpp = opportunities.find(
+      (o) => o.game_id === sig.game_id && o.true_prob != null && o.true_prob > 0,
+    );
+    if (anyOpp) trueProb = anyOpp.true_prob;
+  }
+
   const hasOpps = matchingOpps.length > 0;
 
-  // Fix 1: other_books fallback, excluding blocked
+  // other_books fallback, excluding blocked
   const otherBooks = (sig.other_books ?? []).filter(
     (ob) => !BLOCKED_BOOKS.has(ob.sportsbook),
   );
@@ -433,7 +459,7 @@ function BooksTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800/50">
-          {/* Fix 3: Pinnacle reference row — always on top */}
+          {/* Pinnacle reference row — always on top */}
           {trueProb != null && trueProb > 0 && (
             <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
               <td className="whitespace-nowrap px-3 py-2 text-blue-400">
@@ -477,10 +503,12 @@ function BooksTable({
                   {formatOdds(opp.book_odds)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
-                  {pct((opp.true_prob ?? 0) * 100)}
+                  {pct((opp.true_prob ?? trueProb ?? 0) * 100)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
-                  {pct((opp.book_implied_prob ?? 0) * 100)}
+                  {pct(
+                    (opp.book_implied_prob ?? americanOddsToImpliedProb(opp.book_odds)) * 100,
+                  )}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/80">
                   +{pct(opp.ev_percentage ?? 0)}
@@ -491,7 +519,7 @@ function BooksTable({
               </tr>
             ))
           ) : (
-            /* Fix 1: Fallback — always show signal's own data + other_books */
+            /* Fallback — always show signal's own data + other_books */
             <>
               <tr className="bg-[#1e1e20]">
                 <td className="whitespace-nowrap px-3 py-2 text-gray-300">
@@ -502,9 +530,11 @@ function BooksTable({
                   {formatOdds(sig.book_odds)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
-                  {trueProb != null ? pct(trueProb * 100) : "\u2014"}
+                  {trueProb != null ? pct(trueProb * 100) : pct(americanOddsToImpliedProb(sig.book_odds) * 100)}
                 </td>
-                <td className="px-3 py-2" />
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                  {pct(americanOddsToImpliedProb(sig.book_odds) * 100)}
+                </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/80">
                   +{pct(sig.edge_percentage ?? 0)}
                 </td>
@@ -523,8 +553,12 @@ function BooksTable({
                   <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-400">
                     {formatOdds(ob.book_odds)}
                   </td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2" />
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                    {trueProb != null ? pct(trueProb * 100) : pct(americanOddsToImpliedProb(ob.book_odds) * 100)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                    {pct(americanOddsToImpliedProb(ob.book_odds) * 100)}
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/60">
                     +{pct(ob.ev_pct ?? 0)}
                   </td>
