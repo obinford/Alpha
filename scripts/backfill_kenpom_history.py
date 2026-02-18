@@ -508,6 +508,54 @@ def backfill_new_snapshots(
     return total_saved, total_graded
 
 
+def backfill_pinnacle_odds_history(db) -> None:
+    """Backfill pinnacle_odds_history from existing line_movements data.
+
+    Finds all CBB games in the games table and populates opening/closing
+    Pinnacle snapshots from historical line_movements rows.
+    """
+    print("\n=== BACKFILLING PINNACLE ODDS HISTORY ===\n")
+
+    try:
+        games = db._get(
+            "games",
+            select="game_id,sport,home_team,away_team,start_time",
+            filters={"sport": "eq.basketball_ncaab"},
+        )
+    except Exception as e:
+        print(f"  Failed to fetch games: {e}")
+        return
+
+    if not games:
+        print("  No CBB games in database.")
+        return
+
+    game_ids = [g["game_id"] for g in games]
+    home_team_by_gid = {g["game_id"]: g["home_team"] for g in games}
+    game_info = {
+        g["game_id"]: {
+            "sport": g["sport"],
+            "home_team": g["home_team"],
+            "away_team": g["away_team"],
+            "start_time": g.get("start_time"),
+        }
+        for g in games
+    }
+
+    try:
+        from intelligence.pinnacle_history import backfill_from_line_movements
+
+        opening, closing = backfill_from_line_movements(
+            db, game_ids, home_team_by_gid, game_info
+        )
+        print(
+            f"  Pinnacle history backfill: {opening} opening lines, "
+            f"{closing} closing lines from {len(game_ids)} games."
+        )
+    except Exception as e:
+        print(f"  Pinnacle history backfill failed: {e}")
+
+
 def print_verification_summary(db) -> None:
     """Print a summary of snapshot data for verification."""
     print("\n=== VERIFICATION SUMMARY ===\n")
@@ -612,7 +660,11 @@ def main() -> None:
     else:
         print("\n  --repair-only: Skipping backfill.")
 
-    # Step 3: Print verification summary.
+    # Step 3: Backfill Pinnacle odds history from line_movements.
+    if not args.repair_only and not args.dry_run:
+        backfill_pinnacle_odds_history(db)
+
+    # Step 4: Print verification summary.
     if not args.dry_run:
         print_verification_summary(db)
 

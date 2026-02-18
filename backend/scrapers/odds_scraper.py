@@ -1237,6 +1237,15 @@ def run_scan(sport_keys: list[str]) -> int:
                 print(f"  Warning: Line movement write failed for {display} ({e}).")
             print(f"  [TIMING] {display} line_movements DB write: {time.time() - t0:.1f}s")
 
+            # Pinnacle opening/closing history — critical for CLV analysis.
+            t0 = time.time()
+            try:
+                from intelligence.pinnacle_history import store_pinnacle_history
+                store_pinnacle_history(db, games)
+            except Exception as e:
+                print(f"  Warning: Pinnacle history write failed for {display} ({e}).")
+            print(f"  [TIMING] {display} pinnacle_history DB write: {time.time() - t0:.1f}s")
+
         # Scan for +EV: mainlines for ALL games, props for near-term only.
         # Track devig source usage for diagnostics.
         t0 = time.time()
