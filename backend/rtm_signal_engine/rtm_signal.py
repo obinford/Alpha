@@ -81,7 +81,7 @@ SIGNAL_MIN_ODDS = -160
 SIGNAL_MAX_ODDS = 150
 
 # Sportsbooks to never include in signals (removed from scanner, stale data).
-_BLOCKED_SIGNAL_BOOKS: set[str] = {"betopenly"}
+_BLOCKED_SIGNAL_BOOKS: set[str] = {"betopenly", "betparx"}
 
 # Flat bet amount for all signals ($100).
 SIGNAL_BET_AMOUNT = 100.0

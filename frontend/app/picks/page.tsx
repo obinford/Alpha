@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useBankroll } from "@/lib/bankroll-context";
+import { getSportsbookUrl } from "@/lib/sportsbook-links";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+// Books to hide from all displays
+const BLOCKED_BOOKS = new Set(["betparx"]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -134,6 +138,44 @@ function Stars({ count }: { count: number }) {
   );
 }
 
+/** Fix 6: Time badge for upcoming games */
+function TimeBadge({ startTime }: { startTime: string }) {
+  const diff = new Date(startTime).getTime() - Date.now();
+  if (diff <= 0) return null;
+  const minutes = diff / 60000;
+  if (minutes <= 10) {
+    return (
+      <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-400 animate-pulse">
+        Locking Soon
+      </span>
+    );
+  }
+  if (minutes <= 30) {
+    return (
+      <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400">
+        Starting Soon
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Fix 5: Bet link button */
+function BetLink({ book }: { book: string }) {
+  const url = getSportsbookUrl(book);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="ml-2 inline-flex items-center rounded bg-emerald-600/20 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 transition-colors hover:bg-emerald-600/40"
+    >
+      Bet &rarr;
+    </a>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // KenPom data extraction
 // ---------------------------------------------------------------------------
@@ -171,7 +213,7 @@ function extractKenPom(intelligenceContext: string | null): KenPomData | null {
 }
 
 // ---------------------------------------------------------------------------
-// KenPom edge analysis (Fix 3)
+// KenPom edge analysis
 // ---------------------------------------------------------------------------
 
 function KenPomEdge({
@@ -181,18 +223,13 @@ function KenPomEdge({
   sig: Signal;
   kenpom: KenPomData;
 }) {
-  const margin = kenpom.home_score - kenpom.away_score; // positive = home favored
+  const margin = kenpom.home_score - kenpom.away_score;
   const kpTotal = kenpom.home_score + kenpom.away_score;
 
-  // Score prediction line
   const scoreText = `${kenpom.away_team ?? "Away"} ${kenpom.away_score.toFixed(1)} \u2013 ${kenpom.home_team ?? "Home"} ${kenpom.home_score.toFixed(1)}`;
 
   if (sig.market_type === "spreads") {
-    // For spreads: compare KenPom margin to the actual spread (prop_line)
     const spreadLine = sig.prop_line ?? 0;
-    // KenPom predicted margin from the perspective of "side" team
-    // If side is home team, KenPom says home wins by `margin`. Spread is typically in home perspective.
-    // Edge = how much KenPom covers beyond the spread
     const edge = Math.abs(spreadLine) - Math.abs(margin);
     const absEdge = Math.abs(edge).toFixed(1);
 
@@ -255,7 +292,6 @@ function KenPomEdge({
   // h2h (moneyline)
   const pinImplied = sig.true_prob != null ? sig.true_prob * 100 : null;
   const kpWp = kenpom.home_win_prob * 100;
-  // Determine which side the signal is on
   const isHome =
     sig.side === kenpom.home_team ||
     sig.side.toLowerCase().includes("home");
@@ -342,7 +378,7 @@ function ScoreBarWithExplanation({
 }
 
 // ---------------------------------------------------------------------------
-// Books comparison table (Fix 4)
+// Books comparison table — Fix 1: always show data, never empty
 // ---------------------------------------------------------------------------
 
 function BooksTable({
@@ -354,18 +390,34 @@ function BooksTable({
   opportunities: Opportunity[];
   oppsLoading: boolean;
 }) {
-  const matchingOpps = opportunities.filter(
+  // Fix 1: Flexible matching — try exact, then fuzzy
+  let matchingOpps = opportunities.filter(
     (o) =>
       o.game_id === sig.game_id &&
       o.market_type === sig.market_type &&
-      o.side === sig.side,
+      o.side === sig.side &&
+      !BLOCKED_BOOKS.has(o.sportsbook),
   );
+
+  if (matchingOpps.length === 0) {
+    matchingOpps = opportunities.filter(
+      (o) =>
+        o.game_id === sig.game_id &&
+        o.market_type === sig.market_type &&
+        !BLOCKED_BOOKS.has(o.sportsbook),
+    );
+  }
+
+  // Fix 3: Sort by EV% descending
   matchingOpps.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
 
   const trueProb = sig.true_prob ?? (matchingOpps.length > 0 ? matchingOpps[0].true_prob : null);
-
-  // Merge other_books from signal with opportunities for a complete picture
   const hasOpps = matchingOpps.length > 0;
+
+  // Fix 1: other_books fallback, excluding blocked
+  const otherBooks = (sig.other_books ?? []).filter(
+    (ob) => !BLOCKED_BOOKS.has(ob.sportsbook),
+  );
 
   return (
     <div className="mt-3 overflow-x-auto rounded-xl bg-[#1a1a1c]">
@@ -381,7 +433,7 @@ function BooksTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800/50">
-          {/* Pinnacle reference row */}
+          {/* Fix 3: Pinnacle reference row — always on top */}
           {trueProb != null && trueProb > 0 && (
             <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
               <td className="whitespace-nowrap px-3 py-2 text-blue-400">
@@ -419,6 +471,7 @@ function BooksTable({
               <tr key={opp.id} className={i % 2 === 0 ? "bg-[#1e1e20]" : ""}>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                   {opp.sportsbook}
+                  <BetLink book={opp.sportsbook} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                   {formatOdds(opp.book_odds)}
@@ -437,17 +490,20 @@ function BooksTable({
                 </td>
               </tr>
             ))
-          ) : sig.other_books && sig.other_books.length > 0 ? (
-            /* Fallback: use other_books from signal if no opportunities found */
+          ) : (
+            /* Fix 1: Fallback — always show signal's own data + other_books */
             <>
               <tr className="bg-[#1e1e20]">
                 <td className="whitespace-nowrap px-3 py-2 text-gray-300">
                   {sig.sportsbook}
+                  <BetLink book={sig.sportsbook} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                   {formatOdds(sig.book_odds)}
                 </td>
-                <td className="px-3 py-2" />
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                  {trueProb != null ? pct(trueProb * 100) : "\u2014"}
+                </td>
                 <td className="px-3 py-2" />
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/80">
                   +{pct(sig.edge_percentage ?? 0)}
@@ -458,10 +514,11 @@ function BooksTable({
                     : "\u2014"}
                 </td>
               </tr>
-              {sig.other_books.map((ob) => (
+              {otherBooks.map((ob) => (
                 <tr key={ob.sportsbook}>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                     {ob.sportsbook}
+                    <BetLink book={ob.sportsbook} />
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-400">
                     {formatOdds(ob.book_odds)}
@@ -475,12 +532,6 @@ function BooksTable({
                 </tr>
               ))}
             </>
-          ) : (
-            <tr>
-              <td colSpan={6} className="px-3 py-3 text-center text-gray-600">
-                No other books available
-              </td>
-            </tr>
           )}
         </tbody>
       </table>
@@ -502,6 +553,7 @@ function SignalCard({
   kellyBetSize,
   opportunities,
   oppsLoading,
+  gameStartTime,
 }: {
   sig: Signal;
   expandedScore: string | null;
@@ -512,6 +564,7 @@ function SignalCard({
   kellyBetSize: (fraction: number) => number | null;
   opportunities: Opportunity[];
   oppsLoading: boolean;
+  gameStartTime: string | null;
 }) {
   const kenpom = extractKenPom(sig.intelligence_context);
   const pinOdds =
@@ -528,12 +581,16 @@ function SignalCard({
   ];
 
   const kellyBet =
-    sig.kelly_fraction != null ? kellyBetSize(sig.kelly_fraction) : null;
+    sig.kelly_fraction != null && sig.kelly_fraction > 0
+      ? kellyBetSize(sig.kelly_fraction)
+      : null;
   const isCardExpanded = expandedCardId === sig.id;
 
   const otherBookCount =
-    (sig.other_books?.length ?? 0) > 0
-      ? sig.other_books!.length
+    (sig.other_books?.filter((ob) => !BLOCKED_BOOKS.has(ob.sportsbook))
+      .length ?? 0) > 0
+      ? sig.other_books!.filter((ob) => !BLOCKED_BOOKS.has(ob.sportsbook))
+          .length
       : 0;
 
   return (
@@ -547,6 +604,8 @@ function SignalCard({
               <span className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-400">
                 {sportLabel(sig.sport)}
               </span>
+              {/* Fix 6: Time badge */}
+              {gameStartTime && <TimeBadge startTime={gameStartTime} />}
             </div>
           </div>
           <div className="text-right">
@@ -571,7 +630,10 @@ function SignalCard({
 
         {/* Book + odds row */}
         <div className="mt-3 flex items-center justify-between">
-          <span className="text-sm text-gray-400">{sig.sportsbook}</span>
+          <span className="text-sm text-gray-400">
+            {sig.sportsbook}
+            <BetLink book={sig.sportsbook} />
+          </span>
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-lg font-bold text-gray-200">
               {formatOdds(sig.book_odds ?? -110)}
@@ -601,7 +663,7 @@ function SignalCard({
           )}
         </div>
 
-        {/* KenPom projection (Fix 3) */}
+        {/* KenPom projection */}
         {kenpom != null && (sig.projection_score ?? 0) > 0 && (
           <div className="mt-3 rounded-lg bg-[#2c2c2e]/50 px-3 py-2">
             <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
@@ -624,7 +686,7 @@ function SignalCard({
           ))}
         </div>
 
-        {/* View all books button (Fix 4) */}
+        {/* View all books button */}
         <button
           onClick={() => onToggleCard(sig.id)}
           className="mt-3 w-full rounded-lg bg-[#2c2c2e]/50 py-1.5 text-center text-xs text-gray-400 transition-colors hover:bg-[#2c2c2e] hover:text-gray-200"
@@ -635,7 +697,7 @@ function SignalCard({
         </button>
       </div>
 
-      {/* Expanded books table (Fix 4) */}
+      {/* Expanded books table */}
       {isCardExpanded && (
         <div className="border-t border-gray-800/50 px-5 pb-5">
           <BooksTable
@@ -686,6 +748,36 @@ export default function PicksPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Fix 6: Determine live game IDs to filter out
+  const liveGameIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const opp of opportunities) {
+      if (opp.games?.start_time) {
+        const start = new Date(opp.games.start_time).getTime();
+        if (start <= Date.now()) ids.add(opp.game_id);
+      }
+    }
+    return ids;
+  }, [opportunities]);
+
+  // Fix 2 + Fix 3 + Fix 6: Filter out blocked books & live games, sort by ev_score desc
+  const filteredSignals = useMemo(() => {
+    const filtered = signals.filter(
+      (sig) =>
+        !BLOCKED_BOOKS.has(sig.sportsbook) &&
+        !liveGameIds.has(sig.game_id),
+    );
+    // Fix 3: Sort by ev_score descending
+    filtered.sort((a, b) => (b.ev_score ?? 0) - (a.ev_score ?? 0));
+    return filtered;
+  }, [signals, liveGameIds]);
+
+  // Lookup game start_time for a signal
+  function getGameStartTime(sig: Signal): string | null {
+    const opp = opportunities.find((o) => o.game_id === sig.game_id);
+    return opp?.games?.start_time ?? null;
+  }
+
   function handleToggleScore(sigId: number, label: string) {
     const key = `${sigId}:${label}`;
     setExpandedScore((prev) => (prev === key ? null : key));
@@ -713,13 +805,13 @@ export default function PicksPage() {
         <div className="mt-12 text-center text-red-400">
           Failed to load: {error}
         </div>
-      ) : signals.length === 0 ? (
+      ) : filteredSignals.length === 0 ? (
         <div className="mt-12 text-center text-gray-500">
           No active picks right now.
         </div>
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {signals.map((sig) => (
+          {filteredSignals.map((sig) => (
             <SignalCard
               key={sig.id}
               sig={sig}
@@ -735,6 +827,7 @@ export default function PicksPage() {
               kellyBetSize={kellyBetSize}
               opportunities={opportunities}
               oppsLoading={oppsLoading}
+              gameStartTime={getGameStartTime(sig)}
             />
           ))}
         </div>

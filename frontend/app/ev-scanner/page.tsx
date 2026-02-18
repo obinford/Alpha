@@ -2,8 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBankroll } from "@/lib/bankroll-context";
+import { getSportsbookUrl } from "@/lib/sportsbook-links";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+// Books to hide from all displays
+const BLOCKED_BOOKS = new Set(["betparx"]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,6 +106,45 @@ function dateLabel(isoString: string): string {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
+/** Fix 6: Time badge for upcoming games */
+function TimeBadge({ startTime }: { startTime: string }) {
+  const diff = new Date(startTime).getTime() - Date.now();
+  if (diff <= 0) return null;
+  const minutes = diff / 60000;
+  if (minutes <= 10) {
+    return (
+      <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-400 animate-pulse">
+        Locking Soon
+      </span>
+    );
+  }
+  if (minutes <= 30) {
+    return (
+      <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400">
+        Starting Soon
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Fix 5: Bet link button */
+function BetLink({ book }: { book: string }) {
+  const url = getSportsbookUrl(book);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="ml-2 inline-flex items-center rounded bg-emerald-600/20 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 transition-colors hover:bg-emerald-600/40"
+      onClick={(e) => e.stopPropagation()}
+    >
+      Bet &rarr;
+    </a>
+  );
+}
+
 function groupOpportunities(opps: Opportunity[]): OppGroup[] {
   const map = new Map<string, Opportunity[]>();
 
@@ -117,6 +160,7 @@ function groupOpportunities(opps: Opportunity[]): OppGroup[] {
 
   const groups: OppGroup[] = [];
   for (const [key, list] of Array.from(map.entries())) {
+    // Fix 3: Sort by EV% descending within each group
     list.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
     const best = list[0];
     groups.push({
@@ -131,6 +175,7 @@ function groupOpportunities(opps: Opportunity[]): OppGroup[] {
     });
   }
 
+  // Fix 3: Sort groups by best EV% descending
   groups.sort(
     (a, b) => (b.best.ev_percentage ?? 0) - (a.best.ev_percentage ?? 0),
   );
@@ -153,7 +198,7 @@ export default function EVScannerPage() {
   // Day filter state
   const [selectedDays, setSelectedDays] = useState<Set<string> | null>(null); // null = all
 
-  const { bankroll, kellyMultiplier, kellyBetSize } = useBankroll();
+  const { bankroll, kellyBetSize } = useBankroll();
 
   useEffect(() => {
     setLoading(true);
@@ -170,10 +215,12 @@ export default function EVScannerPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Derive unique books & days from all opportunities
+  // Derive unique books & days from all opportunities, excluding blocked books
   const allBooks = useMemo(() => {
     const s = new Set<string>();
-    for (const o of opportunities) s.add(o.sportsbook);
+    for (const o of opportunities) {
+      if (!BLOCKED_BOOKS.has(o.sportsbook)) s.add(o.sportsbook);
+    }
     return Array.from(s).sort();
   }, [opportunities]);
 
@@ -194,9 +241,17 @@ export default function EVScannerPage() {
     });
   }, [opportunities]);
 
-  // Apply all three filters (AND logic)
+  // Apply all filters: sport, book, day, blocked books, and live games (Fix 6)
   const filtered = useMemo(() => {
+    const now = Date.now();
     return opportunities.filter((o) => {
+      // Fix 2: Block books
+      if (BLOCKED_BOOKS.has(o.sportsbook)) return false;
+      // Fix 6: Hide live games
+      if (o.games?.start_time) {
+        const start = new Date(o.games.start_time).getTime();
+        if (start <= now) return false;
+      }
       // Sport filter
       if (sportFilter !== "all" && o.games?.sport !== sportFilter) return false;
       // Book filter
@@ -463,6 +518,7 @@ function GroupRows({
   kellyBetSize: (fraction: number) => number | null;
 }) {
   const betAmt = showBetSize ? kellyBetSize(opp.kelly_fraction ?? 0) : null;
+  const startTime = group.game?.start_time ?? null;
 
   return (
     <>
@@ -474,10 +530,14 @@ function GroupRows({
         onClick={moreCount > 0 ? onToggle : undefined}
       >
         <td className="whitespace-nowrap px-4 py-3">
-          <div className="font-medium text-gray-200">
-            {group.game
-              ? `${group.game.away_team} @ ${group.game.home_team}`
-              : group.game_id}
+          <div className="flex items-center">
+            <span className="font-medium text-gray-200">
+              {group.game
+                ? `${group.game.away_team} @ ${group.game.home_team}`
+                : group.game_id}
+            </span>
+            {/* Fix 6: Time badge */}
+            {startTime && <TimeBadge startTime={startTime} />}
           </div>
           <div className="text-xs text-gray-500">
             {sportLabel(group.sport)}
@@ -489,6 +549,7 @@ function GroupRows({
         <td className="px-4 py-3 text-gray-300">{opp.side}</td>
         <td className="whitespace-nowrap px-4 py-3 text-gray-400">
           <span>{opp.sportsbook}</span>
+          <BetLink book={opp.sportsbook} />
           {moreCount > 0 && (
             <span className="ml-2 rounded bg-[#2c2c2e] px-1.5 py-0.5 text-xs text-gray-500">
               +{moreCount} more
@@ -512,12 +573,12 @@ function GroupRows({
         </td>
         {showBetSize && (
           <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-emerald-300">
-            {betAmt != null ? `$${betAmt.toFixed(2)}` : "—"}
+            {betAmt != null ? `$${betAmt.toFixed(2)}` : "\u2014"}
           </td>
         )}
       </tr>
 
-      {/* Expanded: Pinnacle sharp reference row */}
+      {/* Expanded: Pinnacle sharp reference row — Fix 3: always on top */}
       {isExpanded && (
         <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
           <td className="px-4 py-2" />
@@ -548,7 +609,7 @@ function GroupRows({
         </tr>
       )}
 
-      {/* Expanded sub-rows */}
+      {/* Expanded sub-rows — Fix 3: sorted by EV% descending */}
       {isExpanded &&
         group.rest.map((alt) => {
           const altBet = showBetSize
@@ -561,6 +622,7 @@ function GroupRows({
               <td className="px-4 py-2" />
               <td className="whitespace-nowrap px-4 py-2 text-gray-500">
                 {alt.sportsbook}
+                <BetLink book={alt.sportsbook} />
               </td>
               <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-400">
                 {formatOdds(alt.book_odds)}
@@ -579,7 +641,7 @@ function GroupRows({
               </td>
               {showBetSize && (
                 <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-emerald-300/60">
-                  {altBet != null ? `$${altBet.toFixed(2)}` : "—"}
+                  {altBet != null ? `$${altBet.toFixed(2)}` : "\u2014"}
                 </td>
               )}
             </tr>

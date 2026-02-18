@@ -70,6 +70,7 @@ ALLOWED_BOOKS: set[str] = {
 # returns.  Checked at parse time before any processing.
 BLOCKED_BOOKS: set[str] = {
     "betopenly",
+    "betparx",
 }
 
 # Build fetch regions: base regions + eu (for Pinnacle).

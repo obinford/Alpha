@@ -2,8 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBankroll, KellyMultiplier } from "@/lib/bankroll-context";
+import { getSportsbookUrl } from "@/lib/sportsbook-links";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+// Books to hide from all displays
+const BLOCKED_BOOKS = new Set(["betparx"]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -112,6 +116,28 @@ function formatTimeUntil(isoString: string): string {
   return `${minutes}m`;
 }
 
+/** Fix 6: Time badge for upcoming games */
+function TimeBadge({ startTime }: { startTime: string }) {
+  const diff = new Date(startTime).getTime() - Date.now();
+  if (diff <= 0) return null; // live — should already be filtered
+  const minutes = diff / 60000;
+  if (minutes <= 10) {
+    return (
+      <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-400 animate-pulse">
+        Locking Soon
+      </span>
+    );
+  }
+  if (minutes <= 30) {
+    return (
+      <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400">
+        Starting Soon
+      </span>
+    );
+  }
+  return null;
+}
+
 function Stars({ count }: { count: number }) {
   return (
     <span className="text-amber-400">
@@ -163,6 +189,22 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
         {score}
       </span>
     </div>
+  );
+}
+
+/** Fix 5: Bet link button */
+function BetLink({ book }: { book: string }) {
+  const url = getSportsbookUrl(book);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="ml-2 inline-flex items-center rounded bg-emerald-600/20 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 transition-colors hover:bg-emerald-600/40"
+    >
+      Bet &rarr;
+    </a>
   );
 }
 
@@ -350,12 +392,26 @@ function SignalDetail({
 }) {
   const { bankroll, kellyBetSize, unitSize, kellyLabel } = useBankroll();
 
-  const matchingOpps = opportunities.filter(
+  // Fix 1: Flexible matching — try exact match first, then fuzzy (game_id only)
+  let matchingOpps = opportunities.filter(
     (o) =>
       o.game_id === sig.game_id &&
       o.market_type === sig.market_type &&
-      o.side === sig.side,
+      o.side === sig.side &&
+      !BLOCKED_BOOKS.has(o.sportsbook),
   );
+
+  // Fuzzy fallback: same game + market_type (relaxed side match)
+  if (matchingOpps.length === 0) {
+    matchingOpps = opportunities.filter(
+      (o) =>
+        o.game_id === sig.game_id &&
+        o.market_type === sig.market_type &&
+        !BLOCKED_BOOKS.has(o.sportsbook),
+    );
+  }
+
+  // Fix 3: Sort by EV% descending, Pinnacle always on top handled separately
   matchingOpps.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
 
   const game = matchingOpps[0]?.games ?? null;
@@ -373,11 +429,24 @@ function SignalDetail({
     { label: "Intel", score: sig.intelligence_score ?? 0 },
   ];
 
-  // Kelly calculations
+  // Fix 4: Kelly calculations — read kelly_fraction correctly, compute dollar amount
   const kellyPct =
-    sig.kelly_fraction != null ? sig.kelly_fraction * 100 : null;
+    sig.kelly_fraction != null && sig.kelly_fraction > 0
+      ? sig.kelly_fraction * 100
+      : null;
   const kellyDollar =
-    sig.kelly_fraction != null ? kellyBetSize(sig.kelly_fraction) : null;
+    sig.kelly_fraction != null && sig.kelly_fraction > 0
+      ? kellyBetSize(sig.kelly_fraction)
+      : null;
+
+  // Fix 1: Build book rows — always show SOMETHING
+  // Merge opportunities + signal's own data + other_books for a complete picture
+  const otherBooks = (sig.other_books ?? []).filter(
+    (ob) => !BLOCKED_BOOKS.has(ob.sportsbook),
+  );
+
+  // Determine if we should use opps or fallback
+  const hasOpps = matchingOpps.length > 0;
 
   return (
     <div className="overflow-hidden transition-all duration-300">
@@ -399,6 +468,7 @@ function SignalDetail({
                 {formatOdds(sig.book_odds ?? -110)}
               </span>
               <span className="text-gray-500"> at {sig.sportsbook}</span>
+              <BetLink book={sig.sportsbook} />
             </p>
             {pinOdds != null && (
               <p className="mt-0.5 text-xs text-blue-400/70">
@@ -406,7 +476,7 @@ function SignalDetail({
               </p>
             )}
           </div>
-          {/* Fix 5: Enhanced stats with Kelly + Unit display */}
+          {/* Fix 4: Enhanced stats with Kelly + Unit display */}
           <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
             <div>
               <p className="text-[10px] uppercase text-gray-500">Edge</p>
@@ -439,9 +509,13 @@ function SignalDetail({
               <p className="text-[10px] uppercase text-gray-500">Unit</p>
               {unitSize != null ? (
                 <>
-                  <p className="font-mono text-sm text-gray-300">1u</p>
+                  <p className="font-mono text-sm text-gray-300">
+                    {kellyPct != null
+                      ? `${(kellyPct / 1).toFixed(1)}%`
+                      : "1u"}
+                  </p>
                   <p className="text-[10px] text-gray-500">
-                    ${unitSize.toFixed(2)}
+                    1u = ${unitSize.toFixed(2)}
                   </p>
                 </>
               ) : (
@@ -458,7 +532,7 @@ function SignalDetail({
           ))}
         </div>
 
-        {/* Odds comparison table */}
+        {/* Odds comparison table — Fix 1: ALWAYS show data, never empty */}
         <div className="overflow-x-auto rounded-xl bg-[#1c1c1e]">
           <table className="w-full text-left text-xs">
             <thead>
@@ -472,7 +546,7 @@ function SignalDetail({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {/* Pinnacle reference row */}
+              {/* Pinnacle reference row — Fix 3: always on top */}
               {trueProb != null && trueProb > 0 && (
                 <tr className="border-l-2 border-l-blue-500 bg-[#18181b]">
                   <td className="whitespace-nowrap px-3 py-2 text-blue-400">
@@ -505,11 +579,12 @@ function SignalDetail({
                     Loading books...
                   </td>
                 </tr>
-              ) : matchingOpps.length > 0 ? (
+              ) : hasOpps ? (
                 matchingOpps.map((opp, i) => (
                   <tr key={opp.id} className={i % 2 === 0 ? "bg-[#1e1e20]" : ""}>
                     <td className="whitespace-nowrap px-3 py-2 text-gray-400">
                       {opp.sportsbook}
+                      <BetLink book={opp.sportsbook} />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
                       {formatOdds(opp.book_odds)}
@@ -529,11 +604,47 @@ function SignalDetail({
                   </tr>
                 ))
               ) : (
-                <tr>
-                  <td colSpan={6} className="px-3 py-3 text-center text-gray-600">
-                    No book comparison data available
-                  </td>
-                </tr>
+                /* Fix 1: Fallback — always show signal's own data + other_books */
+                <>
+                  <tr className="bg-[#1e1e20]">
+                    <td className="whitespace-nowrap px-3 py-2 text-gray-300">
+                      {sig.sportsbook}
+                      <BetLink book={sig.sportsbook} />
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-300">
+                      {formatOdds(sig.book_odds)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                      {trueProb != null ? pct(trueProb * 100) : "\u2014"}
+                    </td>
+                    <td className="px-3 py-2" />
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/80">
+                      +{pct(sig.edge_percentage ?? 0)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
+                      {sig.kelly_fraction != null
+                        ? pct(sig.kelly_fraction * 100)
+                        : "\u2014"}
+                    </td>
+                  </tr>
+                  {otherBooks.map((ob) => (
+                    <tr key={ob.sportsbook}>
+                      <td className="whitespace-nowrap px-3 py-2 text-gray-400">
+                        {ob.sportsbook}
+                        <BetLink book={ob.sportsbook} />
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-400">
+                        {formatOdds(ob.book_odds)}
+                      </td>
+                      <td className="px-3 py-2" />
+                      <td className="px-3 py-2" />
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-emerald-400/60">
+                        +{pct(ob.ev_pct ?? 0)}
+                      </td>
+                      <td className="px-3 py-2" />
+                    </tr>
+                  ))}
+                </>
               )}
             </tbody>
           </table>
@@ -579,28 +690,61 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Derive all unique books from signals (primary + other_books)
+  // Fix 6: Filter out live games — compare game start_time from opportunities
+  const liveGameIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const opp of opportunities) {
+      if (opp.games?.start_time) {
+        const start = new Date(opp.games.start_time).getTime();
+        if (start <= Date.now()) ids.add(opp.game_id);
+      }
+    }
+    return ids;
+  }, [opportunities]);
+
+  // Derive all unique books from signals (primary + other_books), excluding blocked
   const allBooks = useMemo(() => {
     const s = new Set<string>();
     for (const sig of signals) {
-      s.add(sig.sportsbook);
+      if (!BLOCKED_BOOKS.has(sig.sportsbook)) s.add(sig.sportsbook);
       if (sig.other_books) {
-        for (const ob of sig.other_books) s.add(ob.sportsbook);
+        for (const ob of sig.other_books) {
+          if (!BLOCKED_BOOKS.has(ob.sportsbook)) s.add(ob.sportsbook);
+        }
       }
     }
     return Array.from(s).sort();
   }, [signals]);
 
-  // Filter signals by selected books
+  // Filter signals: remove blocked books, remove live games, apply user book filter
+  // Fix 3: Sort by ev_score descending
   const filteredSignals = useMemo(() => {
-    if (selectedBooks == null) return signals;
-    return signals.filter(
+    let filtered = signals.filter(
       (sig) =>
-        selectedBooks.has(sig.sportsbook) ||
-        (sig.other_books?.some((ob) => selectedBooks.has(ob.sportsbook)) ??
-          false),
+        !BLOCKED_BOOKS.has(sig.sportsbook) &&
+        !liveGameIds.has(sig.game_id),
     );
-  }, [signals, selectedBooks]);
+    if (selectedBooks != null) {
+      filtered = filtered.filter(
+        (sig) =>
+          selectedBooks.has(sig.sportsbook) ||
+          (sig.other_books?.some(
+            (ob) =>
+              !BLOCKED_BOOKS.has(ob.sportsbook) &&
+              selectedBooks.has(ob.sportsbook),
+          ) ?? false),
+      );
+    }
+    // Fix 3: Sort by ev_score descending
+    filtered.sort((a, b) => (b.ev_score ?? 0) - (a.ev_score ?? 0));
+    return filtered;
+  }, [signals, selectedBooks, liveGameIds]);
+
+  // Lookup game start_time for a signal
+  function getGameStartTime(sig: Signal): string | null {
+    const opp = opportunities.find((o) => o.game_id === sig.game_id);
+    return opp?.games?.start_time ?? null;
+  }
 
   function toggleBook(book: string) {
     setSelectedBooks((prev) => {
@@ -732,6 +876,7 @@ export default function DashboardPage() {
                 trueProb != null && trueProb > 0
                   ? trueProbToAmericanOdds(trueProb)
                   : null;
+              const startTime = getGameStartTime(sig);
 
               return (
                 <div key={sig.id}>
@@ -751,6 +896,8 @@ export default function DashboardPage() {
                         <span className="rounded bg-[#2c2c2e] px-2 py-0.5 text-xs text-gray-400">
                           {sportLabel(sig.sport)}
                         </span>
+                        {/* Fix 6: Time badges */}
+                        {startTime && <TimeBadge startTime={startTime} />}
                       </div>
                       <p className="mt-1 truncate font-medium text-gray-200">
                         {sig.side}
