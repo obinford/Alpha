@@ -1089,8 +1089,10 @@ def run_scan(sport_keys: list[str]) -> int:
     try:
         from db import get_supabase
         db = get_supabase()
+        print("[SCAN] Supabase connected OK.")
     except Exception as e:
-        print(f"Warning: Could not connect to Supabase ({e}). Will skip DB writes.")
+        print(f"[SCAN] WARNING: Could not connect to Supabase ({e}). Will skip DB writes.")
+        print(f"[SCAN] → KenPom snapshots, grading, and other DB features will be disabled.")
 
     # --- Parallel API fetch for all sports ---
     all_games: list[Game] = []
@@ -1415,7 +1417,12 @@ def run_scan(sport_keys: list[str]) -> int:
         print(f"  [TIMING] KenPom refresh: {time.time() - t0_kp:.1f}s")
 
     # --- KenPom daily snapshots (projections + Pinnacle odds) ---
-    if db is not None and game_projections:
+    if db is None:
+        print("[KENPOM SNAPSHOT] Skipping snapshot save — db is None (no Supabase connection).")
+    elif not game_projections:
+        print("[KENPOM SNAPSHOT] Skipping snapshot save — no game_projections (no CBB games or KenPom disabled).")
+    else:
+        print(f"[KENPOM SNAPSHOT] Calling save_kenpom_snapshots(db, {len(game_projections)} projections, {len(all_games)} games)")
         t0_snap = time.time()
         try:
             from intelligence.kenpom_snapshots import save_kenpom_snapshots
