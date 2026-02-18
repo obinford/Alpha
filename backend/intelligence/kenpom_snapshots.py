@@ -151,61 +151,144 @@ def _ensure_table(db_client: Any) -> bool:
 def _extract_pinnacle_odds(game: Any, debug: bool = False) -> dict[str, Any] | None:
     """Extract Pinnacle's spread, total, and ML from a game's bookmakers.
 
+    Handles games where Pinnacle only has some markets (e.g. h2h only)
+    and where markets have alternate lines (>2 outcomes).
+
     Args:
         game: Game object from odds_api (has .bookmakers list).
         debug: If True, print bookmaker keys for diagnostics.
 
-    Returns dict with keys:
-        spread_home: float (e.g. -5.5)
-        total: float (e.g. 148.5)
-        home_ml: int (e.g. -200)
-        away_ml: int (e.g. +170)
-        home_implied_prob: float (0-1)
-    Or None if Pinnacle is not present.
+    Returns dict with available Pinnacle data, or None if Pinnacle not present.
     """
+    bookmakers = getattr(game, "bookmakers", None)
+    if bookmakers is None:
+        if debug:
+            print(f"    [PIN DEBUG] Game {getattr(game, 'id', '?')} has no 'bookmakers' attribute (type={type(game).__name__})")
+        return None
+
     if debug:
-        bk_keys = [bk.key for bk in game.bookmakers]
-        print(f"    [PIN DEBUG] {game.away_team} @ {game.home_team}: bookmakers={bk_keys}")
+        bk_keys = [bk.key for bk in bookmakers]
+        print(f"    [PIN DEBUG] {game.away_team} @ {game.home_team}: {len(bookmakers)} bookmakers, keys={bk_keys}")
 
     pin_bk = None
-    for bk in game.bookmakers:
-        if bk.key.lower() == "pinnacle":
+    for bk in bookmakers:
+        bk_key = getattr(bk, "key", "") or ""
+        if bk_key.lower() == "pinnacle":
             pin_bk = bk
             break
     if pin_bk is None:
+        if debug:
+            print(f"    [PIN DEBUG] No 'pinnacle' bookmaker found")
         return None
 
     result: dict[str, Any] = {}
     home_team = game.home_team
+    markets = getattr(pin_bk, "markets", []) or []
 
-    for mkt in pin_bk.markets:
-        if mkt.key == "spreads" and len(mkt.outcomes) == 2:
-            for o in mkt.outcomes:
-                if o.name == home_team:
+    if debug:
+        mkt_info = [(getattr(m, "key", "?"), len(getattr(m, "outcomes", []))) for m in markets]
+        print(f"    [PIN DEBUG] Pinnacle markets: {mkt_info}")
+
+    for mkt in markets:
+        mkt_key = getattr(mkt, "key", "") or ""
+        outcomes = getattr(mkt, "outcomes", []) or []
+
+        if mkt_key == "spreads" and len(outcomes) >= 2:
+            for o in outcomes:
+                if getattr(o, "name", "") == home_team and o.point is not None:
                     result["spread_home"] = o.point
                     break
-            # Fallback: first outcome with negative point is usually home fav
-            if "spread_home" not in result:
-                result["spread_home"] = mkt.outcomes[0].point
+            # Fallback: first outcome's point
+            if "spread_home" not in result and outcomes[0].point is not None:
+                result["spread_home"] = outcomes[0].point
 
-        elif mkt.key == "totals" and len(mkt.outcomes) == 2:
-            for o in mkt.outcomes:
-                if o.name == "Over":
+        elif mkt_key == "totals" and len(outcomes) >= 2:
+            for o in outcomes:
+                if getattr(o, "name", "").lower() == "over" and o.point is not None:
                     result["total"] = o.point
                     break
 
-        elif mkt.key == "h2h" and len(mkt.outcomes) == 2:
-            for o in mkt.outcomes:
-                if o.name == home_team:
+        elif mkt_key == "h2h" and len(outcomes) >= 2:
+            for o in outcomes:
+                if getattr(o, "name", "") == home_team:
                     result["home_ml"] = o.price
                     result["home_implied_prob"] = american_to_implied_prob(o.price)
                 else:
                     result["away_ml"] = o.price
 
-    # Must have at least spread OR total to be useful.
-    if "spread_home" not in result and "total" not in result:
+    # Return any data we found — even ML-only is useful for ml_edge.
+    if not result:
+        if debug:
+            print(f"    [PIN DEBUG] Pinnacle found but no extractable data")
         return None
     return result
+
+
+def _fetch_pinnacle_from_db(
+    db_client: Any,
+    game_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Fallback: fetch latest Pinnacle odds from line_movements table.
+
+    Returns {game_id: {spread_home, total, home_ml, away_ml, home_implied_prob}}.
+    Used when in-memory game objects don't contain bookmaker data.
+    """
+    pin_data: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(game_ids), 50):
+        chunk = game_ids[i : i + 50]
+        id_list = ",".join(chunk)
+        try:
+            rows = db_client._get(
+                "line_movements",
+                select="game_id,market_type,side,odds",
+                filters={
+                    "game_id": f"in.({id_list})",
+                    "bookmaker": "eq.pinnacle",
+                },
+                order="timestamp.desc",
+            )
+        except Exception:
+            continue
+
+        for row in rows:
+            gid = row["game_id"]
+            if gid not in pin_data:
+                pin_data[gid] = {}
+            d = pin_data[gid]
+            mkt = row.get("market_type", "")
+            side = row.get("side", "")
+            odds = row.get("odds")
+            if odds is None:
+                continue
+
+            # Parse spread from side like "Team Name -5.5"
+            if mkt == "spreads" and "spread_home" not in d:
+                parts = side.rsplit(" ", 1)
+                if len(parts) == 2:
+                    try:
+                        d["spread_home"] = float(parts[1])
+                    except ValueError:
+                        pass
+
+            # Parse total from side like "Over 148.5"
+            elif mkt == "totals" and "total" not in d:
+                if side.lower().startswith("over"):
+                    parts = side.rsplit(" ", 1)
+                    if len(parts) == 2:
+                        try:
+                            d["total"] = float(parts[1])
+                        except ValueError:
+                            pass
+
+            # Parse ML — need to know which side is home
+            elif mkt == "h2h":
+                if "home_ml" not in d:
+                    d["home_ml"] = int(odds)
+                    d["home_implied_prob"] = american_to_implied_prob(int(odds))
+                elif "away_ml" not in d:
+                    d["away_ml"] = int(odds)
+
+    return pin_data
 
 
 # ---------------------------------------------------------------------------
@@ -275,13 +358,38 @@ def save_kenpom_snapshots(
         print(f"  [KENPOM SNAPSHOT] {len(existing_ids)} games already have snapshots for {today_str}, skipping those.")
 
     # Build game lookup (CBB only).
-    game_map = {g.id: g for g in all_games if g.sport_key == "basketball_ncaab"}
+    game_map = {g.id: g for g in all_games if getattr(g, "sport_key", "") == "basketball_ncaab"}
+
+    # Debug: inspect first CBB game to diagnose Pinnacle extraction issues.
+    if game_map:
+        g0_id = next(iter(game_map))
+        g0 = game_map[g0_id]
+        bks = getattr(g0, "bookmakers", None)
+        print(
+            f"  [KENPOM SNAPSHOT DEBUG] First CBB game: type={type(g0).__name__}, "
+            f"id={g0_id}, has bookmakers={bks is not None}, "
+            f"count={len(bks) if bks else 0}"
+        )
+        if bks:
+            bk_keys = [getattr(bk, "key", "?") for bk in bks]
+            print(f"  [KENPOM SNAPSHOT DEBUG] Bookmaker keys: {bk_keys}")
+            pin_bks = [bk for bk in bks if (getattr(bk, "key", "") or "").lower() == "pinnacle"]
+            if pin_bks:
+                mkts = getattr(pin_bks[0], "markets", [])
+                mkt_info = [(getattr(m, "key", "?"), len(getattr(m, "outcomes", []))) for m in mkts]
+                print(f"  [KENPOM SNAPSHOT DEBUG] Pinnacle markets: {mkt_info}")
+            else:
+                print(f"  [KENPOM SNAPSHOT DEBUG] 'pinnacle' NOT in bookmaker keys")
+        else:
+            print(f"  [KENPOM SNAPSHOT DEBUG] Game has NO bookmakers — odds data not attached to game objects")
 
     rows: list[dict] = []
     pin_found = 0
     pin_missing = 0
     no_game = 0
 
+    # First pass: extract Pinnacle from in-memory game objects.
+    games_needing_pin: list[str] = []  # game_ids where extraction failed
     for game_id, proj in game_projections.items():
         if game_id in existing_ids:
             continue
@@ -291,27 +399,28 @@ def save_kenpom_snapshots(
             no_game += 1
             continue
 
+        # Debug first game's extraction in detail.
+        debug_this = (pin_found == 0 and pin_missing == 0)
+        pin = _extract_pinnacle_odds(game, debug=debug_this)
+        if pin:
+            pin_found += 1
+        else:
+            pin_missing += 1
+            games_needing_pin.append(game_id)
+
         # KenPom data.
         kp_home = proj.get("home_score") or proj.get("home_pred", 0)
         kp_away = proj.get("away_score") or proj.get("away_pred", 0)
         kp_wp = proj.get("home_win_prob") or proj.get("home_wp", 0.5)
         kp_total = kp_home + kp_away
-        # Positive = home favored (home scores more).
         kp_spread = kp_home - kp_away
 
-        # Pinnacle data.
-        pin = _extract_pinnacle_odds(game)
-        if pin:
-            pin_found += 1
-        else:
-            pin_missing += 1
         pin_spread = pin.get("spread_home") if pin else None
         pin_total = pin.get("total") if pin else None
         pin_home_ml = pin.get("home_ml") if pin else None
         pin_away_ml = pin.get("away_ml") if pin else None
         pin_home_ip = pin.get("home_implied_prob") if pin else None
 
-        # Edge calculations.
         spread_edge = (kp_spread - pin_spread) if pin_spread is not None else None
         total_edge = (kp_total - pin_total) if pin_total is not None else None
         ml_edge = (kp_wp - pin_home_ip) if pin_home_ip is not None else None
@@ -337,6 +446,47 @@ def save_kenpom_snapshots(
             "total_edge": round(total_edge, 2) if total_edge is not None else None,
             "ml_edge": round(ml_edge, 4) if ml_edge is not None else None,
         })
+
+    # Fallback: if in-memory extraction missed games, try the DB.
+    if games_needing_pin and db_client:
+        print(
+            f"  [KENPOM SNAPSHOT] {len(games_needing_pin)} games missing Pinnacle in-memory, "
+            f"trying line_movements DB fallback..."
+        )
+        db_pin = _fetch_pinnacle_from_db(db_client, games_needing_pin)
+        backfilled = 0
+        for row in rows:
+            gid = row["game_id"]
+            if gid not in db_pin or row["pinnacle_spread_home"] is not None:
+                continue
+            pin = db_pin[gid]
+            if not pin:
+                continue
+            pin_spread = pin.get("spread_home")
+            pin_total = pin.get("total")
+            pin_home_ml = pin.get("home_ml")
+            pin_away_ml = pin.get("away_ml")
+            pin_home_ip = pin.get("home_implied_prob")
+
+            if pin_spread is not None:
+                row["pinnacle_spread_home"] = pin_spread
+                row["spread_edge"] = round(row["kp_projected_spread"] - pin_spread, 2)
+            if pin_total is not None:
+                row["pinnacle_total"] = pin_total
+                row["total_edge"] = round(row["kp_projected_total"] - pin_total, 2)
+            if pin_home_ml is not None:
+                row["pinnacle_home_ml"] = int(pin_home_ml)
+            if pin_away_ml is not None:
+                row["pinnacle_away_ml"] = int(pin_away_ml)
+            if pin_home_ip is not None:
+                row["pinnacle_home_implied_prob"] = round(pin_home_ip, 4)
+                row["ml_edge"] = round(row["kp_home_win_prob"] - pin_home_ip, 4)
+            backfilled += 1
+
+        if backfilled:
+            pin_found += backfilled
+            pin_missing -= backfilled
+            print(f"  [KENPOM SNAPSHOT] DB fallback filled Pinnacle data for {backfilled} games")
 
     print(
         f"  [KENPOM SNAPSHOT] {len(game_projections)} KP projections, "
@@ -365,11 +515,14 @@ def save_kenpom_snapshots(
 
 
 # ---------------------------------------------------------------------------
-# Grading
+# Grading — UPDATE-only, never INSERT new rows
 # ---------------------------------------------------------------------------
 
 def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     """Grade ungraded KenPom snapshots against final game scores.
+
+    ONLY updates existing snapshot rows — never inserts new ones.
+    Uses _patch_by_ids to guarantee UPDATE-only semantics.
 
     Looks up final scores from the games table and evaluates:
     - result_spread_correct: Did KP's spread edge predict ATS correctly?
@@ -392,7 +545,7 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     if not _ensure_table(db_client):
         return result
 
-    # Fetch ungraded snapshots.
+    # Fetch ungraded snapshots — we need the row 'id' for PATCH.
     try:
         ungraded = db_client._get(
             "kenpom_snapshots",
@@ -433,10 +586,15 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     if not final_scores:
         return result
 
-    # Grade each snapshot.
-    update_rows: list[dict] = []
+    # Grade each snapshot — collect row IDs and grading data for PATCH.
+    graded_ids: list[str] = []
+    grade_data_by_id: dict[str, dict] = {}
+
     for snap in ungraded:
         gid = snap["game_id"]
+        row_id = snap.get("id")
+        if row_id is None:
+            continue
         game = final_scores.get(gid)
         if game is None:
             continue
@@ -453,29 +611,22 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
         kp_wp = snap.get("kp_home_win_prob")
 
         # Spread grading (ATS coverage).
-        # ATS margin = actual_spread + pin_spread_home.  Positive → home covers.
-        # Example: home -5.5, wins by 7 → 7 + (-5.5) = +1.5 → home covers.
-        # Example: home -5.5, wins by 3 → 3 + (-5.5) = -2.5 → home doesn't cover.
         spread_correct = None
         if spread_edge is not None and pin_spread is not None and spread_edge != 0:
             ats_margin = actual_spread + pin_spread
             if ats_margin == 0:
-                spread_correct = None  # push, don't count
+                spread_correct = None  # push
             elif spread_edge > 0:
-                # KP favors home more → take home ATS.
                 spread_correct = ats_margin > 0
             else:
-                # KP favors away more → take away ATS.
                 spread_correct = ats_margin < 0
 
         # Total grading.
         total_correct = None
         if total_edge is not None and pin_total is not None and total_edge != 0:
             if total_edge > 0:
-                # KP projects higher → take over.
                 total_correct = actual_total > pin_total
             else:
-                # KP projects lower → take under.
                 total_correct = actual_total < pin_total
             if actual_total == pin_total:
                 total_correct = None  # push
@@ -484,23 +635,20 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
         ml_correct = None
         if kp_wp is not None and kp_wp != 0.5:
             if kp_wp > 0.5:
-                ml_correct = actual_spread > 0  # home won
+                ml_correct = actual_spread > 0
             else:
-                ml_correct = actual_spread < 0  # away won
+                ml_correct = actual_spread < 0
             if actual_spread == 0:
-                ml_correct = None  # tie
+                ml_correct = None
 
-        update_rows.append({
-            "snapshot_date": snap.get("snapshot_date") or gid,
-            "game_id": gid,
+        graded_ids.append(row_id)
+        grade_data_by_id[row_id] = {
             "result_home_score": home_score,
             "result_away_score": away_score,
             "result_spread_correct": spread_correct,
             "result_total_correct": total_correct,
             "result_ml_correct": ml_correct,
-            "graded": True,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
+        }
 
         result["graded"] += 1
         if spread_correct is True:
@@ -516,12 +664,25 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
         elif ml_correct is False:
             result["ml_losses"] += 1
 
-    # Batch update.
-    if update_rows:
+    # Batch PATCH — UPDATE-only, never INSERT.
+    # Group by identical grade data to minimize PATCH calls.
+    if graded_ids:
+        now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            db_client._upsert_many(
-                "kenpom_snapshots", update_rows, on_conflict="snapshot_date,game_id"
-            )
+            # PATCH each row individually by ID — ensures UPDATE-only.
+            for row_id in graded_ids:
+                update_data = {
+                    **grade_data_by_id[row_id],
+                    "graded": True,
+                    "updated_at": now_iso,
+                }
+                db_client._http.patch(
+                    f"{db_client.base_url}/kenpom_snapshots",
+                    headers={**db_client.headers, "Prefer": "return=minimal"},
+                    params={"id": f"eq.{row_id}"},
+                    json=update_data,
+                    timeout=30,
+                )
         except Exception as e:
             print(f"  [KENPOM GRADING] Update failed: {e}")
             return result
