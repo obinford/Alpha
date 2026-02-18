@@ -309,6 +309,10 @@ export default function KenPomPage() {
   const [dayGames, setDayGames] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Filters
+  const [fanmatchOnly, setFanmatchOnly] = useState(true);
+  const [minEdge, setMinEdge] = useState(1.0);
+
   const fetchData = useCallback(() => {
     Promise.all([
       fetch(`${API_BASE}/api/kenpom/today`).then((r) => r.json()).catch(() => null),
@@ -345,6 +349,24 @@ export default function KenPomPage() {
       .then((data) => setDayGames([...(data.spread_edges || []), ...(data.total_edges || [])]))
       .catch(() => setDayGames([]));
   };
+
+  // Apply filters to snapshots.
+  function filterSnaps(snaps: Snapshot[]): Snapshot[] {
+    return snaps.filter((s) => {
+      if (fanmatchOnly && s.projection_source !== "kenpom_fanmatch") return false;
+      // Keep if any edge meets the minimum threshold.
+      const maxEdge = Math.max(
+        Math.abs(s.spread_edge ?? 0),
+        Math.abs(s.total_edge ?? 0),
+        Math.abs((s.ml_edge ?? 0) * 10), // scale ML edge to be comparable
+      );
+      if (maxEdge < minEdge) return false;
+      return true;
+    });
+  }
+
+  const filteredToday = filterSnaps(todaySnaps);
+  const filteredTomorrow = filterSnaps(tomorrowSnaps);
 
   // Merge rolling data for the chart.
   const chartData = rolling
@@ -393,22 +415,56 @@ export default function KenPomPage() {
         )}
       </div>
 
+      {/* FILTER CONTROLS */}
+      <div className="flex flex-wrap items-center gap-4 rounded-xl bg-[#1c1c1e] px-4 py-3">
+        <label className="flex cursor-pointer items-center gap-2">
+          <div
+            role="switch"
+            aria-checked={fanmatchOnly}
+            tabIndex={0}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${fanmatchOnly ? "bg-emerald-600" : "bg-gray-600"}`}
+            onClick={() => setFanmatchOnly(!fanmatchOnly)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setFanmatchOnly(!fanmatchOnly); }}
+          >
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${fanmatchOnly ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+          </div>
+          <span className="text-xs font-medium text-gray-300">Fanmatch Only</span>
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Min Edge:</span>
+          <input
+            type="range"
+            min={0}
+            max={5}
+            step={0.5}
+            value={minEdge}
+            onChange={(e) => setMinEdge(parseFloat(e.target.value))}
+            className="h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-gray-700 accent-emerald-500"
+          />
+          <span className="w-10 text-xs font-mono text-gray-400">{minEdge.toFixed(1)}</span>
+        </div>
+        <span className="ml-auto text-[10px] text-gray-500">
+          Showing {filteredToday.length} of {todaySnaps.length} today
+          {tomorrowSnaps.length > 0 && ` · ${filteredTomorrow.length} of ${tomorrowSnaps.length} tomorrow`}
+        </span>
+      </div>
+
       {/* SECTION 2: TODAY'S EDGES */}
       <div>
         <h2 className="mb-3 text-lg font-semibold text-gray-200">Today&apos;s Edges</h2>
         <div className="grid gap-4 lg:grid-cols-2">
-          <SpreadEdgesTable snapshots={todaySnaps} label="Today" />
-          <TotalEdgesTable snapshots={todaySnaps} label="Today" />
+          <SpreadEdgesTable snapshots={filteredToday} label="Today" />
+          <TotalEdgesTable snapshots={filteredToday} label="Today" />
         </div>
       </div>
 
       {/* SECTION 3: TOMORROW'S EDGES */}
       <div>
         <h2 className="mb-3 text-lg font-semibold text-gray-200">Tomorrow&apos;s Edges</h2>
-        {tomorrowSnaps.length > 0 ? (
+        {filteredTomorrow.length > 0 ? (
           <div className="grid gap-4 lg:grid-cols-2">
-            <SpreadEdgesTable snapshots={tomorrowSnaps} label="Tomorrow" />
-            <TotalEdgesTable snapshots={tomorrowSnaps} label="Tomorrow" />
+            <SpreadEdgesTable snapshots={filteredTomorrow} label="Tomorrow" />
+            <TotalEdgesTable snapshots={filteredTomorrow} label="Tomorrow" />
           </div>
         ) : (
           <div className="rounded-2xl bg-[#1c1c1e] p-6 text-center">

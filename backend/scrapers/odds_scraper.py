@@ -1434,7 +1434,11 @@ def run_scan(sport_keys: list[str]) -> int:
         print(f"[KENPOM SNAPSHOT] db={type(db).__name__} (not None), {len(game_projections)} projections, {len(all_games)} games")
         t0_snap = time.time()
         try:
-            from intelligence.kenpom_snapshots import save_kenpom_snapshots
+            from intelligence.kenpom_snapshots import save_kenpom_snapshots, purge_stale_ratings_snapshots
+            # Purge stale ratings/null snapshots so fanmatch data can replace them.
+            has_fanmatch = any("fanmatch" in p.get("source", "") for p in game_projections.values())
+            if has_fanmatch:
+                purge_stale_ratings_snapshots(db)
             snap_count = save_kenpom_snapshots(db, game_projections, all_games)
             if snap_count:
                 print(f"  [KENPOM SNAPSHOT] {snap_count} snapshots persisted.")

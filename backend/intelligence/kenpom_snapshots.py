@@ -345,27 +345,45 @@ def save_kenpom_snapshots(
     today = snapshot_dt or date.today()
     today_str = today.isoformat()
 
-    # Check which games already have snapshots for today.
+    # Check which games already have snapshots for today, and their source.
+    # Fanmatch snapshots are kept; ratings snapshots are overwritten if we
+    # now have fanmatch data for that game.
     game_ids = list(game_projections.keys())
-    existing_ids: set[str] = set()
+    existing_fanmatch_ids: set[str] = set()
+    existing_ratings_ids: set[str] = set()
     for i in range(0, len(game_ids), 50):
         chunk = game_ids[i : i + 50]
         id_list = ",".join(chunk)
         try:
             existing_rows = db_client._get(
                 "kenpom_snapshots",
-                select="game_id",
+                select="game_id,projection_source",
                 filters={
                     "snapshot_date": f"eq.{today_str}",
                     "game_id": f"in.({id_list})",
                 },
             )
-            existing_ids.update(r["game_id"] for r in existing_rows)
+            for r in existing_rows:
+                src = r.get("projection_source") or ""
+                if "fanmatch" in src:
+                    existing_fanmatch_ids.add(r["game_id"])
+                else:
+                    # ratings, null, or unknown — eligible for overwrite
+                    existing_ratings_ids.add(r["game_id"])
         except Exception as e:
             print(f"  [KENPOM SNAPSHOT] Warning: existing-check failed ({e})")
 
-    if existing_ids:
-        print(f"  [KENPOM SNAPSHOT] {len(existing_ids)} games already have snapshots for {today_str}, skipping those.")
+    # Count how many ratings snapshots will be overwritten by fanmatch.
+    overwrite_count = 0
+    for gid in existing_ratings_ids:
+        proj_src = game_projections.get(gid, {}).get("source", "")
+        if "fanmatch" in proj_src:
+            overwrite_count += 1
+
+    if existing_fanmatch_ids:
+        print(f"  [KENPOM SNAPSHOT] {len(existing_fanmatch_ids)} games already have fanmatch snapshots for {today_str}, skipping those.")
+    if overwrite_count:
+        print(f"  [KENPOM SNAPSHOT] {overwrite_count} ratings snapshots will be OVERWRITTEN with fanmatch data.")
 
     # Build game lookup (CBB only).
     game_map = {g.id: g for g in all_games if getattr(g, "sport_key", "") == "basketball_ncaab"}
@@ -400,9 +418,26 @@ def save_kenpom_snapshots(
 
     # First pass: extract Pinnacle from in-memory game objects.
     games_needing_pin: list[str] = []  # game_ids where extraction failed
+    debug_count = 0
     for game_id, proj in game_projections.items():
-        if game_id in existing_ids:
+        # Skip games that already have fanmatch snapshots.
+        # But ALLOW overwrite of ratings snapshots with fanmatch data.
+        if game_id in existing_fanmatch_ids:
             continue
+        new_source = proj.get("source", "unknown")
+        if game_id in existing_ratings_ids and "fanmatch" not in new_source:
+            # Existing is ratings, new is also ratings — no improvement, skip.
+            continue
+
+        # Debug: log first 3 games for source chain verification.
+        if debug_count < 3:
+            kp_h = proj.get("home_score") or proj.get("home_pred", 0)
+            kp_a = proj.get("away_score") or proj.get("away_pred", 0)
+            print(
+                f"  [KENPOM SNAPSHOT DEBUG] Game {game_id[:30]}: "
+                f"source={new_source}, home={kp_h:.1f}, away={kp_a:.1f}"
+            )
+            debug_count += 1
 
         game = game_map.get(game_id)
         if game is None:
@@ -503,7 +538,8 @@ def save_kenpom_snapshots(
         f"  [KENPOM SNAPSHOT] {len(game_projections)} KP projections, "
         f"{pin_found} with Pinnacle, {pin_missing} without Pinnacle"
         + (f", {no_game} not in all_games" if no_game else "")
-        + (f", {len(existing_ids)} already saved" if existing_ids else "")
+        + (f", {len(existing_fanmatch_ids)} already fanmatch" if existing_fanmatch_ids else "")
+        + (f", {overwrite_count} ratings->fanmatch upgrades" if overwrite_count else "")
     )
 
     if not rows:
@@ -523,6 +559,55 @@ def save_kenpom_snapshots(
         print(f"  [KENPOM SNAPSHOT] ERROR saving snapshots: {e}")
         traceback.print_exc()
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Purge stale ratings-only snapshots
+# ---------------------------------------------------------------------------
+
+def purge_stale_ratings_snapshots(
+    db_client: Any,
+    target_date: date | None = None,
+) -> int:
+    """Delete snapshots where projection_source is NULL or 'kenpom_ratings'.
+
+    These will be re-populated with fanmatch data on the next scan cycle
+    (if fanmatch is available), or left empty if only ratings exist.
+
+    Args:
+        db_client: Supabase client.
+        target_date: Date to purge (defaults to today UTC).
+
+    Returns number of rows deleted.
+    """
+    if not db_client:
+        return 0
+
+    today_str = (target_date or date.today()).isoformat()
+    deleted = 0
+
+    for source_filter in ["is.null", "eq.kenpom_ratings", "eq.unknown"]:
+        try:
+            resp = db_client._http.delete(
+                f"{db_client.base_url}/kenpom_snapshots",
+                headers={**db_client.headers, "Prefer": "return=representation"},
+                params={
+                    "snapshot_date": f"eq.{today_str}",
+                    "projection_source": source_filter,
+                },
+                timeout=15,
+            )
+            if resp.status_code < 400:
+                rows = resp.json() if resp.text else []
+                deleted += len(rows)
+        except Exception as e:
+            print(f"  [KENPOM PURGE] Delete failed for source={source_filter}: {e}")
+
+    if deleted:
+        print(f"  [KENPOM PURGE] Deleted {deleted} stale ratings/null snapshots for {today_str}")
+    else:
+        print(f"  [KENPOM PURGE] No stale snapshots to purge for {today_str}")
+    return deleted
 
 
 # ---------------------------------------------------------------------------
