@@ -295,6 +295,17 @@ def build_devig_line_map(
         (name_a, point_a): result.true_prob_a,
         (name_b, point_b): result.true_prob_b,
     }
+
+    # Debug logging for h2h devig — verify probabilities match team names.
+    if market_key == "h2h" and "pinnacle" in book_odds:
+        pin_a, pin_b = book_odds["pinnacle"]
+        game_label = f"{game.away_team} @ {game.home_team}"
+        print(
+            f"  [DEVIG DEBUG] {game_label} h2h | "
+            f"Pinnacle odds (canonical): {name_a}={pin_a:+d}, {name_b}={pin_b:+d} | "
+            f"True probs: {name_a}={result.true_prob_a:.4f}, {name_b}={result.true_prob_b:.4f}"
+        )
+
     return true_probs, result.source, result.confidence, result.method, result.source_keys
 
 
@@ -630,6 +641,7 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
     """Store raw odds from every sportsbook/market combination (batched)."""
     rows: list[dict] = []
     for game in games:
+        game_label = f"{game.away_team} @ {game.home_team}"
         for bk in game.bookmakers:
             for mkt in bk.markets:
                 if len(mkt.outcomes) != 2:
@@ -639,6 +651,19 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
                 odds_by_name = {o.name: o for o in mkt.outcomes}
                 home_out = odds_by_name.get(game.home_team, mkt.outcomes[0])
                 away_out = odds_by_name.get(game.away_team, mkt.outcomes[1])
+
+                # Debug logging for Pinnacle h2h mapping.
+                if bk.key == "pinnacle" and mkt.key == "h2h":
+                    raw_o1 = mkt.outcomes[0]
+                    raw_o2 = mkt.outcomes[1]
+                    print(
+                        f"  [ODDS DEBUG] Game: {game_label} | "
+                        f"Pinnacle raw: outcome1={raw_o1.name} odds1={raw_o1.price:+d}, "
+                        f"outcome2={raw_o2.name} odds2={raw_o2.price:+d} | "
+                        f"Mapped: home_ml={home_out.price:+d} ({game.home_team}), "
+                        f"away_ml={away_out.price:+d} ({game.away_team})"
+                    )
+
                 rows.append({
                     "game_id": game.id,
                     "sportsbook": bk.key,
@@ -668,15 +693,34 @@ def store_true_lines(db_client: object, games: list[Game]) -> None:
             if not true_probs:
                 continue
 
-            # Get outcome names and points from the first available book.
-            _, outcome_info = _extract_market_odds_by_book(game, market_key)
-            if outcome_info is None:
-                continue
-            name_a, name_b, point_a, point_b = outcome_info
-
-            true_home = true_probs.get((name_a, point_a), 0.5)
-            true_away = true_probs.get((name_b, point_b), 0.5)
-            no_vig_line = point_a
+            # Look up true probabilities by actual home/away team name.
+            # For h2h/spreads: use game.home_team and game.away_team.
+            # For totals: Over/Under — "home" slot gets Over, "away" gets Under.
+            if market_key == "totals":
+                # Totals use Over/Under, not team names.
+                # Find the point (total line) from any available prob key.
+                total_point = None
+                true_home = 0.5
+                true_away = 0.5
+                for (name, pt), prob in true_probs.items():
+                    if name.lower() == "over":
+                        true_home = prob
+                        total_point = pt
+                    elif name.lower() == "under":
+                        true_away = prob
+                no_vig_line = total_point
+            else:
+                # h2h and spreads: match by team name.
+                # Try exact match first, then scan all probs for a match.
+                true_home = 0.5
+                true_away = 0.5
+                no_vig_line = None
+                for (name, pt), prob in true_probs.items():
+                    if name == game.home_team:
+                        true_home = prob
+                        no_vig_line = pt
+                    elif name == game.away_team:
+                        true_away = prob
 
             rows.append({
                 "game_id": game.id,
