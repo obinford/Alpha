@@ -28,7 +28,7 @@ from models.ev_calculator import (
     calculate_no_vig_probability,
 )
 from models.devig import devig_market, devig_pair as devig_pair_new, DevigResult, select_devig_source, BookOdds
-from models.kelly import kelly_fraction
+from models.kelly import kelly_fraction, kelly_full
 from scrapers.odds.odds_api import Game, Market, fetch_odds
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -317,9 +317,7 @@ def scan_game(game: Game) -> list[EVOpportunity]:
                 if ev_pct < MIN_EV_THRESHOLD:
                     continue
 
-                kelly_pct = kelly_fraction(
-                    true_prob, outcome.price, DEFAULT_KELLY_FRACTION
-                )
+                kelly_pct = kelly_full(true_prob, outcome.price)
 
                 opportunities.append(
                     EVOpportunity(
@@ -478,9 +476,7 @@ def scan_game_props(game: Game) -> list[EVOpportunity]:
                 if ev_pct < MIN_EV_THRESHOLD:
                     continue
 
-                kelly_pct = kelly_fraction(
-                    true_prob, outcome.price, DEFAULT_KELLY_FRACTION
-                )
+                kelly_pct = kelly_full(true_prob, outcome.price)
 
                 # Build selection string: "Player Name Over/Under X.X"
                 point_str = f" {outcome.point}" if outcome.point is not None else ""
