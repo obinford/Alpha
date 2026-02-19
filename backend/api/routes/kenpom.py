@@ -115,18 +115,34 @@ def get_edges(
 
 
 def _count_results(rows: list[dict]) -> dict:
-    """Count wins/losses and sum units from raw graded snapshot rows."""
+    """Count wins/losses and sum units from raw graded snapshot rows.
+
+    Only counts spread/total results for games that actually have Pinnacle data.
+    Games with NULL pinnacle_spread_home are excluded from spread counts to
+    avoid inflating "0-0" records on dates with no Pinnacle data.
+    """
     sw = sl = tw = tl = mw = ml = 0
     s_units = t_units = m_units = 0.0
+    spread_graded = 0
+    total_graded = 0
     for r in rows:
-        if r.get("result_spread_correct") is True:
-            sw += 1
-        elif r.get("result_spread_correct") is False:
-            sl += 1
-        if r.get("result_total_correct") is True:
-            tw += 1
-        elif r.get("result_total_correct") is False:
-            tl += 1
+        has_pin_spread = r.get("pinnacle_spread_home") is not None
+        has_pin_total = r.get("pinnacle_total") is not None
+
+        if has_pin_spread:
+            if r.get("result_spread_correct") is True:
+                sw += 1
+                spread_graded += 1
+            elif r.get("result_spread_correct") is False:
+                sl += 1
+                spread_graded += 1
+        if has_pin_total:
+            if r.get("result_total_correct") is True:
+                tw += 1
+                total_graded += 1
+            elif r.get("result_total_correct") is False:
+                tl += 1
+                total_graded += 1
         if r.get("result_ml_correct") is True:
             mw += 1
         elif r.get("result_ml_correct") is False:
@@ -143,11 +159,13 @@ def _count_results(rows: list[dict]) -> dict:
             m_units += mu
     return {
         "spread_wins": sw, "spread_losses": sl,
+        "spread_graded": spread_graded,
         "spread_pct": round(sw / (sw + sl) * 100, 1) if (sw + sl) > 0 else 0,
-        "spread_units": round(s_units, 2),
+        "spread_units": round(s_units, 2) if spread_graded > 0 else None,
         "total_wins": tw, "total_losses": tl,
+        "total_graded": total_graded,
         "total_pct": round(tw / (tw + tl) * 100, 1) if (tw + tl) > 0 else 0,
-        "total_units": round(t_units, 2),
+        "total_units": round(t_units, 2) if total_graded > 0 else None,
         "ml_wins": mw, "ml_losses": ml,
         "ml_pct": round(mw / (mw + ml) * 100, 1) if (mw + ml) > 0 else 0,
         "ml_units": round(m_units, 2),
@@ -234,9 +252,12 @@ def get_performance_season() -> dict:
 
     season = _count_results(rows)
     season["total_games_graded"] = len(rows)
-    season["spread_record"] = f"{season['spread_wins']}-{season['spread_losses']}"
-    season["total_record"] = f"{season['total_wins']}-{season['total_losses']}"
-    season["ml_record"] = f"{season['ml_wins']}-{season['ml_losses']}"
+    sw, sl = season["spread_wins"], season["spread_losses"]
+    tw, tl = season["total_wins"], season["total_losses"]
+    mw, ml_ = season["ml_wins"], season["ml_losses"]
+    season["spread_record"] = f"{sw}-{sl}" if (sw + sl) > 0 else None
+    season["total_record"] = f"{tw}-{tl}" if (tw + tl) > 0 else None
+    season["ml_record"] = f"{mw}-{ml_}" if (mw + ml_) > 0 else None
     season["last_updated"] = datetime.now(timezone.utc).isoformat()
 
     buckets_def = [

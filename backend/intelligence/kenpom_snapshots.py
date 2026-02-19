@@ -37,7 +37,7 @@ from __future__ import annotations
 import os
 import time
 import traceback
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -886,17 +886,34 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
         )
 
     # Step 2: fetch final scores.
+    # Try matching by game_id first, then fallback to team names.
     game_ids = list({s["game_id"] for s in ungraded})
     final_scores: dict[str, dict] = {}
 
-    # Try the 'games' table first.
+    # Build a team-name index for fallback matching.
+    # Key: (normalized_home, normalized_away, date) -> snapshot game_id
+    def _norm(name: str) -> str:
+        return name.strip().lower()
+
+    snap_team_index: dict[tuple[str, str, str], str] = {}
+    for s in ungraded:
+        ht = _norm(s.get("home_team", ""))
+        at = _norm(s.get("away_team", ""))
+        sd = s.get("snapshot_date", "")[:10]
+        snap_team_index[(ht, at, sd)] = s["game_id"]
+
+    # Determine date range: today + yesterday to handle timezone mismatches.
+    today_utc = date.today()
+    yesterday_utc = today_utc - timedelta(days=1)
+
+    # --- Primary: match by game_id from 'games' table ---
     for i in range(0, len(game_ids), 50):
         chunk = game_ids[i : i + 50]
         id_list = ",".join(chunk)
         try:
             games = db_client._get(
                 "games",
-                select="game_id,home_score,away_score,status",
+                select="game_id,home_team,away_team,home_score,away_score,status,commence_time",
                 filters={
                     "game_id": f"in.({id_list})",
                     "status": "eq.final",
@@ -912,10 +929,10 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
 
     print(
         f"  [KENPOM GRADING] {len(final_scores)} final scores from 'games' table "
-        f"(of {len(game_ids)} game_ids)"
+        f"(of {len(game_ids)} game_ids) via game_id match"
     )
 
-    # Fallback: try 'scores' table if 'games' returned very few.
+    # --- Fallback: try 'scores' / 'game_results' tables if many missing ---
     if len(final_scores) < len(game_ids) * 0.5:
         remaining_ids = [gid for gid in game_ids if gid not in final_scores]
         for i in range(0, len(remaining_ids), 50):
@@ -925,7 +942,7 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
                 try:
                     rows = db_client._get(
                         table_name,
-                        select="game_id,home_score,away_score,status",
+                        select="game_id,home_team,away_team,home_score,away_score,status",
                         filters={
                             "game_id": f"in.({id_list})",
                             "status": "eq.final",
@@ -938,6 +955,54 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
                         print(f"  [KENPOM GRADING] Found {len(rows)} more scores in '{table_name}'")
                 except Exception:
                     pass  # table may not exist
+
+    # --- Fallback: fetch finished games for today AND yesterday by date ---
+    # This catches games where snapshot game_id doesn't exactly match the
+    # games table game_id (timezone mismatch: game stored with yesterday's date).
+    if len(final_scores) < len(game_ids):
+        team_matched = 0
+        for target_date in [today_utc, yesterday_utc]:
+            try:
+                date_games = db_client._get(
+                    "games",
+                    select="game_id,home_team,away_team,home_score,away_score,status,commence_time",
+                    filters={
+                        "status": "eq.final",
+                        "commence_time": f"gte.{target_date.isoformat()}T00:00:00Z",
+                    },
+                )
+                for g in date_games:
+                    gid = g.get("game_id", "")
+                    if gid in final_scores:
+                        continue
+                    if g.get("home_score") is None or g.get("away_score") is None:
+                        continue
+                    # Direct game_id match (may already be there).
+                    if gid in game_ids:
+                        final_scores[gid] = g
+                        continue
+                    # Team-name fallback: try matching against snapshot team names.
+                    ht = _norm(g.get("home_team", ""))
+                    at = _norm(g.get("away_team", ""))
+                    for snap_date in snap_dates:
+                        key = (ht, at, snap_date)
+                        if key in snap_team_index:
+                            snap_gid = snap_team_index[key]
+                            if snap_gid not in final_scores:
+                                final_scores[snap_gid] = g
+                                team_matched += 1
+                            break
+            except Exception:
+                pass  # table/filter may not be supported
+
+        if team_matched:
+            print(f"  [KENPOM GRADING] Team-name fallback matched {team_matched} additional games")
+
+    total_finished = len(final_scores)
+    total_ungraded = len(game_ids)
+    print(
+        f"  [KENPOM GRADING] Matched {total_finished} of {total_ungraded} finished games"
+    )
 
     if not final_scores:
         print(
@@ -1128,3 +1193,209 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Startup repair — fix graded rows with missing unit results
+# ---------------------------------------------------------------------------
+
+def repair_kenpom_units(db_client: Any) -> dict[str, Any]:
+    """Repair graded kenpom_snapshots that have NULL or zero unit results.
+
+    Called ONCE at scanner startup. Backfills missing Pinnacle data first,
+    then recalculates unit P/L for every graded row where units are missing.
+
+    Steps:
+        1. Backfill missing Pinnacle data from pinnacle_odds_history / line_movements.
+        2. Recalculate spread_unit_result, total_unit_result, ml_unit_result.
+        3. PATCH each row in the DB.
+
+    Returns summary dict with counts and total units.
+    """
+    summary: dict[str, Any] = {
+        "pinnacle_backfilled": 0,
+        "units_repaired": 0,
+        "spread_units_total": 0.0,
+        "total_units_total": 0.0,
+        "ml_units_total": 0.0,
+        "examples": [],
+    }
+
+    if db_client is None:
+        print("  [KENPOM REPAIR] Skipped — no DB client.")
+        return summary
+
+    if not _ensure_table(db_client):
+        print("  [KENPOM REPAIR] Skipped — table not found.")
+        return summary
+
+    # -----------------------------------------------------------------------
+    # Step 1: Fetch all graded rows that might need repair.
+    # -----------------------------------------------------------------------
+    try:
+        all_graded = db_client._get(
+            "kenpom_snapshots",
+            select="id,game_id,snapshot_date,home_team,away_team,"
+                   "kp_projected_spread,kp_projected_total,kp_home_win_prob,"
+                   "pinnacle_spread_home,pinnacle_total,spread_edge,total_edge,ml_edge,"
+                   "pinnacle_spread_home_odds,pinnacle_spread_away_odds,"
+                   "pinnacle_over_odds,pinnacle_under_odds,"
+                   "pinnacle_home_ml,pinnacle_away_ml,"
+                   "result_home_score,result_away_score,"
+                   "result_spread_correct,result_total_correct,result_ml_correct,"
+                   "spread_unit_result,total_unit_result,ml_unit_result",
+            filters={"graded": "eq.true"},
+        )
+    except Exception as e:
+        print(f"  [KENPOM REPAIR] Failed to fetch graded snapshots: {e}")
+        return summary
+
+    if not all_graded:
+        print("  [KENPOM REPAIR] No graded snapshots found.")
+        return summary
+
+    # Filter to rows needing repair: any unit result is NULL or 0.
+    needs_repair = [
+        r for r in all_graded
+        if (r.get("spread_unit_result") is None or r.get("spread_unit_result") == 0)
+        or (r.get("total_unit_result") is None or r.get("total_unit_result") == 0)
+        or (r.get("ml_unit_result") is None or r.get("ml_unit_result") == 0)
+    ]
+
+    print(
+        f"  [KENPOM REPAIR] {len(all_graded)} graded total, "
+        f"{len(needs_repair)} need unit repair"
+    )
+
+    if not needs_repair:
+        return summary
+
+    # -----------------------------------------------------------------------
+    # Step 2: Backfill missing Pinnacle data BEFORE calculating units.
+    # -----------------------------------------------------------------------
+    missing_pin = [r for r in needs_repair if r.get("pinnacle_spread_home") is None]
+    if missing_pin:
+        print(f"  [KENPOM REPAIR] {len(missing_pin)} rows missing Pinnacle spread — backfilling...")
+        backfilled = _backfill_pinnacle_for_grading(db_client, missing_pin)
+        summary["pinnacle_backfilled"] = backfilled
+        if backfilled:
+            print(f"  [KENPOM REPAIR] Backfilled Pinnacle data for {backfilled} games")
+
+    # -----------------------------------------------------------------------
+    # Step 3: Recalculate unit results and PATCH each row.
+    # -----------------------------------------------------------------------
+    now_iso = datetime.now(timezone.utc).isoformat()
+    examples_collected = 0
+
+    for snap in needs_repair:
+        row_id = snap.get("id")
+        if row_id is None:
+            continue
+
+        spread_edge = snap.get("spread_edge")
+        total_edge = snap.get("total_edge")
+        kp_wp = snap.get("kp_home_win_prob")
+        spread_correct = snap.get("result_spread_correct")
+        total_correct = snap.get("result_total_correct")
+        ml_correct = snap.get("result_ml_correct")
+
+        # Spread unit: bet on the side KP recommends.
+        if spread_edge is not None and spread_edge > 0:
+            s_odds = snap.get("pinnacle_spread_home_odds") or -110
+        elif spread_edge is not None and spread_edge < 0:
+            s_odds = snap.get("pinnacle_spread_away_odds") or -110
+        else:
+            s_odds = None
+        spread_units = _calc_unit_result(s_odds, spread_correct)
+
+        # Total unit: over or under at those odds.
+        if total_edge is not None and total_edge > 0:
+            t_odds = snap.get("pinnacle_over_odds") or -110
+        elif total_edge is not None and total_edge < 0:
+            t_odds = snap.get("pinnacle_under_odds") or -110
+        else:
+            t_odds = None
+        total_units = _calc_unit_result(t_odds, total_correct)
+
+        # ML unit: home or away ML — no default, skip if NULL.
+        if kp_wp is not None and kp_wp > 0.5:
+            ml_odds = snap.get("pinnacle_home_ml")
+        elif kp_wp is not None and kp_wp < 0.5:
+            ml_odds = snap.get("pinnacle_away_ml")
+        else:
+            ml_odds = None
+        ml_units = _calc_unit_result(ml_odds, ml_correct)
+
+        update: dict[str, Any] = {"updated_at": now_iso}
+        changed = False
+
+        # Only update fields that were NULL or 0.
+        old_su = snap.get("spread_unit_result")
+        if (old_su is None or old_su == 0) and spread_units is not None:
+            update["spread_unit_result"] = spread_units
+            changed = True
+
+        old_tu = snap.get("total_unit_result")
+        if (old_tu is None or old_tu == 0) and total_units is not None:
+            update["total_unit_result"] = total_units
+            changed = True
+
+        old_mu = snap.get("ml_unit_result")
+        if (old_mu is None or old_mu == 0) and ml_units is not None:
+            update["ml_unit_result"] = ml_units
+            changed = True
+
+        if not changed:
+            continue
+
+        try:
+            db_client._http.patch(
+                f"{db_client.base_url}/kenpom_snapshots",
+                headers={**db_client.headers, "Prefer": "return=minimal"},
+                params={"id": f"eq.{row_id}"},
+                json=update,
+                timeout=15,
+            )
+            summary["units_repaired"] += 1
+        except Exception as e:
+            print(f"  [KENPOM REPAIR] PATCH failed for {snap.get('game_id')}: {e}")
+            continue
+
+        # Track totals.
+        if spread_units is not None:
+            summary["spread_units_total"] += spread_units
+        if total_units is not None:
+            summary["total_units_total"] += total_units
+        if ml_units is not None:
+            summary["ml_units_total"] += ml_units
+
+        # Log first 3 examples.
+        if examples_collected < 3:
+            home = snap.get("home_team", "Home")
+            away = snap.get("away_team", "Away")
+            su_str = f"{spread_units:+.2f}u" if spread_units is not None else "N/A"
+            tu_str = f"{total_units:+.2f}u" if total_units is not None else "N/A"
+            mu_str = f"{ml_units:+.2f}u" if ml_units is not None else "N/A"
+            ex = (
+                f"{away} @ {home}: "
+                f"spread={spread_correct} @{s_odds}→{su_str}, "
+                f"total={total_correct} @{t_odds}→{tu_str}, "
+                f"ml={ml_correct} @{ml_odds}→{mu_str}"
+            )
+            summary["examples"].append(ex)
+            print(f"  [KENPOM REPAIR EXAMPLE] {ex}")
+            examples_collected += 1
+
+    # Round totals.
+    summary["spread_units_total"] = round(summary["spread_units_total"], 2)
+    summary["total_units_total"] = round(summary["total_units_total"], 2)
+    summary["ml_units_total"] = round(summary["ml_units_total"], 2)
+
+    print(
+        f"  [KENPOM REPAIR] Repaired {summary['units_repaired']} rows — "
+        f"Spread: {summary['spread_units_total']:+.2f}u, "
+        f"Total: {summary['total_units_total']:+.2f}u, "
+        f"ML: {summary['ml_units_total']:+.2f}u"
+    )
+
+    return summary

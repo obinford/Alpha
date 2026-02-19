@@ -64,18 +64,20 @@ interface SeasonStats {
   total_games_graded: number;
   spread_wins: number;
   spread_losses: number;
+  spread_graded?: number;
   spread_pct: number;
-  spread_record: string;
-  spread_units: number;
+  spread_record: string | null;
+  spread_units: number | null;
   total_wins: number;
   total_losses: number;
+  total_graded?: number;
   total_pct: number;
-  total_record: string;
-  total_units: number;
+  total_record: string | null;
+  total_units: number | null;
   ml_wins: number;
   ml_losses: number;
   ml_pct: number;
-  ml_record: string;
+  ml_record: string | null;
   ml_units: number;
   last_updated: string;
 }
@@ -99,12 +101,14 @@ interface DailyStats {
   games_graded: number;
   spread_wins: number;
   spread_losses: number;
+  spread_graded?: number;
   spread_pct: number;
-  spread_units: number;
+  spread_units: number | null;
   total_wins: number;
   total_losses: number;
+  total_graded?: number;
   total_pct: number;
-  total_units: number;
+  total_units: number | null;
   ml_wins: number;
   ml_losses: number;
   ml_pct: number;
@@ -419,17 +423,23 @@ export default function KenPomPage() {
         {season && season.total_games_graded > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-4 rounded-xl bg-[#1c1c1e] px-4 py-2.5">
             <span className="text-xs font-semibold text-gray-300">Season:</span>
-            <span className="text-xs text-gray-400">
-              Spread {season.spread_record} ({formatUnits(season.spread_units ?? 0)})
-            </span>
-            <span className="text-xs text-gray-600">|</span>
-            <span className="text-xs text-gray-400">
-              Total {season.total_record} ({formatUnits(season.total_units ?? 0)})
-            </span>
-            <span className="text-xs text-gray-600">|</span>
-            <span className="text-xs text-gray-400">
-              ML {season.ml_record} ({formatUnits(season.ml_units ?? 0)})
-            </span>
+            {season.spread_record && (
+              <span className="text-xs text-gray-400">
+                Spread {season.spread_record} ({formatUnits(season.spread_units ?? 0)})
+              </span>
+            )}
+            {season.spread_record && season.total_record && <span className="text-xs text-gray-600">|</span>}
+            {season.total_record && (
+              <span className="text-xs text-gray-400">
+                Total {season.total_record} ({formatUnits(season.total_units ?? 0)})
+              </span>
+            )}
+            {season.total_record && season.ml_record && <span className="text-xs text-gray-600">|</span>}
+            {season.ml_record && (
+              <span className="text-xs text-gray-400">
+                ML {season.ml_record} ({formatUnits(season.ml_units ?? 0)})
+              </span>
+            )}
             <span className="ml-auto text-[10px] text-gray-600">
               Games graded: {season.total_games_graded}
             </span>
@@ -649,22 +659,40 @@ export default function KenPomPage() {
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-500">{d.games_graded}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-400">
-                          {d.spread_wins}-{d.spread_losses}
-                          <span className={`ml-1 ${(d.spread_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {formatUnits(d.spread_units ?? 0)}
-                          </span>
+                          {(d.spread_wins + d.spread_losses) > 0 ? (
+                            <>
+                              {d.spread_wins}-{d.spread_losses}
+                              <span className={`ml-1 ${(d.spread_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {d.spread_units != null ? formatUnits(d.spread_units) : ""}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-gray-600">{"\u2014"}</span>
+                          )}
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-400">
-                          {d.total_wins}-{d.total_losses}
-                          <span className={`ml-1 ${(d.total_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {formatUnits(d.total_units ?? 0)}
-                          </span>
+                          {(d.total_wins + d.total_losses) > 0 ? (
+                            <>
+                              {d.total_wins}-{d.total_losses}
+                              <span className={`ml-1 ${(d.total_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {d.total_units != null ? formatUnits(d.total_units) : ""}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-gray-600">{"\u2014"}</span>
+                          )}
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-400">
-                          {d.ml_wins}-{d.ml_losses}
-                          <span className={`ml-1 ${(d.ml_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {formatUnits(d.ml_units ?? 0)}
-                          </span>
+                          {(d.ml_wins + d.ml_losses) > 0 ? (
+                            <>
+                              {d.ml_wins}-{d.ml_losses}
+                              <span className={`ml-1 ${(d.ml_units ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {formatUnits(d.ml_units ?? 0)}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-gray-600">{"\u2014"}</span>
+                          )}
                         </td>
                       </tr>
                       {expandedDay === d.date && dayGames.length > 0 && (

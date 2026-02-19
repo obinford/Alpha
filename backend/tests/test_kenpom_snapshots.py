@@ -358,3 +358,91 @@ def test_unit_no_odds():
     """No odds → None."""
     assert _calc_unit_result(None, True) is None
     assert _calc_unit_result(None, False) is None
+
+
+# ---------------------------------------------------------------------------
+# Repair unit logic tests — mirrors repair_kenpom_units() logic
+# ---------------------------------------------------------------------------
+
+def _determine_spread_odds(spread_edge, pin_home_odds, pin_away_odds):
+    """Determine which odds to use based on spread edge direction."""
+    if spread_edge is not None and spread_edge > 0:
+        return pin_home_odds or -110
+    elif spread_edge is not None and spread_edge < 0:
+        return pin_away_odds or -110
+    return None
+
+
+def _determine_ml_odds(kp_wp, pin_home_ml, pin_away_ml):
+    """Determine ML odds — no default, skip if NULL."""
+    if kp_wp is not None and kp_wp > 0.5:
+        return pin_home_ml
+    elif kp_wp is not None and kp_wp < 0.5:
+        return pin_away_ml
+    return None
+
+
+def test_repair_spread_odds_home():
+    """Positive spread edge → use home odds."""
+    odds = _determine_spread_odds(2.5, -108, -112)
+    assert odds == -108
+
+
+def test_repair_spread_odds_away():
+    """Negative spread edge → use away odds."""
+    odds = _determine_spread_odds(-3.0, -108, -112)
+    assert odds == -112
+
+
+def test_repair_spread_odds_default():
+    """Missing odds → default to -110."""
+    odds = _determine_spread_odds(2.5, None, None)
+    assert odds == -110
+
+
+def test_repair_spread_odds_zero_edge():
+    """Zero edge → no bet, return None."""
+    odds = _determine_spread_odds(0, -108, -112)
+    assert odds is None
+
+
+def test_repair_ml_odds_home():
+    """KP favors home → use home ML."""
+    odds = _determine_ml_odds(0.65, -150, 130)
+    assert odds == -150
+
+
+def test_repair_ml_odds_away():
+    """KP favors away → use away ML."""
+    odds = _determine_ml_odds(0.35, -150, 130)
+    assert odds == 130
+
+
+def test_repair_ml_odds_skip_null():
+    """Missing ML odds → None (skip, no default)."""
+    odds = _determine_ml_odds(0.65, None, None)
+    assert odds is None
+
+
+def test_repair_ml_odds_even():
+    """Even kp_wp → no pick → None."""
+    odds = _determine_ml_odds(0.5, -150, 130)
+    assert odds is None
+
+
+def test_repair_full_scenario():
+    """Full repair scenario: win at -110 spread, loss on total, win ML."""
+    # Spread: edge > 0, home odds -110, spread_correct=True → +0.91u
+    s_odds = _determine_spread_odds(2.5, -110, -110)
+    s_units = _calc_unit_result(s_odds, True)
+    assert s_units == pytest.approx(0.9091, abs=0.001)
+
+    # Total: edge > 0, over odds -110, total_correct=False → -1.0u
+    t_odds = -110
+    t_units = _calc_unit_result(t_odds, False)
+    assert t_units == -1.0
+
+    # ML: kp_wp=0.7, home ML -150, ml_correct=True → +0.6667u
+    ml_odds = _determine_ml_odds(0.7, -150, 130)
+    ml_units = _calc_unit_result(ml_odds, True)
+    assert ml_units == pytest.approx(0.6667, abs=0.001)
