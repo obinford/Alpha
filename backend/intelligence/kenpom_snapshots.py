@@ -40,8 +40,27 @@ import traceback
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 from models.ev_calculator import american_to_implied_prob
+
+
+def _game_date_from_commence(commence_time: str | None, fallback: date | None = None) -> date:
+    """Derive the game's calendar date in US Eastern from its commence_time.
+
+    NCAAB games at e.g. 8 PM ET on Feb 19 have commence_time "2026-02-20T01:00:00Z"
+    in UTC.  Without this conversion, they'd be bucketed as Feb 20 games.
+    """
+    if commence_time:
+        try:
+            dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+            return dt.astimezone(_ET).date()
+        except Exception:
+            pass
+    return fallback or date.today()
+
 
 # ---------------------------------------------------------------------------
 # Table auto-creation via RPC — uses the same db_client the scanner uses.
@@ -350,21 +369,45 @@ def save_kenpom_snapshots(
         return 0
 
     t0 = time.time()
-    today = snapshot_dt or date.today()
-    today_str = today.isoformat()
 
-    # Classify projections by source.
-    fanmatch_ids = [gid for gid, p in game_projections.items() if "fanmatch" in p.get("source", "")]
-    ratings_ids = [gid for gid, p in game_projections.items() if "fanmatch" not in p.get("source", "")]
+    # Build game lookup (CBB only) — needed early for date derivation.
+    game_map = {g.id: g for g in all_games if getattr(g, "sport_key", "") == "basketball_ncaab"}
+
+    # Helper: snapshot_date is the game's calendar date in US Eastern,
+    # so an 8 PM ET game on Feb 19 (01:00 UTC Feb 20) is bucketed as Feb 19.
+    # If the caller overrides via snapshot_dt, all games share that date.
+    def _snap_date(game_id: str) -> str:
+        if snapshot_dt:
+            return snapshot_dt.isoformat()
+        game = game_map.get(game_id)
+        ct = getattr(game, "commence_time", None) if game else None
+        return _game_date_from_commence(ct).isoformat()
+
+    # Classify projections by source AND date.
+    fanmatch_by_date: dict[str, list[str]] = {}
+    ratings_by_date: dict[str, list[str]] = {}
+    game_date_cache: dict[str, str] = {}  # game_id -> date string
+    for gid, p in game_projections.items():
+        d = _snap_date(gid)
+        game_date_cache[gid] = d
+        if "fanmatch" in p.get("source", ""):
+            fanmatch_by_date.setdefault(d, []).append(gid)
+        else:
+            ratings_by_date.setdefault(d, []).append(gid)
+
+    all_dates = sorted(set(fanmatch_by_date) | set(ratings_by_date))
+    total_fanmatch = sum(len(v) for v in fanmatch_by_date.values())
+    total_ratings = sum(len(v) for v in ratings_by_date.values())
     print(
-        f"  [KENPOM SNAPSHOT] Projections: {len(fanmatch_ids)} fanmatch, {len(ratings_ids)} ratings"
+        f"  [KENPOM SNAPSHOT] Projections: {total_fanmatch} fanmatch, "
+        f"{total_ratings} ratings across dates {all_dates}"
     )
 
     # -----------------------------------------------------------------------
-    # PURGE: If we have fanmatch data, DELETE all non-fanmatch rows for today.
+    # PURGE: For each date with fanmatch data, DELETE non-fanmatch rows.
     # This guarantees stale ratings rows can never block fanmatch insertion.
     # -----------------------------------------------------------------------
-    if fanmatch_ids:
+    for dt_str, fm_ids in fanmatch_by_date.items():
         purged = 0
         for source_filter in ["is.null", "neq.kenpom_fanmatch"]:
             try:
@@ -372,7 +415,7 @@ def save_kenpom_snapshots(
                     f"{db_client.base_url}/kenpom_snapshots",
                     headers={**db_client.headers, "Prefer": "return=representation"},
                     params={
-                        "snapshot_date": f"eq.{today_str}",
+                        "snapshot_date": f"eq.{dt_str}",
                         "projection_source": source_filter,
                     },
                     timeout=15,
@@ -381,37 +424,34 @@ def save_kenpom_snapshots(
                     body = resp.json() if resp.text.strip() else []
                     purged += len(body)
             except Exception as e:
-                print(f"  [KENPOM SNAPSHOT] Purge failed ({source_filter}): {e}")
+                print(f"  [KENPOM SNAPSHOT] Purge failed ({source_filter}) for {dt_str}: {e}")
         if purged:
-            print(f"  [KENPOM SNAPSHOT] Purged {purged} non-fanmatch snapshots for {today_str}")
+            print(f"  [KENPOM SNAPSHOT] Purged {purged} non-fanmatch snapshots for {dt_str}")
 
     # For ratings-only projections, check which games already have ANY
-    # snapshot for today (fanmatch rows we want to keep).
+    # snapshot for that date (fanmatch rows we want to keep).
     existing_snapshot_ids: set[str] = set()
-    if ratings_ids:
-        for i in range(0, len(ratings_ids), 50):
-            chunk = ratings_ids[i : i + 50]
+    for dt_str, rat_ids in ratings_by_date.items():
+        for i in range(0, len(rat_ids), 50):
+            chunk = rat_ids[i : i + 50]
             id_list = ",".join(chunk)
             try:
                 existing_rows = db_client._get(
                     "kenpom_snapshots",
                     select="game_id",
                     filters={
-                        "snapshot_date": f"eq.{today_str}",
+                        "snapshot_date": f"eq.{dt_str}",
                         "game_id": f"in.({id_list})",
                     },
                 )
                 existing_snapshot_ids.update(r["game_id"] for r in existing_rows)
             except Exception:
                 pass
-        if existing_snapshot_ids:
-            print(
-                f"  [KENPOM SNAPSHOT] {len(existing_snapshot_ids)} ratings games already have "
-                f"snapshots (fanmatch), skipping those"
-            )
-
-    # Build game lookup (CBB only).
-    game_map = {g.id: g for g in all_games if getattr(g, "sport_key", "") == "basketball_ncaab"}
+    if existing_snapshot_ids:
+        print(
+            f"  [KENPOM SNAPSHOT] {len(existing_snapshot_ids)} ratings games already have "
+            f"snapshots (fanmatch), skipping those"
+        )
 
     rows: list[dict] = []
     pin_found = 0
@@ -427,7 +467,7 @@ def save_kenpom_snapshots(
         new_source = proj.get("source", "unknown")
         is_fanmatch = "fanmatch" in new_source
 
-        # Ratings only upsert if NO snapshot exists for this game today.
+        # Ratings only upsert if NO snapshot exists for this game's date.
         if not is_fanmatch and game_id in existing_snapshot_ids:
             continue
 
@@ -478,7 +518,7 @@ def save_kenpom_snapshots(
         ml_edge = (kp_wp - pin_home_ip) if pin_home_ip is not None else None
 
         rows.append({
-            "snapshot_date": today_str,
+            "snapshot_date": game_date_cache.get(game_id, date.today().isoformat()),
             "game_id": game_id,
             "sport": "basketball_ncaab",
             "home_team": game.home_team,
@@ -553,7 +593,7 @@ def save_kenpom_snapshots(
     )
 
     if not rows:
-        print(f"  [KENPOM SNAPSHOT] Nothing new to save for {today_str}.")
+        print(f"  [KENPOM SNAPSHOT] Nothing new to save for {all_dates}.")
         return 0
 
     # Log first 3 rows being saved.
@@ -561,7 +601,7 @@ def save_kenpom_snapshots(
         print(
             f"  [KENPOM SNAPSHOT] Saved: "
             f"{row['away_team']} @ {row['home_team']} "
-            f"source={row['projection_source']} "
+            f"date={row['snapshot_date']} source={row['projection_source']} "
             f"home={row['kp_home_score']} away={row['kp_away_score']}"
         )
 
@@ -571,30 +611,31 @@ def save_kenpom_snapshots(
         )
         elapsed = time.time() - t0
         print(
-            f"  [KENPOM SNAPSHOT] Saved {len(rows)} snapshots for {today_str} ({elapsed:.1f}s)"
+            f"  [KENPOM SNAPSHOT] Saved {len(rows)} snapshots across {all_dates} ({elapsed:.1f}s)"
         )
     except Exception as e:
         print(f"  [KENPOM SNAPSHOT] ERROR saving snapshots: {e}")
         traceback.print_exc()
         return 0
 
-    # Verify: query back source counts to confirm the save worked.
-    try:
-        verify_rows = db_client._get(
-            "kenpom_snapshots",
-            select="projection_source",
-            filters={"snapshot_date": f"eq.{today_str}"},
-        )
-        source_counts: dict[str, int] = {}
-        for vr in verify_rows:
-            src = vr.get("projection_source") or "null"
-            source_counts[src] = source_counts.get(src, 0) + 1
-        print(
-            f"  [KENPOM SNAPSHOT] Verify: {len(verify_rows)} total snapshots for {today_str} — "
-            + ", ".join(f"{src}={cnt}" for src, cnt in sorted(source_counts.items()))
-        )
-    except Exception as e:
-        print(f"  [KENPOM SNAPSHOT] Verify query failed: {e}")
+    # Verify: query back source counts per date.
+    for verify_dt in all_dates:
+        try:
+            verify_rows = db_client._get(
+                "kenpom_snapshots",
+                select="projection_source",
+                filters={"snapshot_date": f"eq.{verify_dt}"},
+            )
+            source_counts: dict[str, int] = {}
+            for vr in verify_rows:
+                src = vr.get("projection_source") or "null"
+                source_counts[src] = source_counts.get(src, 0) + 1
+            print(
+                f"  [KENPOM SNAPSHOT] Verify: {len(verify_rows)} snapshots for {verify_dt} — "
+                + ", ".join(f"{src}={cnt}" for src, cnt in sorted(source_counts.items()))
+            )
+        except Exception as e:
+            print(f"  [KENPOM SNAPSHOT] Verify query failed for {verify_dt}: {e}")
 
     return len(rows)
 

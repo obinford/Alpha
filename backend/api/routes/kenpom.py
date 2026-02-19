@@ -2,12 +2,19 @@
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase
 
 router = APIRouter()
+_ET = ZoneInfo("America/New_York")
+
+
+def _today_et() -> date:
+    """Current date in US Eastern — matches snapshot bucketing."""
+    return datetime.now(_ET).date()
 
 
 def _table_missing_error(err: Exception) -> bool:
@@ -60,7 +67,7 @@ def get_today() -> dict:
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    today = date.today()
+    today = _today_et()
     snapshots = _get_snapshots_for_date(db, today)
     return {
         "date": today.isoformat(),
@@ -76,7 +83,7 @@ def get_tomorrow() -> dict:
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = _today_et() + timedelta(days=1)
     snapshots = _get_snapshots_for_date(db, tomorrow)
     message = None
     if not snapshots:
@@ -93,7 +100,7 @@ def get_edges(
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    dt = date.fromisoformat(target_date) if target_date else date.today()
+    dt = date.fromisoformat(target_date) if target_date else _today_et()
     all_snaps = _get_snapshots_for_date(db, dt)
 
     spread_edges = sorted(
@@ -193,7 +200,7 @@ def get_performance(
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (_today_et() - timedelta(days=days)).isoformat()
 
     rows = _safe_get_graded(db, {"snapshot_date": f"gte.{since}"})
 

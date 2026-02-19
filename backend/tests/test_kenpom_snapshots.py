@@ -7,7 +7,52 @@ Verifies:
 - Edge cases: ties, pushes, zero edges
 """
 
+import sys
+from datetime import date
+from pathlib import Path
+
 import pytest
+
+# Ensure backend/ is on sys.path so we can import intelligence.kenpom_snapshots.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from intelligence.kenpom_snapshots import _game_date_from_commence
+
+
+# ---------------------------------------------------------------------------
+# Game-date derivation from commence_time
+# ---------------------------------------------------------------------------
+
+def test_game_date_evening_et():
+    """8 PM ET game on Feb 19 = 01:00 UTC Feb 20 → should bucket as Feb 19."""
+    assert _game_date_from_commence("2026-02-20T01:00:00Z") == date(2026, 2, 19)
+
+
+def test_game_date_afternoon_et():
+    """2 PM ET game on Feb 19 = 19:00 UTC Feb 19 → should bucket as Feb 19."""
+    assert _game_date_from_commence("2026-02-19T19:00:00Z") == date(2026, 2, 19)
+
+
+def test_game_date_late_night_et():
+    """11 PM ET game on Feb 19 = 04:00 UTC Feb 20 → should bucket as Feb 19."""
+    assert _game_date_from_commence("2026-02-20T04:00:00Z") == date(2026, 2, 19)
+
+
+def test_game_date_early_morning_et():
+    """1 AM ET game on Feb 20 = 06:00 UTC Feb 20 → should bucket as Feb 20."""
+    assert _game_date_from_commence("2026-02-20T06:00:00Z") == date(2026, 2, 20)
+
+
+def test_game_date_none_falls_back():
+    """No commence_time → falls back to provided date or today."""
+    fallback = date(2026, 3, 1)
+    assert _game_date_from_commence(None, fallback=fallback) == fallback
+
+
+def test_game_date_invalid_falls_back():
+    """Invalid commence_time → falls back."""
+    fallback = date(2026, 3, 1)
+    assert _game_date_from_commence("not-a-date", fallback=fallback) == fallback
 
 
 # ---------------------------------------------------------------------------
