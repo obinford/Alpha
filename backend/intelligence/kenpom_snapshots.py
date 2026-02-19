@@ -264,12 +264,39 @@ def _extract_pinnacle_odds(game: Any, debug: bool = False) -> dict[str, Any] | N
 def _fetch_pinnacle_from_db(
     db_client: Any,
     game_ids: list[str],
+    home_team_map: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Fallback: fetch latest Pinnacle odds from line_movements table.
+
+    Args:
+        db_client: Supabase client.
+        game_ids: Game IDs to look up.
+        home_team_map: Optional {game_id: home_team_name} for correctly
+            assigning h2h odds to home/away.  When provided, the ``side``
+            field (which contains the team name) is matched against the
+            home team.  Without this, h2h assignment falls back to name
+            lookup from the ``games`` table.
 
     Returns {game_id: {spread_home, total, home_ml, away_ml, home_implied_prob}}.
     Used when in-memory game objects don't contain bookmaker data.
     """
+    # Build home_team_map from games table if not provided.
+    if home_team_map is None:
+        home_team_map = {}
+        for i in range(0, len(game_ids), 50):
+            chunk = game_ids[i : i + 50]
+            id_list = ",".join(chunk)
+            try:
+                game_rows = db_client._get(
+                    "games",
+                    select="game_id,home_team",
+                    filters={"game_id": f"in.({id_list})"},
+                )
+                for gr in game_rows:
+                    home_team_map[gr["game_id"]] = gr["home_team"]
+            except Exception:
+                pass
+
     pin_data: dict[str, dict[str, Any]] = {}
     for i in range(0, len(game_ids), 50):
         chunk = game_ids[i : i + 50]
@@ -317,9 +344,10 @@ def _fetch_pinnacle_from_db(
                         except ValueError:
                             pass
 
-            # Parse ML — need to know which side is home
+            # Parse ML — match side (team name) to home/away.
             elif mkt == "h2h":
-                if "home_ml" not in d:
+                home_team = home_team_map.get(gid, "")
+                if side == home_team:
                     d["home_ml"] = int(odds)
                     d["home_implied_prob"] = american_to_implied_prob(int(odds))
                 elif "away_ml" not in d:
@@ -550,7 +578,8 @@ def save_kenpom_snapshots(
             f"  [KENPOM SNAPSHOT] {len(games_needing_pin)} games missing Pinnacle in-memory, "
             f"trying line_movements DB fallback..."
         )
-        db_pin = _fetch_pinnacle_from_db(db_client, games_needing_pin)
+        htmap = {g.id: g.home_team for g in all_games}
+        db_pin = _fetch_pinnacle_from_db(db_client, games_needing_pin, home_team_map=htmap)
         backfilled = 0
         for row in rows:
             gid = row["game_id"]
@@ -772,7 +801,9 @@ def _backfill_pinnacle_for_grading(
     # For games still missing, try line_movements.
     still_missing = [gid for gid in missing_ids if gid not in pin_by_game]
     if still_missing:
-        lm_data = _fetch_pinnacle_from_db(db_client, still_missing)
+        # Build home_team_map from snapshot data for correct h2h assignment.
+        htmap = {s["game_id"]: s.get("home_team", "") for s in snapshots if s.get("home_team")}
+        lm_data = _fetch_pinnacle_from_db(db_client, still_missing, home_team_map=htmap)
         for gid, d in lm_data.items():
             if gid not in pin_by_game and d:
                 pin_by_game[gid] = d

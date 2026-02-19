@@ -27,8 +27,10 @@ from odds_scraper import (
     build_devig_line_map,
     scan_game,
     store_true_lines,
+    store_odds_snapshots,
 )
 from models.devig import devig_market
+from intelligence.kenpom_snapshots import _extract_pinnacle_odds
 
 
 # ---------------------------------------------------------------------------
@@ -546,3 +548,201 @@ class TestMultipleGames:
                 f"home_prob={home_prob:.4f} (PIN {home_display:+d}), "
                 f"away_prob={away_prob:.4f} (PIN {away_display:+d})"
             )
+
+
+# =========================================================================
+# TEST 8: store_odds_snapshots — totals use Over/Under name matching
+# =========================================================================
+class TestStoreOddsSnapshotsTotals:
+    """Verify that store_odds_snapshots maps Over→home_odds, Under→away_odds
+    regardless of outcome order in the API response."""
+
+    class MockDB:
+        """Capture rows passed to _post_many instead of writing to Supabase."""
+        def __init__(self):
+            self.posted_rows: list[dict] = []
+
+        def _post_many(self, table: str, rows: list[dict]) -> None:
+            self.posted_rows.extend(rows)
+
+    def _make_totals_game(self, over_first: bool) -> Game:
+        """Create a game with Pinnacle totals in specified order."""
+        if over_first:
+            outcomes = [
+                Outcome(name="Over", price=-110, point=215.5),
+                Outcome(name="Under", price=-110, point=215.5),
+            ]
+        else:
+            outcomes = [
+                Outcome(name="Under", price=-110, point=215.5),
+                Outcome(name="Over", price=-110, point=215.5),
+            ]
+        pin = _make_totals_bookmaker("pinnacle", "Pinnacle", outcomes)
+        return _make_game([pin])
+
+    def test_over_first(self):
+        """When API returns Over before Under, home_odds=Over odds."""
+        db = self.MockDB()
+        game = self._make_totals_game(over_first=True)
+        store_odds_snapshots(db, [game])
+
+        assert len(db.posted_rows) == 1
+        row = db.posted_rows[0]
+        assert row["market_type"] == "totals"
+        assert row["home_odds"] == -110  # Over
+        assert row["away_odds"] == -110  # Under
+        assert row["total_value"] == 215.5
+
+    def test_under_first(self):
+        """When API returns Under before Over, home_odds should STILL be Over."""
+        db = self.MockDB()
+        game = self._make_totals_game(over_first=False)
+        store_odds_snapshots(db, [game])
+
+        assert len(db.posted_rows) == 1
+        row = db.posted_rows[0]
+        assert row["market_type"] == "totals"
+        # Over should always map to home_odds, Under to away_odds
+        assert row["home_odds"] == -110  # Over
+        assert row["away_odds"] == -110  # Under
+        assert row["total_value"] == 215.5
+
+    def test_h2h_name_matching(self):
+        """h2h outcomes are matched by team name regardless of order."""
+        db = self.MockDB()
+        # Pinnacle returns Warriors first (but Warriors are home)
+        pin = _make_h2h_bookmaker("pinnacle", "Pinnacle", [
+            Outcome(name=HOME, price=PIN_WARRIORS_ODDS),
+            Outcome(name=AWAY, price=PIN_CELTICS_ODDS),
+        ])
+        game = _make_game([pin])
+        store_odds_snapshots(db, [game])
+
+        assert len(db.posted_rows) == 1
+        row = db.posted_rows[0]
+        assert row["home_odds"] == PIN_WARRIORS_ODDS, (
+            f"Home odds should be Warriors ({PIN_WARRIORS_ODDS}) "
+            f"but got {row['home_odds']}"
+        )
+        assert row["away_odds"] == PIN_CELTICS_ODDS, (
+            f"Away odds should be Celtics ({PIN_CELTICS_ODDS}) "
+            f"but got {row['away_odds']}"
+        )
+
+    def test_h2h_reversed_order(self):
+        """h2h with Celtics (away) listed first — must still map correctly."""
+        db = self.MockDB()
+        pin = _make_h2h_bookmaker("pinnacle", "Pinnacle", [
+            Outcome(name=AWAY, price=PIN_CELTICS_ODDS),
+            Outcome(name=HOME, price=PIN_WARRIORS_ODDS),
+        ])
+        game = _make_game([pin])
+        store_odds_snapshots(db, [game])
+
+        assert len(db.posted_rows) == 1
+        row = db.posted_rows[0]
+        assert row["home_odds"] == PIN_WARRIORS_ODDS, (
+            f"Home odds should be Warriors ({PIN_WARRIORS_ODDS}) "
+            f"but got {row['home_odds']}"
+        )
+        assert row["away_odds"] == PIN_CELTICS_ODDS, (
+            f"Away odds should be Celtics ({PIN_CELTICS_ODDS}) "
+            f"but got {row['away_odds']}"
+        )
+        print(
+            f"  OK: home_odds={row['home_odds']:+d} ({HOME}), "
+            f"away_odds={row['away_odds']:+d} ({AWAY})"
+        )
+
+
+# =========================================================================
+# TEST 9: _extract_pinnacle_odds — name-based h2h/spreads extraction
+# =========================================================================
+class TestExtractPinnacleOdds:
+    """Verify _extract_pinnacle_odds in kenpom_snapshots.py correctly
+    assigns home_ml/away_ml by matching outcome name to home_team."""
+
+    def test_h2h_warriors_first(self):
+        """Pinnacle lists Warriors first — home_ml should be Warriors odds."""
+        pin = _make_h2h_bookmaker("pinnacle", "Pinnacle", [
+            Outcome(name=HOME, price=PIN_WARRIORS_ODDS),
+            Outcome(name=AWAY, price=PIN_CELTICS_ODDS),
+        ])
+        game = _make_game([pin])
+        result = _extract_pinnacle_odds(game)
+
+        assert result is not None
+        assert result["home_ml"] == PIN_WARRIORS_ODDS, (
+            f"home_ml should be Warriors ({PIN_WARRIORS_ODDS}) "
+            f"but got {result['home_ml']}"
+        )
+        assert result["away_ml"] == PIN_CELTICS_ODDS, (
+            f"away_ml should be Celtics ({PIN_CELTICS_ODDS}) "
+            f"but got {result['away_ml']}"
+        )
+        print(
+            f"  OK: home_ml={result['home_ml']:+d} ({HOME}), "
+            f"away_ml={result['away_ml']:+d} ({AWAY})"
+        )
+
+    def test_h2h_celtics_first(self):
+        """Pinnacle lists Celtics first — home_ml should STILL be Warriors."""
+        pin = _make_h2h_bookmaker("pinnacle", "Pinnacle", [
+            Outcome(name=AWAY, price=PIN_CELTICS_ODDS),
+            Outcome(name=HOME, price=PIN_WARRIORS_ODDS),
+        ])
+        game = _make_game([pin])
+        result = _extract_pinnacle_odds(game)
+
+        assert result is not None
+        assert result["home_ml"] == PIN_WARRIORS_ODDS, (
+            f"home_ml should be Warriors ({PIN_WARRIORS_ODDS}) "
+            f"but got {result['home_ml']}"
+        )
+        assert result["away_ml"] == PIN_CELTICS_ODDS, (
+            f"away_ml should be Celtics ({PIN_CELTICS_ODDS}) "
+            f"but got {result['away_ml']}"
+        )
+
+    def test_spreads_name_matching(self):
+        """Pinnacle spreads should match by team name, not position."""
+        pin = Bookmaker(
+            key="pinnacle",
+            title="Pinnacle",
+            markets=[
+                Market(key="spreads", outcomes=[
+                    # Away team listed first
+                    Outcome(name=AWAY, price=-115, point=-3.5),
+                    Outcome(name=HOME, price=-105, point=3.5),
+                ]),
+            ],
+        )
+        game = _make_game([pin])
+        result = _extract_pinnacle_odds(game)
+
+        assert result is not None
+        assert result["spread_home"] == 3.5, (
+            f"spread_home should be +3.5 (home Warriors) but got {result['spread_home']}"
+        )
+        assert result["spread_home_odds"] == -105
+
+    def test_totals_name_matching(self):
+        """Pinnacle totals should match Over/Under by name."""
+        pin = Bookmaker(
+            key="pinnacle",
+            title="Pinnacle",
+            markets=[
+                Market(key="totals", outcomes=[
+                    # Under listed first
+                    Outcome(name="Under", price=-108, point=215.5),
+                    Outcome(name="Over", price=-112, point=215.5),
+                ]),
+            ],
+        )
+        game = _make_game([pin])
+        result = _extract_pinnacle_odds(game)
+
+        assert result is not None
+        assert result["total"] == 215.5
+        assert result["over_odds"] == -112
+        assert result["under_odds"] == -108

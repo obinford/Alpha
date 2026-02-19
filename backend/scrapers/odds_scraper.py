@@ -646,11 +646,18 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
             for mkt in bk.markets:
                 if len(mkt.outcomes) != 2:
                     continue
-                # Match outcomes by name to home/away teams (h2h/spreads).
+                # Match outcomes by name to home/away teams.
                 # The Odds API may return outcomes in any order per bookmaker.
-                odds_by_name = {o.name: o for o in mkt.outcomes}
-                home_out = odds_by_name.get(game.home_team, mkt.outcomes[0])
-                away_out = odds_by_name.get(game.away_team, mkt.outcomes[1])
+                # For totals, outcome names are "Over"/"Under" (not team names),
+                # so we map Over → home_odds slot, Under → away_odds slot.
+                if mkt.key == "totals":
+                    odds_by_name = {o.name.lower(): o for o in mkt.outcomes}
+                    home_out = odds_by_name.get("over", mkt.outcomes[0])
+                    away_out = odds_by_name.get("under", mkt.outcomes[1])
+                else:
+                    odds_by_name = {o.name: o for o in mkt.outcomes}
+                    home_out = odds_by_name.get(game.home_team, mkt.outcomes[0])
+                    away_out = odds_by_name.get(game.away_team, mkt.outcomes[1])
 
                 # Debug logging for Pinnacle h2h mapping.
                 if bk.key == "pinnacle" and mkt.key == "h2h":
