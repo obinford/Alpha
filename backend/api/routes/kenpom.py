@@ -117,32 +117,27 @@ def get_edges(
 def _count_results(rows: list[dict]) -> dict:
     """Count wins/losses and sum units from raw graded snapshot rows.
 
-    Only counts spread/total results for games that actually have Pinnacle data.
-    Games with NULL pinnacle_spread_home are excluded from spread counts to
-    avoid inflating "0-0" records on dates with no Pinnacle data.
+    W/L counts come from result_spread_correct / result_total_correct flags.
+    Rows where those flags are None (ungraded or missing Pinnacle data) are
+    naturally excluded by the ``is True`` / ``is False`` checks — no extra
+    Pinnacle-presence gate is needed.
+
+    Unit sums are returned whenever at least one non-null unit result exists,
+    decoupled from whether Pinnacle columns are populated on the row.
     """
     sw = sl = tw = tl = mw = ml = 0
     s_units = t_units = m_units = 0.0
-    spread_graded = 0
-    total_graded = 0
+    has_s_units = has_t_units = False
     for r in rows:
-        has_pin_spread = r.get("pinnacle_spread_home") is not None
-        has_pin_total = r.get("pinnacle_total") is not None
-
-        if has_pin_spread:
-            if r.get("result_spread_correct") is True:
-                sw += 1
-                spread_graded += 1
-            elif r.get("result_spread_correct") is False:
-                sl += 1
-                spread_graded += 1
-        if has_pin_total:
-            if r.get("result_total_correct") is True:
-                tw += 1
-                total_graded += 1
-            elif r.get("result_total_correct") is False:
-                tl += 1
-                total_graded += 1
+        # W/L — None results are excluded naturally.
+        if r.get("result_spread_correct") is True:
+            sw += 1
+        elif r.get("result_spread_correct") is False:
+            sl += 1
+        if r.get("result_total_correct") is True:
+            tw += 1
+        elif r.get("result_total_correct") is False:
+            tl += 1
         if r.get("result_ml_correct") is True:
             mw += 1
         elif r.get("result_ml_correct") is False:
@@ -153,19 +148,19 @@ def _count_results(rows: list[dict]) -> dict:
         mu = r.get("ml_unit_result")
         if su is not None:
             s_units += su
+            has_s_units = True
         if tu is not None:
             t_units += tu
+            has_t_units = True
         if mu is not None:
             m_units += mu
     return {
         "spread_wins": sw, "spread_losses": sl,
-        "spread_graded": spread_graded,
         "spread_pct": round(sw / (sw + sl) * 100, 1) if (sw + sl) > 0 else 0,
-        "spread_units": round(s_units, 2) if spread_graded > 0 else None,
+        "spread_units": round(s_units, 2) if has_s_units else None,
         "total_wins": tw, "total_losses": tl,
-        "total_graded": total_graded,
         "total_pct": round(tw / (tw + tl) * 100, 1) if (tw + tl) > 0 else 0,
-        "total_units": round(t_units, 2) if total_graded > 0 else None,
+        "total_units": round(t_units, 2) if has_t_units else None,
         "ml_wins": mw, "ml_losses": ml,
         "ml_pct": round(mw / (mw + ml) * 100, 1) if (mw + ml) > 0 else 0,
         "ml_units": round(m_units, 2),

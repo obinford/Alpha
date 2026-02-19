@@ -446,3 +446,151 @@ def test_repair_full_scenario():
     ml_odds = _determine_ml_odds(0.7, -150, 130)
     ml_units = _calc_unit_result(ml_odds, True)
     assert ml_units == pytest.approx(0.6667, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# _count_results API helper tests
+# ---------------------------------------------------------------------------
+# Inline the function to avoid importing kenpom.py's full dependency chain
+# (FastAPI, db, supabase).  Kept in sync with backend/api/routes/kenpom.py.
+def _count_results(rows: list[dict]) -> dict:
+    sw = sl = tw = tl = mw = ml = 0
+    s_units = t_units = m_units = 0.0
+    has_s_units = has_t_units = False
+    for r in rows:
+        if r.get("result_spread_correct") is True:
+            sw += 1
+        elif r.get("result_spread_correct") is False:
+            sl += 1
+        if r.get("result_total_correct") is True:
+            tw += 1
+        elif r.get("result_total_correct") is False:
+            tl += 1
+        if r.get("result_ml_correct") is True:
+            mw += 1
+        elif r.get("result_ml_correct") is False:
+            ml += 1
+        su = r.get("spread_unit_result")
+        tu = r.get("total_unit_result")
+        mu = r.get("ml_unit_result")
+        if su is not None:
+            s_units += su
+            has_s_units = True
+        if tu is not None:
+            t_units += tu
+            has_t_units = True
+        if mu is not None:
+            m_units += mu
+    return {
+        "spread_wins": sw, "spread_losses": sl,
+        "spread_pct": round(sw / (sw + sl) * 100, 1) if (sw + sl) > 0 else 0,
+        "spread_units": round(s_units, 2) if has_s_units else None,
+        "total_wins": tw, "total_losses": tl,
+        "total_pct": round(tw / (tw + tl) * 100, 1) if (tw + tl) > 0 else 0,
+        "total_units": round(t_units, 2) if has_t_units else None,
+        "ml_wins": mw, "ml_losses": ml,
+        "ml_pct": round(mw / (mw + ml) * 100, 1) if (mw + ml) > 0 else 0,
+        "ml_units": round(m_units, 2),
+    }
+
+
+def test_count_results_units_without_pinnacle():
+    """Unit results should be summed even when pinnacle_spread_home is NULL.
+
+    This is the core bug fix: repair may set spread_unit_result on rows that
+    lack pinnacle_spread_home. The old code gated units on spread_graded > 0
+    (which required pinnacle_spread_home), causing +0.00u display.
+    """
+    rows = [
+        {
+            "result_spread_correct": True,
+            "result_total_correct": False,
+            "result_ml_correct": True,
+            "spread_unit_result": 0.91,
+            "total_unit_result": -1.0,
+            "ml_unit_result": 0.67,
+            "pinnacle_spread_home": None,  # No Pinnacle data
+            "pinnacle_total": None,
+        },
+    ]
+    result = _count_results(rows)
+    assert result["spread_wins"] == 1
+    assert result["spread_losses"] == 0
+    assert result["spread_units"] == 0.91
+    assert result["total_units"] == -1.0
+    assert result["ml_units"] == 0.67
+
+
+def test_count_results_null_results_excluded():
+    """Rows where result_spread_correct is None should not count as W or L.
+
+    This ensures the Feb 15 fix still works: games with no Pinnacle data
+    that were never properly graded show — not 0-0.
+    """
+    rows = [
+        {
+            "result_spread_correct": None,
+            "result_total_correct": None,
+            "result_ml_correct": None,
+            "spread_unit_result": None,
+            "total_unit_result": None,
+            "ml_unit_result": None,
+            "pinnacle_spread_home": None,
+            "pinnacle_total": None,
+        },
+    ]
+    result = _count_results(rows)
+    assert result["spread_wins"] == 0
+    assert result["spread_losses"] == 0
+    assert result["spread_units"] is None
+    assert result["total_units"] is None
+
+
+def test_count_results_mixed_rows():
+    """Mix of rows with and without Pinnacle data / unit results."""
+    rows = [
+        # Row with full data
+        {
+            "result_spread_correct": True,
+            "spread_unit_result": 0.91,
+            "result_total_correct": False,
+            "total_unit_result": -1.0,
+            "result_ml_correct": True,
+            "ml_unit_result": 0.67,
+            "pinnacle_spread_home": -3.5,
+            "pinnacle_total": 145.5,
+        },
+        # Row repaired without Pinnacle columns
+        {
+            "result_spread_correct": False,
+            "spread_unit_result": -1.0,
+            "result_total_correct": True,
+            "total_unit_result": 0.91,
+            "result_ml_correct": False,
+            "ml_unit_result": -1.0,
+            "pinnacle_spread_home": None,
+            "pinnacle_total": None,
+        },
+        # Ungraded row (Feb 15 style — no results at all)
+        {
+            "result_spread_correct": None,
+            "spread_unit_result": None,
+            "result_total_correct": None,
+            "total_unit_result": None,
+            "result_ml_correct": None,
+            "ml_unit_result": None,
+            "pinnacle_spread_home": None,
+            "pinnacle_total": None,
+        },
+    ]
+    result = _count_results(rows)
+    assert result["spread_wins"] == 1
+    assert result["spread_losses"] == 1
+    assert result["spread_pct"] == 50.0
+    assert result["spread_units"] == pytest.approx(-0.09, abs=0.01)
+    assert result["total_wins"] == 1
+    assert result["total_losses"] == 1
+    assert result["total_units"] == pytest.approx(-0.09, abs=0.01)
+    assert result["ml_wins"] == 1
+    assert result["ml_losses"] == 1
+    assert result["ml_units"] == pytest.approx(-0.33, abs=0.01)

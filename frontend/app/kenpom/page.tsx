@@ -64,13 +64,11 @@ interface SeasonStats {
   total_games_graded: number;
   spread_wins: number;
   spread_losses: number;
-  spread_graded?: number;
   spread_pct: number;
   spread_record: string | null;
   spread_units: number | null;
   total_wins: number;
   total_losses: number;
-  total_graded?: number;
   total_pct: number;
   total_record: string | null;
   total_units: number | null;
@@ -101,12 +99,10 @@ interface DailyStats {
   games_graded: number;
   spread_wins: number;
   spread_losses: number;
-  spread_graded?: number;
   spread_pct: number;
   spread_units: number | null;
   total_wins: number;
   total_losses: number;
-  total_graded?: number;
   total_pct: number;
   total_units: number | null;
   ml_wins: number;
@@ -425,13 +421,13 @@ export default function KenPomPage() {
             <span className="text-xs font-semibold text-gray-300">Season:</span>
             {season.spread_record && (
               <span className="text-xs text-gray-400">
-                Spread {season.spread_record} ({formatUnits(season.spread_units ?? 0)})
+                Spread {season.spread_record} ({season.spread_units != null ? formatUnits(season.spread_units) : "\u2014"})
               </span>
             )}
             {season.spread_record && season.total_record && <span className="text-xs text-gray-600">|</span>}
             {season.total_record && (
               <span className="text-xs text-gray-400">
-                Total {season.total_record} ({formatUnits(season.total_units ?? 0)})
+                Total {season.total_record} ({season.total_units != null ? formatUnits(season.total_units) : "\u2014"})
               </span>
             )}
             {season.total_record && season.ml_record && <span className="text-xs text-gray-600">|</span>}
@@ -514,19 +510,19 @@ export default function KenPomPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
               title="Spread ATS"
-              value={season.spread_record}
-              sub={`${formatPct(season.spread_pct)} | ${formatUnits(season.spread_units ?? 0)}`}
+              value={season.spread_record ?? "\u2014"}
+              sub={`${formatPct(season.spread_pct)} | ${season.spread_units != null ? formatUnits(season.spread_units) : "\u2014"}`}
               accent={season.spread_pct >= 52.4 ? "green" : "red"}
             />
             <StatCard
               title="Totals O/U"
-              value={season.total_record}
-              sub={`${formatPct(season.total_pct)} | ${formatUnits(season.total_units ?? 0)}`}
+              value={season.total_record ?? "\u2014"}
+              sub={`${formatPct(season.total_pct)} | ${season.total_units != null ? formatUnits(season.total_units) : "\u2014"}`}
               accent={season.total_pct >= 52.4 ? "green" : "red"}
             />
             <StatCard
               title="Moneyline"
-              value={season.ml_record}
+              value={season.ml_record ?? "\u2014"}
               sub={`${formatPct(season.ml_pct)} | ${formatUnits(season.ml_units ?? 0)}`}
               accent={season.ml_pct >= 50 ? "green" : "red"}
             />
