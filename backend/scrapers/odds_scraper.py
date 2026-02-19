@@ -234,9 +234,15 @@ def _extract_market_odds_by_book(
 
     Returns (book_odds_dict, outcome_names) where outcome_names is
     [name_a, name_b, point_a, point_b] from the first book found.
+
+    Outcomes are matched by name across bookmakers to ensure consistent
+    ordering.  The first bookmaker sets the canonical name order; subsequent
+    bookmakers' outcomes are looked up by name rather than position so that
+    home/away odds are never flipped.
     """
     book_odds: dict[str, tuple[int, int]] = {}
     outcome_info: list | None = None
+    canonical_names: tuple[str, str] | None = None
 
     for bk in game.bookmakers:
         if bk.key in BLOCKED_BOOKS:
@@ -244,12 +250,24 @@ def _extract_market_odds_by_book(
         mkt = get_market(bk.markets, market_key)
         if mkt is None or len(mkt.outcomes) != 2:
             continue
-        book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
-        if outcome_info is None:
+
+        if canonical_names is None:
+            # First bookmaker establishes the canonical name order.
+            canonical_names = (mkt.outcomes[0].name, mkt.outcomes[1].name)
             outcome_info = [
                 mkt.outcomes[0].name, mkt.outcomes[1].name,
                 mkt.outcomes[0].point, mkt.outcomes[1].point,
             ]
+            book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
+        else:
+            # Match outcomes by name to ensure consistent ordering.
+            odds_by_name = {o.name: o.price for o in mkt.outcomes}
+            name_a, name_b = canonical_names
+            if name_a in odds_by_name and name_b in odds_by_name:
+                book_odds[bk.key] = (odds_by_name[name_a], odds_by_name[name_b])
+            else:
+                # Names don't match — fall back to positional order.
+                book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
 
     return book_odds, outcome_info
 
@@ -616,8 +634,11 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
             for mkt in bk.markets:
                 if len(mkt.outcomes) != 2:
                     continue
-                home_out = mkt.outcomes[0]
-                away_out = mkt.outcomes[1]
+                # Match outcomes by name to home/away teams (h2h/spreads).
+                # The Odds API may return outcomes in any order per bookmaker.
+                odds_by_name = {o.name: o for o in mkt.outcomes}
+                home_out = odds_by_name.get(game.home_team, mkt.outcomes[0])
+                away_out = odds_by_name.get(game.away_team, mkt.outcomes[1])
                 rows.append({
                     "game_id": game.id,
                     "sportsbook": bk.key,
