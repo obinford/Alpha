@@ -782,8 +782,15 @@ class RTMSignal:
                 player_name = m.group(1).strip()
                 prop_line = float(m.group(3))
 
-        # Flat $100 bet for all signals (no Kelly sizing).
         true_prob = float(opportunity.get("true_prob", 0.5))
+
+        # Compute full Kelly fraction for this signal.
+        kelly_frac = 0.0
+        if true_prob > 0 and true_prob < 1 and book_odds != 0:
+            decimal_odds = american_to_decimal(book_odds)
+            if decimal_odds > 1:
+                edge = true_prob * decimal_odds - 1
+                kelly_frac = max(edge / (decimal_odds - 1), 0.0)
 
         # Compute fair value odds from true probability.
         fair_odds = None
@@ -814,6 +821,7 @@ class RTMSignal:
             "fair_odds": fair_odds,
             "true_prob": true_prob,
             "edge_percentage": ev_pct,
+            "kelly_fraction": round(kelly_frac, 6),
             "bet_amount": SIGNAL_BET_AMOUNT,
             "home_team": home_team,
             "away_team": away_team,
@@ -1248,6 +1256,7 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "intelligence_context": _json.dumps(intel_ctx) if isinstance(intel_ctx, dict) else intel_ctx,
             "fair_odds": s.get("fair_odds"),
             "edge_percentage": s["edge_percentage"],
+            "kelly_size": s.get("kelly_fraction"),
             "bet_amount": s.get("bet_amount", SIGNAL_BET_AMOUNT),
             "status": "active",
         })

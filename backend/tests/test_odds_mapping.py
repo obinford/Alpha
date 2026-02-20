@@ -28,6 +28,7 @@ from odds_scraper import (
     scan_game,
     store_true_lines,
     store_odds_snapshots,
+    validate_odds_mapping,
 )
 from models.devig import devig_market
 from intelligence.kenpom_snapshots import _extract_pinnacle_odds
@@ -746,3 +747,43 @@ class TestExtractPinnacleOdds:
         assert result["total"] == 215.5
         assert result["over_odds"] == -112
         assert result["under_odds"] == -108
+
+
+# =========================================================================
+# TEST 10: validate_odds_mapping — post-scan validation
+# =========================================================================
+class TestValidateOddsMapping:
+    """Verify the post-scan validation correctly detects mismatches."""
+
+    def test_no_mismatch_when_names_match(self):
+        """Validation should find 0 mismatches when names align."""
+        pin = _make_h2h_bookmaker("pinnacle", "Pinnacle", [
+            Outcome(name=AWAY, price=PIN_CELTICS_ODDS),
+            Outcome(name=HOME, price=PIN_WARRIORS_ODDS),
+        ])
+        game = _make_game([pin])
+        mismatches = validate_odds_mapping([game])
+        assert mismatches == 0
+
+    def test_no_mismatch_totals(self):
+        """Totals with Over/Under in any order should validate OK."""
+        pin = Bookmaker(
+            key="pinnacle", title="Pinnacle",
+            markets=[Market(key="totals", outcomes=[
+                Outcome(name="Under", price=-108, point=215.5),
+                Outcome(name="Over", price=-112, point=215.5),
+            ])],
+        )
+        game = _make_game([pin])
+        mismatches = validate_odds_mapping([game])
+        assert mismatches == 0
+
+    def test_name_mismatch_detected(self):
+        """Validation should flag when outcome names don't match team names."""
+        pin = _make_h2h_bookmaker("pinnacle", "Pinnacle", [
+            Outcome(name="GSW Warriors", price=PIN_WARRIORS_ODDS),
+            Outcome(name="BOS Celtics", price=PIN_CELTICS_ODDS),
+        ])
+        game = _make_game([pin])
+        mismatches = validate_odds_mapping([game])
+        assert mismatches == 1

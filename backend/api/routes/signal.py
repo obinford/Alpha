@@ -14,6 +14,14 @@ _SIGNAL_MIN_ODDS = -160
 _SIGNAL_MAX_ODDS = 200
 
 
+def _normalize_signal(row: dict) -> dict:
+    """Map DB column names to frontend field names."""
+    # DB stores kelly_size, frontend reads kelly_fraction.
+    if "kelly_size" in row and "kelly_fraction" not in row:
+        row["kelly_fraction"] = row.pop("kelly_size")
+    return row
+
+
 def _filter_odds_range(rows: list[dict]) -> list[dict]:
     """Keep only signals within the -160 to +200 odds window."""
     out = []
@@ -23,7 +31,7 @@ def _filter_odds_range(rows: list[dict]) -> list[dict]:
         except (ValueError, TypeError):
             continue
         if _SIGNAL_MIN_ODDS <= odds <= _SIGNAL_MAX_ODDS:
-            out.append(r)
+            out.append(_normalize_signal(r))
     return out
 
 

@@ -637,6 +637,89 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
         print("  Line movements: no changes detected.")
 
 
+def validate_odds_mapping(games: list[Game], threshold: int = 5) -> int:
+    """Post-scan validation: compare raw Pinnacle API odds against mapped values.
+
+    For each game, extracts Pinnacle h2h outcomes by name and compares
+    against what store_odds_snapshots would have mapped.  Logs mismatches
+    where the stored value differs from the API by more than ``threshold``
+    American-odds cents.
+
+    Returns number of mismatches found.
+    """
+    mismatches = 0
+    for game in games:
+        game_label = f"{game.away_team} @ {game.home_team}"
+        pin_bk = None
+        for bk in game.bookmakers:
+            if bk.key == "pinnacle":
+                pin_bk = bk
+                break
+        if pin_bk is None:
+            continue
+
+        for mkt in pin_bk.markets:
+            if len(mkt.outcomes) != 2:
+                continue
+
+            # What the API returned: match by team name to get "truth".
+            api_home = None
+            api_away = None
+            if mkt.key == "totals":
+                for o in mkt.outcomes:
+                    if o.name.lower() == "over":
+                        api_home = o.price  # convention: Over → home slot
+                    elif o.name.lower() == "under":
+                        api_away = o.price
+            else:
+                for o in mkt.outcomes:
+                    if o.name == game.home_team:
+                        api_home = o.price
+                    elif o.name == game.away_team:
+                        api_away = o.price
+
+            if api_home is None or api_away is None:
+                # Names didn't match — this IS a problem, log it.
+                raw_names = [o.name for o in mkt.outcomes]
+                print(
+                    f"  [ODDS VALIDATION] NAME MISMATCH: {game_label} {mkt.key} | "
+                    f"API outcome names {raw_names} don't match "
+                    f"home='{game.home_team}' away='{game.away_team}'"
+                )
+                mismatches += 1
+                continue
+
+            # What store_odds_snapshots would store (replicate its logic).
+            if mkt.key == "totals":
+                odds_by_name = {o.name.lower(): o for o in mkt.outcomes}
+                stored_home = odds_by_name.get("over", mkt.outcomes[0]).price
+                stored_away = odds_by_name.get("under", mkt.outcomes[1]).price
+            else:
+                odds_by_name = {o.name: o for o in mkt.outcomes}
+                stored_home = odds_by_name.get(game.home_team, mkt.outcomes[0]).price
+                stored_away = odds_by_name.get(game.away_team, mkt.outcomes[1]).price
+
+            home_diff = abs(api_home - stored_home)
+            away_diff = abs(api_away - stored_away)
+
+            if home_diff > threshold or away_diff > threshold:
+                mismatches += 1
+                print(
+                    f"  [ODDS VALIDATION] MISMATCH: {game_label} {mkt.key} | "
+                    f"API returned: home={api_home:+d} away={api_away:+d} | "
+                    f"Stored: home={stored_home:+d} away={stored_away:+d}"
+                )
+
+    if mismatches == 0:
+        game_count = sum(
+            1 for g in games
+            if any(bk.key == "pinnacle" for bk in g.bookmakers)
+        )
+        print(f"  [ODDS VALIDATION] All {game_count} Pinnacle games validated OK")
+
+    return mismatches
+
+
 def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
     """Store raw odds from every sportsbook/market combination (batched)."""
     rows: list[dict] = []
@@ -1803,6 +1886,17 @@ def run_scan(sport_keys: list[str]) -> int:
     except Exception as e:
         print(f"Warning: Discord alerts failed ({e}).")
     print(f"[TIMING] Discord alerts: {time.time() - t0:.1f}s")
+
+    # --- Odds validation ---
+    if all_games:
+        t0 = time.time()
+        try:
+            mismatches = validate_odds_mapping(all_games)
+            if mismatches:
+                print(f"\n[ODDS VALIDATION] {mismatches} mismatch(es) detected — check logs above!")
+        except Exception as e:
+            print(f"Warning: Odds validation failed ({e}).")
+        print(f"[TIMING] Odds validation: {time.time() - t0:.1f}s")
 
     # --- Console output ---
     print_results(all_opportunities, all_games)
