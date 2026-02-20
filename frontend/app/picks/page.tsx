@@ -124,6 +124,40 @@ function findTrueProb(opps: Opportunity[], gameId: string): number | null {
   return null;
 }
 
+/** Format an ISO timestamp as a relative "Xm ago" / "Xh ago" string. */
+function timeAgo(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  if (diffMs < 0) return "just now";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m ago`;
+}
+
+/** True if the data is older than 15 minutes. */
+function isStale(isoString: string | null | undefined): boolean {
+  if (!isoString) return false;
+  return Date.now() - new Date(isoString).getTime() > 15 * 60 * 1000;
+}
+
+function AgeBadge({ timestamp }: { timestamp: string | null | undefined }) {
+  if (!timestamp) return null;
+  const stale = isStale(timestamp);
+  return (
+    <span
+      className={`ml-2 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+        stale
+          ? "bg-red-500/20 text-red-400 animate-pulse"
+          : "bg-[#2c2c2e] text-gray-500"
+      }`}
+    >
+      {stale ? "STALE" : timeAgo(timestamp)}
+    </span>
+  );
+}
+
 function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
@@ -655,6 +689,7 @@ function SignalCard({
               </span>
               {/* Fix 6: Time badge */}
               {gameStartTime && <TimeBadge startTime={gameStartTime} />}
+              <AgeBadge timestamp={sig.created_at} />
             </div>
           </div>
           <div className="text-right">

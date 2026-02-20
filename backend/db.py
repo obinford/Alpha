@@ -175,6 +175,38 @@ class SupabaseClient:
             )
             resp.raise_for_status()
 
+    def _patch(
+        self,
+        table: str,
+        filters: dict[str, str],
+        data: dict[str, Any],
+    ) -> int:
+        """PATCH rows matching PostgREST filters.  Returns affected count."""
+        resp = self._http.patch(
+            f"{self.base_url}/{table}",
+            headers={**self.headers, "Prefer": "return=representation"},
+            params=filters,
+            json=data,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return len(resp.json())
+
+    def _delete(
+        self,
+        table: str,
+        filters: dict[str, str],
+    ) -> int:
+        """DELETE rows matching PostgREST filters.  Returns affected count."""
+        resp = self._http.delete(
+            f"{self.base_url}/{table}",
+            headers={**self.headers, "Prefer": "return=representation"},
+            params=filters,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return len(resp.json())
+
 
 def get_supabase() -> SupabaseClient:
     """Create and return a Supabase client using service-role credentials."""

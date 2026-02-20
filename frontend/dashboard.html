@@ -353,6 +353,16 @@ function timeBadge(o) {
   return `<span class="opp-time-badge today">${formatHoursMinutes(h)} to game</span>`;
 }
 
+function ageBadge(isoString) {
+  if (!isoString) return '';
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  const stale = mins > 15;
+  const label = stale ? 'STALE' : (mins < 1 ? 'just now' : (mins < 60 ? mins + 'm ago' : Math.floor(mins/60) + 'h ' + (mins%60) + 'm ago'));
+  const cls = stale ? 'opp-time-badge live' : 'opp-time-badge today';
+  return `<span class="${cls}" style="${stale ? 'animation: pulse 1.5s infinite;' : ''}">${label}</span>`;
+}
+
 function getDateGroup(o) {
   const ct = getCommenceTime(o);
   if (!ct) return 'Unknown';
@@ -386,6 +396,9 @@ function getFiltered() {
     const ev = Number(o.ev_percentage) || 0;
     if (ev < evF) return false;
     if (sportF && (g.sport||"") !== sportF) return false;
+    // Filter out live/started games
+    const h = getHoursUntil(o);
+    if (h !== null && h < -0.5) return false;
 
     if (timeF !== "all") {
       const h = getHoursUntil(o);
@@ -503,6 +516,7 @@ function renderOpps(opps) {
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           ${timeBadge(o)}
+          ${ageBadge(o.timestamp)}
           <span class="sport-badge sport-${sk}">${sportLabel(g.sport)}</span>
         </div>
       </div>

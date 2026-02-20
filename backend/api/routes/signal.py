@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Sequence
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -85,10 +86,21 @@ def active_signals(
     sport: str | None = Query(None),
     min_stars: int = Query(3, ge=1, le=5),
 ) -> dict:
-    """Current active signals sorted by strength."""
+    """Current active signals sorted by strength.
+
+    Only returns signals that are still fresh (created within the last 30
+    minutes) to prevent stale data from showing on the frontend.
+    """
     try:
         db = get_supabase()
-        filters: dict[str, str] = {"status": "eq.active"}
+        # Only return signals created within the last 30 minutes.
+        freshness_cutoff = (
+            datetime.now(timezone.utc) - timedelta(minutes=30)
+        ).isoformat()
+        filters: dict[str, str] = {
+            "status": "eq.active",
+            "created_at": f"gte.{freshness_cutoff}",
+        }
         if min_stars > 1:
             filters["star_rating"] = f"gte.{min_stars}"
 
