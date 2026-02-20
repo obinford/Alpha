@@ -93,7 +93,8 @@ class SupabaseClient:
         """Bulk-upsert multiple rows, batched in chunks.
 
         Same as _post_many but with merge-duplicates resolution on the
-        specified conflict column(s).
+        specified conflict column(s).  The ``on_conflict`` value is sent
+        as a query parameter so PostgREST knows which columns to match.
         """
         if not rows:
             return []
@@ -107,6 +108,7 @@ class SupabaseClient:
             resp = self._http.post(
                 f"{self.base_url}/{table}",
                 headers=headers,
+                params={"on_conflict": on_conflict},
                 json=chunk,
                 timeout=30,
             )
@@ -197,15 +199,29 @@ class SupabaseClient:
         table: str,
         filters: dict[str, str],
     ) -> int:
-        """DELETE rows matching PostgREST filters.  Returns affected count."""
+        """DELETE rows matching PostgREST filters.  Returns affected count.
+
+        Uses ``return=headers-only`` with ``count=exact`` so Supabase
+        returns the count in a header instead of serialising every deleted
+        row (which is slow and can OOM for large deletes).
+        """
+        headers = {
+            **self.headers,
+            "Prefer": "return=headers-only,count=exact",
+        }
         resp = self._http.delete(
             f"{self.base_url}/{table}",
-            headers={**self.headers, "Prefer": "return=representation"},
+            headers=headers,
             params=filters,
             timeout=30,
         )
         resp.raise_for_status()
-        return len(resp.json())
+        # PostgREST returns "Content-Range: */N" with exact count.
+        cr = resp.headers.get("content-range", "")
+        try:
+            return int(cr.rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            return 0
 
 
 def get_supabase() -> SupabaseClient:

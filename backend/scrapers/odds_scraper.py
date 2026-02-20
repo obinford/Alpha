@@ -1236,10 +1236,10 @@ def cleanup_stale_data(db_client) -> None:
     """Delete stale opportunities and expire stale signals before a new scan.
 
     1. Delete ev_opportunities older than 20 minutes.
-    2. Delete ev_opportunities for games that have already started.
-    3. Expire active signals for games that have started.
-    4. Expire active signals older than 30 minutes.
-    5. Repair NULL kelly_size on existing signals.
+    2. Expire active signals for started games or older than 30 minutes.
+    3. Bulk-repair NULL kelly_size on existing signals.
+
+    Designed to complete in <3 seconds using bulk DB operations.
     """
     from projections.math_utils import american_to_decimal
 
@@ -1247,9 +1247,8 @@ def cleanup_stale_data(db_client) -> None:
     stale_cutoff = (now - timedelta(minutes=20)).isoformat()
     signal_stale_cutoff = (now - timedelta(minutes=30)).isoformat()
 
+    # 1. Delete stale opportunities (>20 min old) — single bulk DELETE.
     total_deleted = 0
-
-    # 1. Delete opportunities older than 20 minutes.
     try:
         n = db_client._delete(
             "ev_opportunities",
@@ -1259,56 +1258,33 @@ def cleanup_stale_data(db_client) -> None:
     except Exception as e:
         print(f"  Warning: Failed to delete old opportunities ({e})")
 
-    # 2. Delete opportunities for started games.
-    try:
-        # PostgREST filter through the foreign-key join: games.start_time < now
-        # This requires the "games" FK relationship.  Fallback: filter via
-        # a subquery on timestamp (already covered by step 1 for most cases).
-        # For games that start within 20 min window, explicitly clean up.
-        n = db_client._delete(
-            "ev_opportunities",
-            {"games.start_time": f"lt.{now.isoformat()}"},
-        )
-        total_deleted += n
-    except Exception:
-        # FK filter may not be supported — fall back to fetching IDs.
-        try:
-            started = db_client._get(
-                "ev_opportunities",
-                select="id,games(start_time)",
-                filters={"status": "eq.open"},
-            )
-            ids_to_delete = [
-                r["id"] for r in started
-                if r.get("games", {}).get("start_time")
-                and r["games"]["start_time"] < now.isoformat()
-            ]
-            if ids_to_delete:
-                db_client._patch_by_ids(
-                    "ev_opportunities", "id", ids_to_delete,
-                    {"status": "expired"},
-                )
-                total_deleted += len(ids_to_delete)
-        except Exception as e2:
-            print(f"  Warning: Failed to expire started-game opportunities ({e2})")
-
     if total_deleted:
-        print(f"  [CLEANUP] Deleted {total_deleted} stale opportunities (>20min old or game started)")
+        print(f"  [CLEANUP] Deleted {total_deleted} stale opportunities (>20min old)")
 
-    # 3–4. Expire stale signals.
+    # 2. Expire stale signals — two bulk PATCHes (no row-by-row).
     total_expired = 0
 
-    # 3. Signals for games that have started.
+    # 2a. Expire signals older than 30 minutes — single PATCH.
+    try:
+        n = db_client._patch(
+            "rtm_signals",
+            {"status": "eq.active", "created_at": f"lt.{signal_stale_cutoff}"},
+            {"status": "expired"},
+        )
+        total_expired += n
+    except Exception as e:
+        print(f"  Warning: Failed to expire old signals ({e})")
+
+    # 2b. Expire signals for started games — fetch IDs, bulk PATCH.
     try:
         active_signals = db_client._get(
             "rtm_signals",
-            select="id,game_id,created_at,book_odds,kelly_size",
+            select="id,game_id",
             filters={"status": "eq.active"},
         )
         if active_signals:
-            # Look up game start times.
             game_ids = list({s["game_id"] for s in active_signals})
-            games_data = {}
+            games_data: dict[str, str] = {}
             for i in range(0, len(game_ids), 50):
                 chunk = game_ids[i : i + 50]
                 id_list = ",".join(chunk)
@@ -1323,37 +1299,25 @@ def cleanup_stale_data(db_client) -> None:
                 except Exception:
                     pass
 
-            started_ids = []
-            stale_ids = []
-            for sig in active_signals:
-                gid = sig["game_id"]
-                start = games_data.get(gid, "")
-                if start and start < now.isoformat():
-                    started_ids.append(sig["id"])
-                elif sig.get("created_at", "") < signal_stale_cutoff:
-                    stale_ids.append(sig["id"])
-
+            now_iso = now.isoformat()
+            started_ids = [
+                s["id"] for s in active_signals
+                if games_data.get(s["game_id"], "") and games_data[s["game_id"]] < now_iso
+            ]
             if started_ids:
                 db_client._patch_by_ids(
                     "rtm_signals", "id", started_ids,
                     {"status": "expired"},
                 )
                 total_expired += len(started_ids)
-
-            if stale_ids:
-                db_client._patch_by_ids(
-                    "rtm_signals", "id", stale_ids,
-                    {"status": "expired"},
-                )
-                total_expired += len(stale_ids)
-
     except Exception as e:
-        print(f"  Warning: Failed to expire stale signals ({e})")
+        print(f"  Warning: Failed to expire started-game signals ({e})")
 
     if total_expired:
         print(f"  [CLEANUP] Expired {total_expired} stale signals")
 
-    # 5. Repair signals with NULL kelly_size.
+    # 3. Bulk-repair signals with NULL kelly_size.
+    #    Fetch all at once, compute locally, batch-PATCH by groups of 100.
     try:
         null_kelly = db_client._get(
             "rtm_signals",
@@ -1361,22 +1325,28 @@ def cleanup_stale_data(db_client) -> None:
             filters={"kelly_size": "is.null"},
         )
         if null_kelly:
+            repairs: list[dict] = []
             for sig in null_kelly:
                 odds = sig.get("book_odds")
                 edge = sig.get("edge_percentage")
                 if odds and edge is not None:
                     decimal_odds = american_to_decimal(int(odds))
                     if decimal_odds > 1:
-                        # Derive true_prob from edge: EV% = (true_prob * decimal - 1) * 100
-                        # so true_prob = (EV%/100 + 1) / decimal
                         true_prob = (edge / 100 + 1) / decimal_odds
                         if 0 < true_prob < 1:
                             k = max((true_prob * decimal_odds - 1) / (decimal_odds - 1), 0)
-                            db_client._patch_by_ids(
-                                "rtm_signals", "id", [sig["id"]],
-                                {"kelly_size": round(k, 6)},
-                            )
-            print(f"  [KELLY REPAIR] Updated {len(null_kelly)} signals with missing kelly_size")
+                            repairs.append({"id": sig["id"], "kelly": round(k, 6)})
+
+            # Group by kelly value to minimize PATCH calls.
+            by_kelly: dict[float, list[int]] = {}
+            for r in repairs:
+                by_kelly.setdefault(r["kelly"], []).append(r["id"])
+            for kelly_val, ids in by_kelly.items():
+                db_client._patch_by_ids(
+                    "rtm_signals", "id", ids,
+                    {"kelly_size": kelly_val},
+                )
+            print(f"  [KELLY REPAIR] Updated {len(repairs)} signals with missing kelly_size")
     except Exception as e:
         print(f"  Warning: Kelly repair failed ({e})")
 
