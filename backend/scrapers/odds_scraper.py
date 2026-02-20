@@ -572,28 +572,25 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
     rows: list[dict] = []
 
     # Batch-fetch existing latest odds for ALL games at once (N+1 fix).
+    # Use large chunks (200 game IDs) and select only minimal columns.
     game_ids = [g.id for g in games]
-    all_existing: list[dict] = []
-    for i in range(0, len(game_ids), 50):
-        chunk = game_ids[i : i + 50]
+    latest_map: dict[tuple[str, str, str, str], float] = {}
+    for i in range(0, len(game_ids), 200):
+        chunk = game_ids[i : i + 200]
         id_list = ",".join(chunk)
         try:
             batch = db_client._get(
                 "line_movements",
-                select="game_id,bookmaker,market_type,side,odds,timestamp",
+                select="game_id,bookmaker,market_type,side,odds",
                 filters={"game_id": f"in.({id_list})"},
                 order="timestamp.desc",
             )
-            all_existing.extend(batch)
+            for row in batch:
+                key = (row["game_id"], row["bookmaker"], row["market_type"], row["side"])
+                if key not in latest_map:
+                    latest_map[key] = float(row["odds"])
         except Exception:
             pass
-
-    # Build lookup: (game_id, bookmaker, market_type, side) -> latest odds.
-    latest_map: dict[tuple[str, str, str, str], float] = {}
-    for row in all_existing:
-        key = (row["game_id"], row["bookmaker"], row["market_type"], row["side"])
-        if key not in latest_map:
-            latest_map[key] = float(row["odds"])
 
     for game in games:
         for bk in game.bookmakers:
@@ -1233,9 +1230,10 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
 
 
 def cleanup_stale_data(db_client) -> None:
-    """Delete stale opportunities and expire stale signals before a new scan.
+    """Expire stale opportunities and signals before a new scan.
 
-    1. Delete ev_opportunities older than 20 minutes.
+    1. Mark ev_opportunities older than 20 minutes as expired.
+       (Uses PATCH not DELETE — bet_results has a FK to ev_opportunities.)
     2. Expire active signals for started games or older than 30 minutes.
     3. Bulk-repair NULL kelly_size on existing signals.
 
@@ -1247,19 +1245,21 @@ def cleanup_stale_data(db_client) -> None:
     stale_cutoff = (now - timedelta(minutes=20)).isoformat()
     signal_stale_cutoff = (now - timedelta(minutes=30)).isoformat()
 
-    # 1. Delete stale opportunities (>20 min old) — single bulk DELETE.
-    total_deleted = 0
+    # 1. Expire stale opportunities (>20 min old) — single bulk PATCH.
+    #    Cannot DELETE because bet_results FK references ev_opportunities.
+    total_expired_opps = 0
     try:
-        n = db_client._delete(
+        n = db_client._patch(
             "ev_opportunities",
-            {"timestamp": f"lt.{stale_cutoff}"},
+            {"status": "eq.open", "timestamp": f"lt.{stale_cutoff}"},
+            {"status": "expired"},
         )
-        total_deleted += n
+        total_expired_opps += n
     except Exception as e:
-        print(f"  Warning: Failed to delete old opportunities ({e})")
+        print(f"  Warning: Failed to expire old opportunities ({e})")
 
-    if total_deleted:
-        print(f"  [CLEANUP] Deleted {total_deleted} stale opportunities (>20min old)")
+    if total_expired_opps:
+        print(f"  [CLEANUP] Expired {total_expired_opps} stale opportunities (>20min old)")
 
     # 2. Expire stale signals — two bulk PATCHes (no row-by-row).
     total_expired = 0
@@ -1808,8 +1808,8 @@ def run_scan(sport_keys: list[str]) -> int:
                 # Batch-fetch ALL existing lifecycle keys for these games
                 # in a single DB query instead of one per outcome (N+1 fix).
                 existing_lifecycle_keys: set[tuple[str, str, str, str]] = set()
-                for i in range(0, len(game_ids), 50):
-                    chunk_ids = game_ids[i : i + 50]
+                for i in range(0, len(game_ids), 200):
+                    chunk_ids = game_ids[i : i + 200]
                     # PostgREST IN filter: game_id=in.(id1,id2,...)
                     id_list = ",".join(chunk_ids)
                     try:
@@ -1857,7 +1857,7 @@ def run_scan(sport_keys: list[str]) -> int:
                                     existing_lifecycle_keys.add(key)
 
                 if new_lifecycle_rows:
-                    db._post_many("line_lifecycle", new_lifecycle_rows)
+                    db._post_many("line_lifecycle", new_lifecycle_rows, chunk_size=500)
                     print(f"  Market timing: {len(new_lifecycle_rows)} new line lifecycle(s) tracked.")
             except Exception as e:
                 print(f"  Warning: Market timing tracking failed ({e}).")
