@@ -1042,12 +1042,13 @@ class RTMSignal:
             return
 
         # Batch-fetch steam alerts for all games at once.
-        for i in range(0, len(game_ids), 50):
-            chunk = game_ids[i : i + 50]
+        for i in range(0, len(game_ids), 200):
+            chunk = game_ids[i : i + 200]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
                     "steam_alerts",
+                    select="game_id,market_type,side,book_count,direction,created_at",
                     filters={"game_id": f"in.({id_list})"},
                 )
                 for r in rows:
@@ -1057,12 +1058,13 @@ class RTMSignal:
                 pass
 
         # Batch-fetch line movements for all games at once.
-        for i in range(0, len(game_ids), 50):
-            chunk = game_ids[i : i + 50]
+        for i in range(0, len(game_ids), 200):
+            chunk = game_ids[i : i + 200]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
                     "line_movements",
+                    select="game_id,bookmaker,market_type,side,odds,previous_odds,odds_change,timestamp",
                     filters={"game_id": f"in.({id_list})"},
                 )
                 for r in rows:
@@ -1072,8 +1074,8 @@ class RTMSignal:
                 pass
 
         # Batch-fetch stale line alerts for all games at once.
-        for i in range(0, len(game_ids), 50):
-            chunk = game_ids[i : i + 50]
+        for i in range(0, len(game_ids), 200):
+            chunk = game_ids[i : i + 200]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(

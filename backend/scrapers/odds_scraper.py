@@ -296,15 +296,17 @@ def build_devig_line_map(
         (name_b, point_b): result.true_prob_b,
     }
 
-    # Debug logging for h2h devig — verify probabilities match team names.
+    # Anomaly check for h2h devig — only log when probabilities look wrong.
     if market_key == "h2h" and "pinnacle" in book_odds:
-        pin_a, pin_b = book_odds["pinnacle"]
-        game_label = f"{game.away_team} @ {game.home_team}"
-        print(
-            f"  [DEVIG DEBUG] {game_label} h2h | "
-            f"Pinnacle odds (canonical): {name_a}={pin_a:+d}, {name_b}={pin_b:+d} | "
-            f"True probs: {name_a}={result.true_prob_a:.4f}, {name_b}={result.true_prob_b:.4f}"
-        )
+        prob_sum = result.true_prob_a + result.true_prob_b
+        if abs(prob_sum - 1.0) > 0.02:
+            pin_a, pin_b = book_odds["pinnacle"]
+            game_label = f"{game.away_team} @ {game.home_team}"
+            print(
+                f"  [DEVIG ANOMALY] {game_label} h2h | "
+                f"Pinnacle: {name_a}={pin_a:+d}, {name_b}={pin_b:+d} | "
+                f"Probs sum to {prob_sum:.4f} (expected ~1.0)"
+            )
 
     return true_probs, result.source, result.confidence, result.method, result.source_keys
 
@@ -739,17 +741,17 @@ def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
                     home_out = odds_by_name.get(game.home_team, mkt.outcomes[0])
                     away_out = odds_by_name.get(game.away_team, mkt.outcomes[1])
 
-                # Debug logging for Pinnacle h2h mapping.
+                # Only log Pinnacle h2h when mapping differs from raw order.
                 if bk.key == "pinnacle" and mkt.key == "h2h":
                     raw_o1 = mkt.outcomes[0]
                     raw_o2 = mkt.outcomes[1]
-                    print(
-                        f"  [ODDS DEBUG] Game: {game_label} | "
-                        f"Pinnacle raw: outcome1={raw_o1.name} odds1={raw_o1.price:+d}, "
-                        f"outcome2={raw_o2.name} odds2={raw_o2.price:+d} | "
-                        f"Mapped: home_ml={home_out.price:+d} ({game.home_team}), "
-                        f"away_ml={away_out.price:+d} ({game.away_team})"
-                    )
+                    if home_out.price != raw_o1.price or away_out.price != raw_o2.price:
+                        print(
+                            f"  [ODDS REORDER] {game_label} | "
+                            f"Raw: {raw_o1.name}={raw_o1.price:+d}, {raw_o2.name}={raw_o2.price:+d} | "
+                            f"Mapped: home={home_out.price:+d} ({game.home_team}), "
+                            f"away={away_out.price:+d} ({game.away_team})"
+                        )
 
                 rows.append({
                     "game_id": game.id,
@@ -1242,8 +1244,10 @@ def cleanup_stale_data(db_client) -> None:
     from projections.math_utils import american_to_decimal
 
     now = datetime.now(timezone.utc)
-    stale_cutoff = (now - timedelta(minutes=20)).isoformat()
-    signal_stale_cutoff = (now - timedelta(minutes=30)).isoformat()
+    # Use strftime with Z suffix — isoformat() produces +00:00 which
+    # contains a + that can be mis-decoded as a space in URL params.
+    stale_cutoff = (now - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signal_stale_cutoff = (now - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # 1. Expire stale opportunities (>20 min old) — single bulk PATCH.
     #    Cannot DELETE because bet_results FK references ev_opportunities.

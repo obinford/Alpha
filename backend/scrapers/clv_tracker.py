@@ -475,15 +475,26 @@ def process_open_records(client: object) -> tuple[int, int]:
         closed_updates.append(update_row)
         processed += 1
 
-    # PATCH each closed CLV record (id is GENERATED ALWAYS — can't upsert on it).
+    # Batch-PATCH closed CLV records grouped by update payload shape.
+    # id is GENERATED ALWAYS so we can't upsert; use _patch_by_ids in bulk.
     if closed_updates:
-        failed = 0
+        # Group by the set of non-id fields so identical payloads batch together.
+        # Most records share the same structure, so this collapses N calls to ~1-2.
+        from collections import defaultdict
+        groups: dict[tuple, list] = defaultdict(list)
         for row in closed_updates:
             rec_id = row.pop("id")
+            # Use frozenset of items as grouping key (all values are hashable).
+            key = tuple(sorted(row.items()))
+            groups[key].append(rec_id)
+
+        failed = 0
+        for payload_key, ids in groups.items():
+            data = dict(payload_key)
             try:
-                db._patch_by_ids("clv_records", "id", [rec_id], row)
+                db._patch_by_ids("clv_records", "id", ids, data)
             except Exception:
-                failed += 1
+                failed += len(ids)
         if failed:
             print(f"  Warning: {failed}/{len(closed_updates)} CLV patches failed.")
 

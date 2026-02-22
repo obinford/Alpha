@@ -158,16 +158,17 @@ class SupabaseClient:
         id_column: str,
         ids: list,
         data: dict[str, Any],
+        chunk_size: int = 500,
     ) -> None:
         """Batch-PATCH rows matching an IN filter on *id_column*.
 
-        Sends one PATCH per chunk of 100 IDs, applying the same *data*
-        update to all matching rows.
+        Sends one PATCH per chunk of ``chunk_size`` IDs, applying the
+        same *data* update to all matching rows.
         """
         if not ids:
             return
-        for i in range(0, len(ids), 100):
-            chunk = ids[i : i + 100]
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
             id_list = ",".join(str(x) for x in chunk)
             resp = self._http.patch(
                 f"{self.base_url}/{table}",
@@ -184,16 +185,24 @@ class SupabaseClient:
         filters: dict[str, str],
         data: dict[str, Any],
     ) -> int:
-        """PATCH rows matching PostgREST filters.  Returns affected count."""
+        """PATCH rows matching PostgREST filters.  Returns affected count.
+
+        Uses ``return=minimal,count=exact`` to avoid serialising every
+        updated row back (which times out on large patches).
+        """
         resp = self._http.patch(
             f"{self.base_url}/{table}",
-            headers={**self.headers, "Prefer": "return=representation"},
+            headers={**self.headers, "Prefer": "return=minimal,count=exact"},
             params=filters,
             json=data,
             timeout=30,
         )
         resp.raise_for_status()
-        return len(resp.json())
+        cr = resp.headers.get("content-range", "")
+        try:
+            return int(cr.rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            return 0
 
     def _delete(
         self,
@@ -446,7 +455,7 @@ def bulk_insert_line_movements(
 ) -> None:
     """Bulk-insert line movement rows in a single request."""
     if rows:
-        client._post_many("line_movements", rows, chunk_size=500)
+        client._post_many("line_movements", rows, chunk_size=1000)
 
 
 def get_line_movements_for_game(

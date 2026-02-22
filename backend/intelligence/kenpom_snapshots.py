@@ -979,6 +979,9 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
     yesterday_utc = today_utc - timedelta(days=1)
 
     # --- Primary: match by game_id from 'games' table ---
+    # First try status=final, then fallback to any game with scores set
+    # (status may not be 'final' if score_fetcher upserts were previously
+    # broken due to 409 conflicts).
     for i in range(0, len(game_ids), 50):
         chunk = game_ids[i : i + 50]
         id_list = ",".join(chunk)
@@ -998,6 +1001,24 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             if "does not exist" in str(e).lower() or "404" in str(e):
                 print(f"  [KENPOM GRADING] 'games' table not found: {e}")
             break
+
+    # Fallback: fetch games with scores but status != 'final' (broken upserts).
+    missing_ids = [gid for gid in game_ids if gid not in final_scores]
+    if missing_ids:
+        for i in range(0, len(missing_ids), 50):
+            chunk = missing_ids[i : i + 50]
+            id_list = ",".join(chunk)
+            try:
+                games = db_client._get(
+                    "games",
+                    select="game_id,home_team,away_team,home_score,away_score,status,commence_time",
+                    filters={"game_id": f"in.({id_list})"},
+                )
+                for g in games:
+                    if g.get("home_score") is not None and g.get("away_score") is not None:
+                        final_scores[g["game_id"]] = g
+            except Exception:
+                break
 
     print(
         f"  [KENPOM GRADING] {len(final_scores)} final scores from 'games' table "
