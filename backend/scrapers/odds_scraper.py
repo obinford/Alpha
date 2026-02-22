@@ -2002,7 +2002,9 @@ def run_scan(sport_keys: list[str]) -> int:
     if db is not None:
         t0 = time.time()
         try:
-            from rtm_signal_engine.signal_grader import grade_signals
+            from rtm_signal_engine.signal_grader import grade_signals, repair_signal_profit_loss
+            # One-time repair: recalculate profit_loss from $100-scale to 1-unit.
+            repair_signal_profit_loss(db)
             sig_grade_result = grade_signals(db)
             if sig_grade_result["graded"] > 0:
                 print(f"Signal grading: {sig_grade_result['graded']} signals graded.")

@@ -82,9 +82,8 @@ def grade_signals(db_client) -> dict:
             skipped += 1
             continue
 
-        # Flat $100 bet for all signals.
-        bet_amount = float(signal.get("bet_amount", 100))
-        profit = _calculate_profit(result, book_odds, bet_amount)
+        # Flat 1-unit bet for all signals.
+        profit = _calculate_profit(result, book_odds, 1.0)
         total_units += profit
 
         if result == "win":
@@ -134,6 +133,62 @@ def grade_signals(db_client) -> dict:
         )
 
     return summary
+
+
+def repair_signal_profit_loss(db_client) -> int:
+    """Recalculate profit_loss for all graded signals using 1-unit flat bets.
+
+    Previous code used bet_amount=100, producing profit_loss values 100x too
+    large (e.g. -100 per loss instead of -1.0).  This one-time repair
+    recalculates every graded signal and bulk-patches the corrected values.
+
+    Returns the number of signals repaired.
+    """
+    graded = db_client._get(
+        "rtm_signals",
+        select="id,result,book_odds,profit_loss",
+        filters={"status": "eq.graded"},
+    )
+    if not graded:
+        return 0
+
+    # Detect whether repair is needed: if any loss has profit_loss < -1.5
+    # (i.e. still in the old $100-scale), we need to fix.
+    needs_repair = any(
+        (s.get("result") == "loss" and (s.get("profit_loss") or 0) < -1.5)
+        for s in graded
+    )
+    if not needs_repair:
+        return 0
+
+    repairs: dict[float, list[int]] = {}  # new_profit -> list of ids
+    for s in graded:
+        result = s.get("result")
+        if result not in ("win", "loss", "push"):
+            continue
+        book_odds = int(s.get("book_odds", 0) or 0)
+        new_profit = round(_calculate_profit(result, book_odds, 1.0), 6)
+        old_profit = float(s.get("profit_loss", 0) or 0)
+        if abs(new_profit - old_profit) < 0.001:
+            continue
+        repairs.setdefault(new_profit, []).append(s["id"])
+
+    if not repairs:
+        return 0
+
+    total = 0
+    for new_val, ids in repairs.items():
+        try:
+            db_client._patch_by_ids(
+                "rtm_signals", "id", ids,
+                {"profit_loss": new_val},
+            )
+            total += len(ids)
+        except Exception as e:
+            print(f"  Warning: profit_loss repair failed for {len(ids)} signals: {e}")
+
+    print(f"  [SIGNAL REPAIR] Recalculated profit_loss for {total} signals (1-unit flat bets)")
+    return total
 
 
 def get_signal_performance(db_client, days: int = 30) -> dict:
@@ -199,7 +254,7 @@ def get_signal_performance(db_client, days: int = 30) -> dict:
             "record": f"{t['wins']}-{t['losses']}" + (f"-{t['pushes']}" if t["pushes"] else ""),
             "win_rate": round(t["wins"] / d * 100, 1) if d else 0,
             "units": round(t["units"], 2),
-            "roi": round(t["units"] / total_t * 100, 1) if total_t else 0,
+            "roi": round(t["units"] / d * 100, 1) if d else 0,
             "total": total_t,
         }
 
@@ -250,7 +305,7 @@ def get_signal_performance(db_client, days: int = 30) -> dict:
         "pushes": pushes,
         "win_rate": round(wins / decided * 100, 1) if decided else 0,
         "total_units": round(units, 2),
-        "roi": round(units / total * 100, 1) if total else 0,
+        "roi": round(units / decided * 100, 1) if decided else 0,
         "avg_winner_strength": round(sum(winner_strengths) / len(winner_strengths), 1) if winner_strengths else 0,
         "avg_loser_strength": round(sum(loser_strengths) / len(loser_strengths), 1) if loser_strengths else 0,
         "current_streak": f"{current_streak} {'W' if streak_type == 'win' else 'L'}" if streak_type else "—",
