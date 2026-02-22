@@ -1042,8 +1042,8 @@ class RTMSignal:
             return
 
         # Batch-fetch steam alerts for all games at once.
-        for i in range(0, len(game_ids), 200):
-            chunk = game_ids[i : i + 200]
+        for i in range(0, len(game_ids), 500):
+            chunk = game_ids[i : i + 500]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
@@ -1058,8 +1058,8 @@ class RTMSignal:
                 pass
 
         # Batch-fetch line movements for all games at once.
-        for i in range(0, len(game_ids), 200):
-            chunk = game_ids[i : i + 200]
+        for i in range(0, len(game_ids), 500):
+            chunk = game_ids[i : i + 500]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
@@ -1074,8 +1074,8 @@ class RTMSignal:
                 pass
 
         # Batch-fetch stale line alerts for all games at once.
-        for i in range(0, len(game_ids), 200):
-            chunk = game_ids[i : i + 200]
+        for i in range(0, len(game_ids), 500):
+            chunk = game_ids[i : i + 500]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
@@ -1092,12 +1092,14 @@ class RTMSignal:
             except Exception:
                 pass
 
-        # Batch-fetch ALL book reaction times in one query (not per-game).
+        # Batch-fetch book reaction times in one query (not per-game).
         # Keyed by "soft_book:sport" for quick lookup.
+        # Limit to 5000 rows to avoid unbounded table scans.
         try:
             rows = self._db._get(
                 "book_reaction_times",
                 select="soft_book,sport,reaction_seconds",
+                limit=5000,
             )
             for r in rows:
                 key = f"{r.get('soft_book', '')}:{r.get('sport', '')}"

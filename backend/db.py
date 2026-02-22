@@ -455,7 +455,7 @@ def bulk_insert_line_movements(
 ) -> None:
     """Bulk-insert line movement rows in a single request."""
     if rows:
-        client._post_many("line_movements", rows, chunk_size=1000)
+        client._post_many("line_movements", rows, chunk_size=2000)
 
 
 def get_line_movements_for_game(

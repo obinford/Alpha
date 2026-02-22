@@ -988,7 +988,7 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
         try:
             games = db_client._get(
                 "games",
-                select="game_id,home_team,away_team,home_score,away_score,status,commence_time",
+                select="game_id,home_team,away_team,home_score,away_score,status,start_time",
                 filters={
                     "game_id": f"in.({id_list})",
                     "status": "eq.final",
@@ -1011,7 +1011,7 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             try:
                 games = db_client._get(
                     "games",
-                    select="game_id,home_team,away_team,home_score,away_score,status,commence_time",
+                    select="game_id,home_team,away_team,home_score,away_score,status,start_time",
                     filters={"game_id": f"in.({id_list})"},
                 )
                 for g in games:
@@ -1058,10 +1058,10 @@ def grade_kenpom_snapshots(db_client: Any) -> dict[str, int]:
             try:
                 date_games = db_client._get(
                     "games",
-                    select="game_id,home_team,away_team,home_score,away_score,status,commence_time",
+                    select="game_id,home_team,away_team,home_score,away_score,status,start_time",
                     filters={
                         "status": "eq.final",
-                        "commence_time": f"gte.{target_date.isoformat()}T00:00:00Z",
+                        "start_time": f"gte.{target_date.isoformat()}T00:00:00Z",
                     },
                 )
                 for g in date_games:

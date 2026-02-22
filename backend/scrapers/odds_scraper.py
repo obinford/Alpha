@@ -1249,16 +1249,24 @@ def cleanup_stale_data(db_client) -> None:
     stale_cutoff = (now - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
     signal_stale_cutoff = (now - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 1. Expire stale opportunities (>20 min old) — single bulk PATCH.
+    # 1. Expire stale opportunities (>20 min old).
     #    Cannot DELETE because bet_results FK references ev_opportunities.
+    #    Two-step: GET ids, then PATCH by ids.  Direct PATCH with a
+    #    "timestamp" filter causes 500 on some PostgREST configs because
+    #    "timestamp" collides with the PostgreSQL type name.
     total_expired_opps = 0
     try:
-        n = db_client._patch(
+        stale_rows = db_client._get(
             "ev_opportunities",
-            {"status": "eq.open", "timestamp": f"lt.{stale_cutoff}"},
-            {"status": "expired"},
+            select="id",
+            filters={"status": "eq.open", "timestamp": f"lt.{stale_cutoff}"},
         )
-        total_expired_opps += n
+        if stale_rows:
+            ids = [r["id"] for r in stale_rows]
+            db_client._patch_by_ids(
+                "ev_opportunities", "id", ids, {"status": "expired"},
+            )
+            total_expired_opps = len(ids)
     except Exception as e:
         print(f"  Warning: Failed to expire old opportunities ({e})")
 
