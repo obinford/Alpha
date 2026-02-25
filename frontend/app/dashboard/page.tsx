@@ -108,6 +108,40 @@ function findTrueProb(opps: Opportunity[], gameId: string): number | null {
   return null;
 }
 
+/** Format an ISO timestamp as a relative "Xm ago" / "Xh ago" string. */
+function timeAgo(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  if (diffMs < 0) return "just now";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m ago`;
+}
+
+/** True if the data is older than 15 minutes. */
+function isStale(isoString: string | null | undefined): boolean {
+  if (!isoString) return false;
+  return Date.now() - new Date(isoString).getTime() > 15 * 60 * 1000;
+}
+
+function AgeBadge({ timestamp }: { timestamp: string | null | undefined }) {
+  if (!timestamp) return null;
+  const stale = isStale(timestamp);
+  return (
+    <span
+      className={`ml-2 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+        stale
+          ? "bg-red-500/20 text-red-400 animate-pulse"
+          : "bg-[#2c2c2e] text-gray-500"
+      }`}
+    >
+      {stale ? "STALE" : timeAgo(timestamp)}
+    </span>
+  );
+}
+
 function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
@@ -407,7 +441,7 @@ function SignalDetail({
   opportunities: Opportunity[];
   oppsLoading: boolean;
 }) {
-  const { bankroll, kellyBetSize, unitSize, kellyLabel } = useBankroll();
+  const { bankroll, kellyBetSize, kellyMultiplier, unitSize, kellyLabel } = useBankroll();
 
   // Fix 1: Flexible matching — try exact match first, then fuzzy (game_id only)
   let matchingOpps = opportunities.filter(
@@ -465,14 +499,19 @@ function SignalDetail({
     { label: "Intel", score: sig.intelligence_score ?? 0 },
   ];
 
-  // Fix 4: Kelly calculations — read kelly_fraction correctly, compute dollar amount
-  const kellyPct =
+  // Fix 4: Kelly calculations — apply kellyMultiplier (e.g. 0.5 for half Kelly)
+  // Fall back to matching opportunity's kelly_fraction when signal's is null.
+  const effectiveKellyFraction =
     sig.kelly_fraction != null && sig.kelly_fraction > 0
-      ? sig.kelly_fraction * 100
+      ? sig.kelly_fraction
+      : matchingOpps.find((o) => (o.kelly_fraction ?? 0) > 0)?.kelly_fraction ?? null;
+  const kellyPct =
+    effectiveKellyFraction != null
+      ? effectiveKellyFraction * kellyMultiplier * 100
       : null;
   const kellyDollar =
-    sig.kelly_fraction != null && sig.kelly_fraction > 0
-      ? kellyBetSize(sig.kelly_fraction)
+    effectiveKellyFraction != null
+      ? kellyBetSize(effectiveKellyFraction)
       : null;
 
   // Fix 1: Build book rows — always show SOMETHING
@@ -542,13 +581,20 @@ function SignalDetail({
               ) : null}
             </div>
             <div>
-              <p className="text-[10px] uppercase text-gray-500">Unit</p>
-              {unitSize != null ? (
+              <p className="text-[10px] uppercase text-gray-500">Bet Size</p>
+              {kellyPct != null && kellyDollar != null ? (
                 <>
                   <p className="font-mono text-sm text-gray-300">
-                    {kellyPct != null
-                      ? `${(kellyPct / 1).toFixed(1)}%`
-                      : "1u"}
+                    {kellyPct.toFixed(2)}u
+                  </p>
+                  <p className="text-[10px] text-emerald-400/70">
+                    ${kellyDollar.toFixed(0)}
+                  </p>
+                </>
+              ) : unitSize != null ? (
+                <>
+                  <p className="font-mono text-sm text-gray-300">
+                    {kellyPct != null ? `${kellyPct.toFixed(1)}%` : "\u2014"}
                   </p>
                   <p className="text-[10px] text-gray-500">
                     1u = ${unitSize.toFixed(2)}
@@ -637,7 +683,7 @@ function SignalDetail({
                       +{pct(opp.ev_percentage ?? 0)}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
-                      {pct((opp.kelly_fraction ?? 0) * 100)}
+                      {pct((opp.kelly_fraction ?? 0) * kellyMultiplier * 100)}
                     </td>
                   </tr>
                 ))
@@ -663,7 +709,7 @@ function SignalDetail({
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-500">
                       {sig.kelly_fraction != null
-                        ? pct(sig.kelly_fraction * 100)
+                        ? pct(sig.kelly_fraction * kellyMultiplier * 100)
                         : "\u2014"}
                     </td>
                   </tr>
@@ -942,6 +988,7 @@ export default function DashboardPage() {
                         </span>
                         {/* Fix 6: Time badges */}
                         {startTime && <TimeBadge startTime={startTime} />}
+                        <AgeBadge timestamp={sig.created_at} />
                       </div>
                       <p className="mt-1 truncate font-medium text-gray-200">
                         {sig.side}

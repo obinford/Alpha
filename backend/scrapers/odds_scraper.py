@@ -28,7 +28,7 @@ from models.ev_calculator import (
     calculate_no_vig_probability,
 )
 from models.devig import devig_market, devig_pair as devig_pair_new, DevigResult, select_devig_source, BookOdds
-from models.kelly import kelly_fraction
+from models.kelly import kelly_fraction, kelly_full
 from scrapers.odds.odds_api import Game, Market, fetch_odds
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -234,9 +234,15 @@ def _extract_market_odds_by_book(
 
     Returns (book_odds_dict, outcome_names) where outcome_names is
     [name_a, name_b, point_a, point_b] from the first book found.
+
+    Outcomes are matched by name across bookmakers to ensure consistent
+    ordering.  The first bookmaker sets the canonical name order; subsequent
+    bookmakers' outcomes are looked up by name rather than position so that
+    home/away odds are never flipped.
     """
     book_odds: dict[str, tuple[int, int]] = {}
     outcome_info: list | None = None
+    canonical_names: tuple[str, str] | None = None
 
     for bk in game.bookmakers:
         if bk.key in BLOCKED_BOOKS:
@@ -244,12 +250,24 @@ def _extract_market_odds_by_book(
         mkt = get_market(bk.markets, market_key)
         if mkt is None or len(mkt.outcomes) != 2:
             continue
-        book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
-        if outcome_info is None:
+
+        if canonical_names is None:
+            # First bookmaker establishes the canonical name order.
+            canonical_names = (mkt.outcomes[0].name, mkt.outcomes[1].name)
             outcome_info = [
                 mkt.outcomes[0].name, mkt.outcomes[1].name,
                 mkt.outcomes[0].point, mkt.outcomes[1].point,
             ]
+            book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
+        else:
+            # Match outcomes by name to ensure consistent ordering.
+            odds_by_name = {o.name: o.price for o in mkt.outcomes}
+            name_a, name_b = canonical_names
+            if name_a in odds_by_name and name_b in odds_by_name:
+                book_odds[bk.key] = (odds_by_name[name_a], odds_by_name[name_b])
+            else:
+                # Names don't match — fall back to positional order.
+                book_odds[bk.key] = (mkt.outcomes[0].price, mkt.outcomes[1].price)
 
     return book_odds, outcome_info
 
@@ -277,6 +295,19 @@ def build_devig_line_map(
         (name_a, point_a): result.true_prob_a,
         (name_b, point_b): result.true_prob_b,
     }
+
+    # Anomaly check for h2h devig — only log when probabilities look wrong.
+    if market_key == "h2h" and "pinnacle" in book_odds:
+        prob_sum = result.true_prob_a + result.true_prob_b
+        if abs(prob_sum - 1.0) > 0.02:
+            pin_a, pin_b = book_odds["pinnacle"]
+            game_label = f"{game.away_team} @ {game.home_team}"
+            print(
+                f"  [DEVIG ANOMALY] {game_label} h2h | "
+                f"Pinnacle: {name_a}={pin_a:+d}, {name_b}={pin_b:+d} | "
+                f"Probs sum to {prob_sum:.4f} (expected ~1.0)"
+            )
+
     return true_probs, result.source, result.confidence, result.method, result.source_keys
 
 
@@ -317,9 +348,7 @@ def scan_game(game: Game) -> list[EVOpportunity]:
                 if ev_pct < MIN_EV_THRESHOLD:
                     continue
 
-                kelly_pct = kelly_fraction(
-                    true_prob, outcome.price, DEFAULT_KELLY_FRACTION
-                )
+                kelly_pct = kelly_full(true_prob, outcome.price)
 
                 opportunities.append(
                     EVOpportunity(
@@ -478,9 +507,7 @@ def scan_game_props(game: Game) -> list[EVOpportunity]:
                 if ev_pct < MIN_EV_THRESHOLD:
                     continue
 
-                kelly_pct = kelly_fraction(
-                    true_prob, outcome.price, DEFAULT_KELLY_FRACTION
-                )
+                kelly_pct = kelly_full(true_prob, outcome.price)
 
                 # Build selection string: "Player Name Over/Under X.X"
                 point_str = f" {outcome.point}" if outcome.point is not None else ""
@@ -547,28 +574,25 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
     rows: list[dict] = []
 
     # Batch-fetch existing latest odds for ALL games at once (N+1 fix).
+    # Use large chunks (200 game IDs) and select only minimal columns.
     game_ids = [g.id for g in games]
-    all_existing: list[dict] = []
-    for i in range(0, len(game_ids), 50):
-        chunk = game_ids[i : i + 50]
+    latest_map: dict[tuple[str, str, str, str], float] = {}
+    for i in range(0, len(game_ids), 200):
+        chunk = game_ids[i : i + 200]
         id_list = ",".join(chunk)
         try:
             batch = db_client._get(
                 "line_movements",
-                select="game_id,bookmaker,market_type,side,odds,timestamp",
+                select="game_id,bookmaker,market_type,side,odds",
                 filters={"game_id": f"in.({id_list})"},
                 order="timestamp.desc",
             )
-            all_existing.extend(batch)
+            for row in batch:
+                key = (row["game_id"], row["bookmaker"], row["market_type"], row["side"])
+                if key not in latest_map:
+                    latest_map[key] = float(row["odds"])
         except Exception:
             pass
-
-    # Build lookup: (game_id, bookmaker, market_type, side) -> latest odds.
-    latest_map: dict[tuple[str, str, str, str], float] = {}
-    for row in all_existing:
-        key = (row["game_id"], row["bookmaker"], row["market_type"], row["side"])
-        if key not in latest_map:
-            latest_map[key] = float(row["odds"])
 
     for game in games:
         for bk in game.bookmakers:
@@ -612,16 +636,123 @@ def store_line_movements(db_client: object, games: list[Game]) -> None:
         print("  Line movements: no changes detected.")
 
 
+def validate_odds_mapping(games: list[Game], threshold: int = 5) -> int:
+    """Post-scan validation: compare raw Pinnacle API odds against mapped values.
+
+    For each game, extracts Pinnacle h2h outcomes by name and compares
+    against what store_odds_snapshots would have mapped.  Logs mismatches
+    where the stored value differs from the API by more than ``threshold``
+    American-odds cents.
+
+    Returns number of mismatches found.
+    """
+    mismatches = 0
+    for game in games:
+        game_label = f"{game.away_team} @ {game.home_team}"
+        pin_bk = None
+        for bk in game.bookmakers:
+            if bk.key == "pinnacle":
+                pin_bk = bk
+                break
+        if pin_bk is None:
+            continue
+
+        for mkt in pin_bk.markets:
+            if len(mkt.outcomes) != 2:
+                continue
+
+            # What the API returned: match by team name to get "truth".
+            api_home = None
+            api_away = None
+            if mkt.key == "totals":
+                for o in mkt.outcomes:
+                    if o.name.lower() == "over":
+                        api_home = o.price  # convention: Over → home slot
+                    elif o.name.lower() == "under":
+                        api_away = o.price
+            else:
+                for o in mkt.outcomes:
+                    if o.name == game.home_team:
+                        api_home = o.price
+                    elif o.name == game.away_team:
+                        api_away = o.price
+
+            if api_home is None or api_away is None:
+                # Names didn't match — this IS a problem, log it.
+                raw_names = [o.name for o in mkt.outcomes]
+                print(
+                    f"  [ODDS VALIDATION] NAME MISMATCH: {game_label} {mkt.key} | "
+                    f"API outcome names {raw_names} don't match "
+                    f"home='{game.home_team}' away='{game.away_team}'"
+                )
+                mismatches += 1
+                continue
+
+            # What store_odds_snapshots would store (replicate its logic).
+            if mkt.key == "totals":
+                odds_by_name = {o.name.lower(): o for o in mkt.outcomes}
+                stored_home = odds_by_name.get("over", mkt.outcomes[0]).price
+                stored_away = odds_by_name.get("under", mkt.outcomes[1]).price
+            else:
+                odds_by_name = {o.name: o for o in mkt.outcomes}
+                stored_home = odds_by_name.get(game.home_team, mkt.outcomes[0]).price
+                stored_away = odds_by_name.get(game.away_team, mkt.outcomes[1]).price
+
+            home_diff = abs(api_home - stored_home)
+            away_diff = abs(api_away - stored_away)
+
+            if home_diff > threshold or away_diff > threshold:
+                mismatches += 1
+                print(
+                    f"  [ODDS VALIDATION] MISMATCH: {game_label} {mkt.key} | "
+                    f"API returned: home={api_home:+d} away={api_away:+d} | "
+                    f"Stored: home={stored_home:+d} away={stored_away:+d}"
+                )
+
+    if mismatches == 0:
+        game_count = sum(
+            1 for g in games
+            if any(bk.key == "pinnacle" for bk in g.bookmakers)
+        )
+        print(f"  [ODDS VALIDATION] All {game_count} Pinnacle games validated OK")
+
+    return mismatches
+
+
 def store_odds_snapshots(db_client: object, games: list[Game]) -> None:
     """Store raw odds from every sportsbook/market combination (batched)."""
     rows: list[dict] = []
     for game in games:
+        game_label = f"{game.away_team} @ {game.home_team}"
         for bk in game.bookmakers:
             for mkt in bk.markets:
                 if len(mkt.outcomes) != 2:
                     continue
-                home_out = mkt.outcomes[0]
-                away_out = mkt.outcomes[1]
+                # Match outcomes by name to home/away teams.
+                # The Odds API may return outcomes in any order per bookmaker.
+                # For totals, outcome names are "Over"/"Under" (not team names),
+                # so we map Over → home_odds slot, Under → away_odds slot.
+                if mkt.key == "totals":
+                    odds_by_name = {o.name.lower(): o for o in mkt.outcomes}
+                    home_out = odds_by_name.get("over", mkt.outcomes[0])
+                    away_out = odds_by_name.get("under", mkt.outcomes[1])
+                else:
+                    odds_by_name = {o.name: o for o in mkt.outcomes}
+                    home_out = odds_by_name.get(game.home_team, mkt.outcomes[0])
+                    away_out = odds_by_name.get(game.away_team, mkt.outcomes[1])
+
+                # Only log Pinnacle h2h when mapping differs from raw order.
+                if bk.key == "pinnacle" and mkt.key == "h2h":
+                    raw_o1 = mkt.outcomes[0]
+                    raw_o2 = mkt.outcomes[1]
+                    if home_out.price != raw_o1.price or away_out.price != raw_o2.price:
+                        print(
+                            f"  [ODDS REORDER] {game_label} | "
+                            f"Raw: {raw_o1.name}={raw_o1.price:+d}, {raw_o2.name}={raw_o2.price:+d} | "
+                            f"Mapped: home={home_out.price:+d} ({game.home_team}), "
+                            f"away={away_out.price:+d} ({game.away_team})"
+                        )
+
                 rows.append({
                     "game_id": game.id,
                     "sportsbook": bk.key,
@@ -651,15 +782,34 @@ def store_true_lines(db_client: object, games: list[Game]) -> None:
             if not true_probs:
                 continue
 
-            # Get outcome names and points from the first available book.
-            _, outcome_info = _extract_market_odds_by_book(game, market_key)
-            if outcome_info is None:
-                continue
-            name_a, name_b, point_a, point_b = outcome_info
-
-            true_home = true_probs.get((name_a, point_a), 0.5)
-            true_away = true_probs.get((name_b, point_b), 0.5)
-            no_vig_line = point_a
+            # Look up true probabilities by actual home/away team name.
+            # For h2h/spreads: use game.home_team and game.away_team.
+            # For totals: Over/Under — "home" slot gets Over, "away" gets Under.
+            if market_key == "totals":
+                # Totals use Over/Under, not team names.
+                # Find the point (total line) from any available prob key.
+                total_point = None
+                true_home = 0.5
+                true_away = 0.5
+                for (name, pt), prob in true_probs.items():
+                    if name.lower() == "over":
+                        true_home = prob
+                        total_point = pt
+                    elif name.lower() == "under":
+                        true_away = prob
+                no_vig_line = total_point
+            else:
+                # h2h and spreads: match by team name.
+                # Try exact match first, then scan all probs for a match.
+                true_home = 0.5
+                true_away = 0.5
+                no_vig_line = None
+                for (name, pt), prob in true_probs.items():
+                    if name == game.home_team:
+                        true_home = prob
+                        no_vig_line = pt
+                    elif name == game.away_team:
+                        true_away = prob
 
             rows.append({
                 "game_id": game.id,
@@ -1077,6 +1227,143 @@ def resolve_sport_keys(cli_args: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Cleanup helpers
+# ---------------------------------------------------------------------------
+
+
+def cleanup_stale_data(db_client) -> None:
+    """Expire stale opportunities and signals before a new scan.
+
+    1. Mark ev_opportunities older than 20 minutes as expired.
+       (Uses PATCH not DELETE — bet_results has a FK to ev_opportunities.)
+    2. Expire active signals for started games or older than 30 minutes.
+    3. Bulk-repair NULL kelly_size on existing signals.
+
+    Designed to complete in <3 seconds using bulk DB operations.
+    """
+    from projections.math_utils import american_to_decimal
+
+    now = datetime.now(timezone.utc)
+    # Use strftime with Z suffix — isoformat() produces +00:00 which
+    # contains a + that can be mis-decoded as a space in URL params.
+    stale_cutoff = (now - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signal_stale_cutoff = (now - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # 1. Expire stale opportunities (>20 min old).
+    #    Cannot DELETE because bet_results FK references ev_opportunities.
+    #    Two-step: GET ids, then PATCH by ids.  Direct PATCH with a
+    #    "timestamp" filter causes 500 on some PostgREST configs because
+    #    "timestamp" collides with the PostgreSQL type name.
+    total_expired_opps = 0
+    try:
+        stale_rows = db_client._get(
+            "ev_opportunities",
+            select="id",
+            filters={"status": "eq.open", "timestamp": f"lt.{stale_cutoff}"},
+        )
+        if stale_rows:
+            ids = [r["id"] for r in stale_rows]
+            db_client._patch_by_ids(
+                "ev_opportunities", "id", ids, {"status": "expired"},
+            )
+            total_expired_opps = len(ids)
+    except Exception as e:
+        print(f"  Warning: Failed to expire old opportunities ({e})")
+
+    if total_expired_opps:
+        print(f"  [CLEANUP] Expired {total_expired_opps} stale opportunities (>20min old)")
+
+    # 2. Expire stale signals — two bulk PATCHes (no row-by-row).
+    total_expired = 0
+
+    # 2a. Expire signals older than 30 minutes — single PATCH.
+    try:
+        n = db_client._patch(
+            "rtm_signals",
+            {"status": "eq.active", "created_at": f"lt.{signal_stale_cutoff}"},
+            {"status": "expired"},
+        )
+        total_expired += n
+    except Exception as e:
+        print(f"  Warning: Failed to expire old signals ({e})")
+
+    # 2b. Expire signals for started games — fetch IDs, bulk PATCH.
+    try:
+        active_signals = db_client._get(
+            "rtm_signals",
+            select="id,game_id",
+            filters={"status": "eq.active"},
+        )
+        if active_signals:
+            game_ids = list({s["game_id"] for s in active_signals})
+            games_data: dict[str, str] = {}
+            for i in range(0, len(game_ids), 50):
+                chunk = game_ids[i : i + 50]
+                id_list = ",".join(chunk)
+                try:
+                    rows = db_client._get(
+                        "games",
+                        select="game_id,start_time",
+                        filters={"game_id": f"in.({id_list})"},
+                    )
+                    for r in rows:
+                        games_data[r["game_id"]] = r.get("start_time", "")
+                except Exception:
+                    pass
+
+            now_iso = now.isoformat()
+            started_ids = [
+                s["id"] for s in active_signals
+                if games_data.get(s["game_id"], "") and games_data[s["game_id"]] < now_iso
+            ]
+            if started_ids:
+                db_client._patch_by_ids(
+                    "rtm_signals", "id", started_ids,
+                    {"status": "expired"},
+                )
+                total_expired += len(started_ids)
+    except Exception as e:
+        print(f"  Warning: Failed to expire started-game signals ({e})")
+
+    if total_expired:
+        print(f"  [CLEANUP] Expired {total_expired} stale signals")
+
+    # 3. Bulk-repair signals with NULL kelly_size.
+    #    Fetch all at once, compute locally, batch-PATCH by groups of 100.
+    try:
+        null_kelly = db_client._get(
+            "rtm_signals",
+            select="id,book_odds,edge_percentage",
+            filters={"kelly_size": "is.null"},
+        )
+        if null_kelly:
+            repairs: list[dict] = []
+            for sig in null_kelly:
+                odds = sig.get("book_odds")
+                edge = sig.get("edge_percentage")
+                if odds and edge is not None:
+                    decimal_odds = american_to_decimal(int(odds))
+                    if decimal_odds > 1:
+                        true_prob = (edge / 100 + 1) / decimal_odds
+                        if 0 < true_prob < 1:
+                            k = max((true_prob * decimal_odds - 1) / (decimal_odds - 1), 0)
+                            repairs.append({"id": sig["id"], "kelly": round(k, 6)})
+
+            # Group by kelly value to minimize PATCH calls.
+            by_kelly: dict[float, list[int]] = {}
+            for r in repairs:
+                by_kelly.setdefault(r["kelly"], []).append(r["id"])
+            for kelly_val, ids in by_kelly.items():
+                db_client._patch_by_ids(
+                    "rtm_signals", "id", ids,
+                    {"kelly_size": kelly_val},
+                )
+            print(f"  [KELLY REPAIR] Updated {len(repairs)} signals with missing kelly_size")
+    except Exception as e:
+        print(f"  Warning: Kelly repair failed ({e})")
+
+
+# ---------------------------------------------------------------------------
 # Single scan run
 # ---------------------------------------------------------------------------
 
@@ -1093,6 +1380,15 @@ def run_scan(sport_keys: list[str]) -> int:
     except Exception as e:
         print(f"[SCAN] WARNING: Could not connect to Supabase ({e}). Will skip DB writes.")
         print(f"[SCAN] → KenPom snapshots, grading, and other DB features will be disabled.")
+
+    # --- Cleanup stale data before writing new data ---
+    if db is not None:
+        t0 = time.time()
+        try:
+            cleanup_stale_data(db)
+        except Exception as e:
+            print(f"Warning: Stale data cleanup failed ({e})")
+        print(f"[TIMING] Stale data cleanup: {time.time() - t0:.1f}s")
 
     # --- Parallel API fetch for all sports ---
     all_games: list[Game] = []
@@ -1524,8 +1820,8 @@ def run_scan(sport_keys: list[str]) -> int:
                 # Batch-fetch ALL existing lifecycle keys for these games
                 # in a single DB query instead of one per outcome (N+1 fix).
                 existing_lifecycle_keys: set[tuple[str, str, str, str]] = set()
-                for i in range(0, len(game_ids), 50):
-                    chunk_ids = game_ids[i : i + 50]
+                for i in range(0, len(game_ids), 200):
+                    chunk_ids = game_ids[i : i + 200]
                     # PostgREST IN filter: game_id=in.(id1,id2,...)
                     id_list = ",".join(chunk_ids)
                     try:
@@ -1573,7 +1869,7 @@ def run_scan(sport_keys: list[str]) -> int:
                                     existing_lifecycle_keys.add(key)
 
                 if new_lifecycle_rows:
-                    db._post_many("line_lifecycle", new_lifecycle_rows)
+                    db._post_many("line_lifecycle", new_lifecycle_rows, chunk_size=500)
                     print(f"  Market timing: {len(new_lifecycle_rows)} new line lifecycle(s) tracked.")
             except Exception as e:
                 print(f"  Warning: Market timing tracking failed ({e}).")
@@ -1706,7 +2002,9 @@ def run_scan(sport_keys: list[str]) -> int:
     if db is not None:
         t0 = time.time()
         try:
-            from rtm_signal_engine.signal_grader import grade_signals
+            from rtm_signal_engine.signal_grader import grade_signals, repair_signal_profit_loss
+            # One-time repair: recalculate profit_loss from $100-scale to 1-unit.
+            repair_signal_profit_loss(db)
             sig_grade_result = grade_signals(db)
             if sig_grade_result["graded"] > 0:
                 print(f"Signal grading: {sig_grade_result['graded']} signals graded.")
@@ -1735,6 +2033,17 @@ def run_scan(sport_keys: list[str]) -> int:
     except Exception as e:
         print(f"Warning: Discord alerts failed ({e}).")
     print(f"[TIMING] Discord alerts: {time.time() - t0:.1f}s")
+
+    # --- Odds validation ---
+    if all_games:
+        t0 = time.time()
+        try:
+            mismatches = validate_odds_mapping(all_games)
+            if mismatches:
+                print(f"\n[ODDS VALIDATION] {mismatches} mismatch(es) detected — check logs above!")
+        except Exception as e:
+            print(f"Warning: Odds validation failed ({e}).")
+        print(f"[TIMING] Odds validation: {time.time() - t0:.1f}s")
 
     # --- Console output ---
     print_results(all_opportunities, all_games)

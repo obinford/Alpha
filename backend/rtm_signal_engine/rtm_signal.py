@@ -782,8 +782,15 @@ class RTMSignal:
                 player_name = m.group(1).strip()
                 prop_line = float(m.group(3))
 
-        # Flat $100 bet for all signals (no Kelly sizing).
         true_prob = float(opportunity.get("true_prob", 0.5))
+
+        # Compute full Kelly fraction for this signal.
+        kelly_frac = 0.0
+        if true_prob > 0 and true_prob < 1 and book_odds != 0:
+            decimal_odds = american_to_decimal(book_odds)
+            if decimal_odds > 1:
+                edge = true_prob * decimal_odds - 1
+                kelly_frac = max(edge / (decimal_odds - 1), 0.0)
 
         # Compute fair value odds from true probability.
         fair_odds = None
@@ -814,6 +821,7 @@ class RTMSignal:
             "fair_odds": fair_odds,
             "true_prob": true_prob,
             "edge_percentage": ev_pct,
+            "kelly_fraction": round(kelly_frac, 6),
             "bet_amount": SIGNAL_BET_AMOUNT,
             "home_team": home_team,
             "away_team": away_team,
@@ -1034,12 +1042,13 @@ class RTMSignal:
             return
 
         # Batch-fetch steam alerts for all games at once.
-        for i in range(0, len(game_ids), 50):
-            chunk = game_ids[i : i + 50]
+        for i in range(0, len(game_ids), 500):
+            chunk = game_ids[i : i + 500]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
                     "steam_alerts",
+                    select="game_id,market_type,side,book_count,direction,created_at",
                     filters={"game_id": f"in.({id_list})"},
                 )
                 for r in rows:
@@ -1049,12 +1058,13 @@ class RTMSignal:
                 pass
 
         # Batch-fetch line movements for all games at once.
-        for i in range(0, len(game_ids), 50):
-            chunk = game_ids[i : i + 50]
+        for i in range(0, len(game_ids), 500):
+            chunk = game_ids[i : i + 500]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
                     "line_movements",
+                    select="game_id,bookmaker,market_type,side,odds,previous_odds,odds_change,timestamp",
                     filters={"game_id": f"in.({id_list})"},
                 )
                 for r in rows:
@@ -1064,8 +1074,8 @@ class RTMSignal:
                 pass
 
         # Batch-fetch stale line alerts for all games at once.
-        for i in range(0, len(game_ids), 50):
-            chunk = game_ids[i : i + 50]
+        for i in range(0, len(game_ids), 500):
+            chunk = game_ids[i : i + 500]
             id_list = ",".join(chunk)
             try:
                 rows = self._db._get(
@@ -1082,12 +1092,14 @@ class RTMSignal:
             except Exception:
                 pass
 
-        # Batch-fetch ALL book reaction times in one query (not per-game).
+        # Batch-fetch book reaction times in one query (not per-game).
         # Keyed by "soft_book:sport" for quick lookup.
+        # Limit to 5000 rows to avoid unbounded table scans.
         try:
             rows = self._db._get(
                 "book_reaction_times",
                 select="soft_book,sport,reaction_seconds",
+                limit=5000,
             )
             for r in rows:
                 key = f"{r.get('soft_book', '')}:{r.get('sport', '')}"
@@ -1248,6 +1260,7 @@ def store_signals(db_client, signals: list[dict]) -> int:
             "intelligence_context": _json.dumps(intel_ctx) if isinstance(intel_ctx, dict) else intel_ctx,
             "fair_odds": s.get("fair_odds"),
             "edge_percentage": s["edge_percentage"],
+            "kelly_size": s.get("kelly_fraction"),
             "bet_amount": s.get("bet_amount", SIGNAL_BET_AMOUNT),
             "status": "active",
         })

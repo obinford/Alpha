@@ -82,6 +82,40 @@ function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+/** Format an ISO timestamp as a relative "Xm ago" / "Xh ago" string. */
+function timeAgo(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  if (diffMs < 0) return "just now";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m ago`;
+}
+
+/** True if the data is older than 15 minutes. */
+function isStale(isoString: string | null | undefined): boolean {
+  if (!isoString) return false;
+  return Date.now() - new Date(isoString).getTime() > 15 * 60 * 1000;
+}
+
+function AgeBadge({ timestamp }: { timestamp: string | null | undefined }) {
+  if (!timestamp) return null;
+  const stale = isStale(timestamp);
+  return (
+    <span
+      className={`ml-2 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+        stale
+          ? "bg-red-500/20 text-red-400 animate-pulse"
+          : "bg-[#2c2c2e] text-gray-500"
+      }`}
+    >
+      {stale ? "STALE" : timeAgo(timestamp)}
+    </span>
+  );
+}
+
 function trueProbToAmericanOdds(prob: number): number {
   if (prob <= 0 || prob >= 1) return -110;
   if (prob > 0.5) return Math.round((-100 * prob) / (1 - prob));
@@ -160,8 +194,8 @@ function groupOpportunities(opps: Opportunity[]): OppGroup[] {
 
   const groups: OppGroup[] = [];
   for (const [key, list] of Array.from(map.entries())) {
-    // Fix 3: Sort by EV% descending within each group
-    list.sort((a, b) => (b.ev_percentage ?? 0) - (a.ev_percentage ?? 0));
+    // Sort by Kelly fraction descending within each group (best sizing first)
+    list.sort((a, b) => (b.kelly_fraction ?? 0) - (a.kelly_fraction ?? 0));
     const best = list[0];
     groups.push({
       key,
@@ -175,9 +209,9 @@ function groupOpportunities(opps: Opportunity[]): OppGroup[] {
     });
   }
 
-  // Fix 3: Sort groups by best EV% descending
+  // Sort groups by Kelly fraction descending (highest Kelly = best bet)
   groups.sort(
-    (a, b) => (b.best.ev_percentage ?? 0) - (a.best.ev_percentage ?? 0),
+    (a, b) => (b.best.kelly_fraction ?? 0) - (a.best.kelly_fraction ?? 0),
   );
   return groups;
 }
@@ -198,7 +232,7 @@ export default function EVScannerPage() {
   // Day filter state
   const [selectedDays, setSelectedDays] = useState<Set<string> | null>(null); // null = all
 
-  const { bankroll, kellyBetSize } = useBankroll();
+  const { bankroll, kellyBetSize, kellyMultiplier, kellyLabel } = useBankroll();
 
   useEffect(() => {
     setLoading(true);
@@ -321,7 +355,7 @@ export default function EVScannerPage() {
     return selectedDays == null || selectedDays.has(day);
   }
 
-  const showBetSize = bankroll != null;
+  const effectiveBankroll = bankroll ?? 1000;
 
   return (
     <div>
@@ -432,11 +466,9 @@ export default function EVScannerPage() {
             Live
           </span>
         )}
-        {showBetSize && (
-          <span className="text-xs text-gray-600">
-            Bankroll: ${bankroll!.toLocaleString()}
-          </span>
-        )}
+        <span className="text-xs text-gray-600">
+          {kellyLabel} &middot; Bankroll: ${effectiveBankroll.toLocaleString()}
+        </span>
       </div>
 
       {/* Table */}
@@ -463,10 +495,8 @@ export default function EVScannerPage() {
                 <th className="px-4 py-3 text-right">True%</th>
                 <th className="px-4 py-3 text-right">Book%</th>
                 <th className="px-4 py-3 text-right">EV%</th>
-                <th className="px-4 py-3 text-right">Kelly%</th>
-                {showBetSize && (
-                  <th className="px-4 py-3 text-right">Bet Size</th>
-                )}
+                <th className="px-4 py-3 text-right">Kelly</th>
+                <th className="px-4 py-3 text-right">Bet Size</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -483,8 +513,8 @@ export default function EVScannerPage() {
                     isExpanded={isExpanded}
                     moreCount={moreCount}
                     onToggle={() => toggleExpanded(g.key)}
-                    showBetSize={showBetSize}
                     kellyBetSize={kellyBetSize}
+                    kellyMultiplier={kellyMultiplier}
                   />
                 );
               })}
@@ -500,24 +530,34 @@ export default function EVScannerPage() {
 // Group row component (primary + expandable sub-rows)
 // ---------------------------------------------------------------------------
 
+function formatKellySize(kellyFraction: number, kellyMult: number, bankroll: number | null): string {
+  const units = kellyFraction * kellyMult * 100;
+  const dollars = bankroll != null ? kellyFraction * kellyMult * bankroll : null;
+  if (units <= 0) return "\u2014";
+  const unitStr = `${units.toFixed(2)}u`;
+  if (dollars != null) return `${unitStr} ($${dollars.toFixed(0)})`;
+  return unitStr;
+}
+
 function GroupRows({
   group,
   opp,
   isExpanded,
   moreCount,
   onToggle,
-  showBetSize,
   kellyBetSize,
+  kellyMultiplier,
 }: {
   group: OppGroup;
   opp: Opportunity;
   isExpanded: boolean;
   moreCount: number;
   onToggle: () => void;
-  showBetSize: boolean;
   kellyBetSize: (fraction: number) => number | null;
+  kellyMultiplier: number;
 }) {
-  const betAmt = showBetSize ? kellyBetSize(opp.kelly_fraction ?? 0) : null;
+  const betAmt = kellyBetSize(opp.kelly_fraction ?? 0);
+  const kellyPct = (opp.kelly_fraction ?? 0) * kellyMultiplier * 100;
   const startTime = group.game?.start_time ?? null;
 
   return (
@@ -538,6 +578,7 @@ function GroupRows({
             </span>
             {/* Fix 6: Time badge */}
             {startTime && <TimeBadge startTime={startTime} />}
+            <AgeBadge timestamp={opp.timestamp} />
           </div>
           <div className="text-xs text-gray-500">
             {sportLabel(group.sport)}
@@ -569,13 +610,11 @@ function GroupRows({
           +{pct(opp.ev_percentage ?? 0)}
         </td>
         <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-gray-300">
-          {pct((opp.kelly_fraction ?? 0) * 100)}
+          {kellyPct > 0 ? pct(kellyPct) : "\u2014"}
         </td>
-        {showBetSize && (
-          <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-emerald-300">
-            {betAmt != null ? `$${betAmt.toFixed(2)}` : "\u2014"}
-          </td>
-        )}
+        <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-emerald-300">
+          {betAmt != null && betAmt > 0 ? `${kellyPct.toFixed(2)}u ($${betAmt.toFixed(0)})` : "\u2014"}
+        </td>
       </tr>
 
       {/* Expanded: Pinnacle sharp reference row — Fix 3: always on top */}
@@ -605,16 +644,15 @@ function GroupRows({
           <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">
             0.0%
           </td>
-          {showBetSize && <td className="px-4 py-2" />}
+          <td className="px-4 py-2" />
         </tr>
       )}
 
-      {/* Expanded sub-rows — Fix 3: sorted by EV% descending */}
+      {/* Expanded sub-rows — sorted by Kelly descending */}
       {isExpanded &&
         group.rest.map((alt) => {
-          const altBet = showBetSize
-            ? kellyBetSize(alt.kelly_fraction ?? 0)
-            : null;
+          const altBet = kellyBetSize(alt.kelly_fraction ?? 0);
+          const altKellyPct = (alt.kelly_fraction ?? 0) * kellyMultiplier * 100;
           return (
             <tr key={alt.id} className="bg-[#1e1e20]">
               <td className="px-4 py-2" />
@@ -637,13 +675,11 @@ function GroupRows({
                 +{pct(alt.ev_percentage ?? 0)}
               </td>
               <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-500">
-                {pct((alt.kelly_fraction ?? 0) * 100)}
+                {altKellyPct > 0 ? pct(altKellyPct) : "\u2014"}
               </td>
-              {showBetSize && (
-                <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-emerald-300/60">
-                  {altBet != null ? `$${altBet.toFixed(2)}` : "\u2014"}
-                </td>
-              )}
+              <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-emerald-300/60">
+                {altBet != null && altBet > 0 ? `${altKellyPct.toFixed(2)}u ($${altBet.toFixed(0)})` : "\u2014"}
+              </td>
             </tr>
           );
         })}

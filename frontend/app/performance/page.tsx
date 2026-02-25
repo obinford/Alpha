@@ -131,7 +131,7 @@ function PnlBar({ pnl, max }: { pnl: number; max: number }) {
       <span
         className={`text-xs font-medium ${pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}
       >
-        {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
+        {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}u
       </span>
     </div>
   );
@@ -194,7 +194,8 @@ function computeStats(signals: GradedSignal[]) {
   const decided = wins + losses;
   const winRate = decided > 0 ? (wins / decided) * 100 : 0;
   const totalPnl = graded.reduce((sum, s) => sum + (s.profit_loss ?? 0), 0);
-  const totalWagered = graded.reduce((sum, s) => sum + (s.bet_amount ?? 100), 0);
+  // 1 unit wagered per bet (flat sizing).
+  const totalWagered = decided;
   const roi = totalWagered > 0 ? (totalPnl / totalWagered) * 100 : 0;
 
   const record =
@@ -216,12 +217,11 @@ function computeStats(signals: GradedSignal[]) {
     const tp = sigs.filter((s) => s.result === "push").length;
     const td = tw + tl;
     const tPnl = sigs.reduce((sum, s) => sum + (s.profit_loss ?? 0), 0);
-    const tWag = sigs.reduce((sum, s) => sum + (s.bet_amount ?? 100), 0);
     byTier[tier] = {
       record: tp > 0 ? `${tw}\u2011${tl}\u2011${tp}` : `${tw}\u2011${tl}`,
       win_rate: td > 0 ? Math.round((tw / td) * 100) : 0,
       pnl: tPnl,
-      roi: tWag > 0 ? Math.round((tPnl / tWag) * 100) : 0,
+      roi: td > 0 ? Math.round((tPnl / td) * 100) : 0,
       total: sigs.length,
     };
   }
@@ -299,7 +299,6 @@ function computeBookStats(signals: GradedSignal[]): BookStats[] {
     const p = sigs.filter((s) => s.result === "push").length;
     const d = w + l;
     const pnl = sigs.reduce((sum, s) => sum + (s.profit_loss ?? 0), 0);
-    const wag = sigs.reduce((sum, s) => sum + (s.bet_amount ?? 100), 0);
     stats.push({
       sportsbook: book,
       bets: sigs.length,
@@ -307,7 +306,7 @@ function computeBookStats(signals: GradedSignal[]): BookStats[] {
       losses: l,
       pushes: p,
       winRate: d > 0 ? Math.round((w / d) * 1000) / 10 : 0,
-      roi: wag > 0 ? Math.round((pnl / wag) * 1000) / 10 : 0,
+      roi: d > 0 ? Math.round((pnl / d) * 1000) / 10 : 0,
       profitLoss: pnl,
     });
   }
@@ -440,8 +439,8 @@ function SignalsTab({
         />
         <StatCard
           label="Profit / Loss"
-          value={`${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(0)}`}
-          sub={`$${totalWagered.toFixed(0)} wagered`}
+          value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}u`}
+          sub={`${totalWagered} bets`}
           accent={pnlColor as "green" | "red"}
         />
         <StatCard
@@ -455,14 +454,14 @@ function SignalsTab({
         <StatCard label="Streak" value={stats.streak || "\u2014"} />
         <StatCard
           label="Best Day"
-          value={stats.best_day ? `+$${(stats.best_day.pnl ?? 0).toFixed(0)}` : "\u2014"}
+          value={stats.best_day ? `+${(stats.best_day.pnl ?? 0).toFixed(2)}u` : "\u2014"}
           sub={stats.best_day?.date}
           accent="green"
         />
         <StatCard
           label="Worst Day"
           value={
-            stats.worst_day ? `$${(stats.worst_day.pnl ?? 0).toFixed(0)}` : "\u2014"
+            stats.worst_day ? `${(stats.worst_day.pnl ?? 0).toFixed(2)}u` : "\u2014"
           }
           sub={stats.worst_day?.date}
           accent="red"
@@ -520,7 +519,7 @@ function SignalsTab({
                   <span
                     className={`text-xs font-medium ${sportPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}
                   >
-                    {sportPnl >= 0 ? "+" : ""}${sportPnl.toFixed(0)}
+                    {sportPnl >= 0 ? "+" : ""}{sportPnl.toFixed(2)}u
                   </span>
                 </div>
               </div>
@@ -570,7 +569,7 @@ function SignalsTab({
                     <td
                       className={`py-2 text-right font-mono font-medium ${bs.profitLoss >= 0 ? "text-emerald-400" : "text-red-400"}`}
                     >
-                      {bs.profitLoss >= 0 ? "+" : ""}${bs.profitLoss.toFixed(0)}
+                      {bs.profitLoss >= 0 ? "+" : ""}{bs.profitLoss.toFixed(2)}u
                     </td>
                   </tr>
                 ))}
@@ -698,7 +697,7 @@ export default function PerformancePage() {
     <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-bold">Performance</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Track your results. $100 flat bets on every RTM Signal.
+        Track your results. 1-unit flat bets on every RTM Signal.
       </p>
 
       {/* Tab bar */}

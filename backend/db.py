@@ -93,7 +93,9 @@ class SupabaseClient:
         """Bulk-upsert multiple rows, batched in chunks.
 
         Same as _post_many but with merge-duplicates resolution on the
-        specified conflict column(s).
+        specified conflict column(s).  The ``on_conflict`` value is
+        appended directly to the URL (not via ``params``) because httpx
+        URL-encodes commas to ``%2C`` which PostgREST cannot parse.
         """
         if not rows:
             return []
@@ -104,8 +106,9 @@ class SupabaseClient:
         results: list[dict] = []
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i : i + chunk_size]
+            url = f"{self.base_url}/{table}?on_conflict={on_conflict}"
             resp = self._http.post(
-                f"{self.base_url}/{table}",
+                url,
                 headers=headers,
                 json=chunk,
                 timeout=30,
@@ -155,16 +158,17 @@ class SupabaseClient:
         id_column: str,
         ids: list,
         data: dict[str, Any],
+        chunk_size: int = 500,
     ) -> None:
         """Batch-PATCH rows matching an IN filter on *id_column*.
 
-        Sends one PATCH per chunk of 100 IDs, applying the same *data*
-        update to all matching rows.
+        Sends one PATCH per chunk of ``chunk_size`` IDs, applying the
+        same *data* update to all matching rows.
         """
         if not ids:
             return
-        for i in range(0, len(ids), 100):
-            chunk = ids[i : i + 100]
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
             id_list = ",".join(str(x) for x in chunk)
             resp = self._http.patch(
                 f"{self.base_url}/{table}",
@@ -174,6 +178,59 @@ class SupabaseClient:
                 timeout=30,
             )
             resp.raise_for_status()
+
+    def _patch(
+        self,
+        table: str,
+        filters: dict[str, str],
+        data: dict[str, Any],
+    ) -> int:
+        """PATCH rows matching PostgREST filters.  Returns affected count.
+
+        Uses ``return=minimal,count=exact`` to avoid serialising every
+        updated row back (which times out on large patches).
+        """
+        resp = self._http.patch(
+            f"{self.base_url}/{table}",
+            headers={**self.headers, "Prefer": "return=minimal,count=exact"},
+            params=filters,
+            json=data,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        cr = resp.headers.get("content-range", "")
+        try:
+            return int(cr.rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            return 0
+
+    def _delete(
+        self,
+        table: str,
+        filters: dict[str, str],
+    ) -> int:
+        """DELETE rows matching PostgREST filters.  Returns affected count.
+
+        Uses ``Prefer: return=minimal,count=exact`` so Supabase returns
+        the count in a Content-Range header without serialising every
+        deleted row.
+        """
+        headers = {
+            **self.headers,
+            "Prefer": "return=minimal,count=exact",
+        }
+        resp = self._http.delete(
+            f"{self.base_url}/{table}",
+            headers=headers,
+            params=filters,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        cr = resp.headers.get("content-range", "")
+        try:
+            return int(cr.rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            return 0
 
 
 def get_supabase() -> SupabaseClient:
@@ -340,10 +397,11 @@ def get_latest_ev_opportunities(
     Finds the latest scan timestamp, then returns all rows from that scan
     joined with game info, sorted by ev_percentage descending.
     """
-    # Find the most recent scan timestamp.
+    # Find the most recent scan timestamp among open (non-expired) rows.
     latest = client._get(
         "ev_opportunities",
         select="timestamp",
+        filters={"status": "eq.open"},
         order="timestamp.desc",
         limit=1,
     )
@@ -352,7 +410,10 @@ def get_latest_ev_opportunities(
 
     latest_ts = latest[0]["timestamp"]
 
-    filters: dict[str, str] = {"timestamp": f"eq.{latest_ts}"}
+    filters: dict[str, str] = {
+        "timestamp": f"eq.{latest_ts}",
+        "status": "eq.open",
+    }
     if min_ev is not None:
         filters["ev_percentage"] = f"gte.{min_ev}"
     if sportsbook is not None:
@@ -394,7 +455,7 @@ def bulk_insert_line_movements(
 ) -> None:
     """Bulk-insert line movement rows in a single request."""
     if rows:
-        client._post_many("line_movements", rows)
+        client._post_many("line_movements", rows, chunk_size=2000)
 
 
 def get_line_movements_for_game(

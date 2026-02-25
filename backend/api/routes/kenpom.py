@@ -2,12 +2,19 @@
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query
 
 from db import get_supabase
 
 router = APIRouter()
+_ET = ZoneInfo("America/New_York")
+
+
+def _today_et() -> date:
+    """Current date in US Eastern — matches snapshot bucketing."""
+    return datetime.now(_ET).date()
 
 
 def _table_missing_error(err: Exception) -> bool:
@@ -60,7 +67,7 @@ def get_today() -> dict:
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    today = date.today()
+    today = _today_et()
     snapshots = _get_snapshots_for_date(db, today)
     return {
         "date": today.isoformat(),
@@ -76,7 +83,7 @@ def get_tomorrow() -> dict:
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = _today_et() + timedelta(days=1)
     snapshots = _get_snapshots_for_date(db, tomorrow)
     message = None
     if not snapshots:
@@ -93,7 +100,7 @@ def get_edges(
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    dt = date.fromisoformat(target_date) if target_date else date.today()
+    dt = date.fromisoformat(target_date) if target_date else _today_et()
     all_snaps = _get_snapshots_for_date(db, dt)
 
     spread_edges = sorted(
@@ -115,10 +122,21 @@ def get_edges(
 
 
 def _count_results(rows: list[dict]) -> dict:
-    """Count wins/losses and sum units from raw graded snapshot rows."""
+    """Count wins/losses and sum units from raw graded snapshot rows.
+
+    W/L counts come from result_spread_correct / result_total_correct flags.
+    Rows where those flags are None (ungraded or missing Pinnacle data) are
+    naturally excluded by the ``is True`` / ``is False`` checks — no extra
+    Pinnacle-presence gate is needed.
+
+    Unit sums are returned whenever at least one non-null unit result exists,
+    decoupled from whether Pinnacle columns are populated on the row.
+    """
     sw = sl = tw = tl = mw = ml = 0
     s_units = t_units = m_units = 0.0
+    has_s_units = has_t_units = False
     for r in rows:
+        # W/L — None results are excluded naturally.
         if r.get("result_spread_correct") is True:
             sw += 1
         elif r.get("result_spread_correct") is False:
@@ -137,17 +155,19 @@ def _count_results(rows: list[dict]) -> dict:
         mu = r.get("ml_unit_result")
         if su is not None:
             s_units += su
+            has_s_units = True
         if tu is not None:
             t_units += tu
+            has_t_units = True
         if mu is not None:
             m_units += mu
     return {
         "spread_wins": sw, "spread_losses": sl,
         "spread_pct": round(sw / (sw + sl) * 100, 1) if (sw + sl) > 0 else 0,
-        "spread_units": round(s_units, 2),
+        "spread_units": round(s_units, 2) if has_s_units else None,
         "total_wins": tw, "total_losses": tl,
         "total_pct": round(tw / (tw + tl) * 100, 1) if (tw + tl) > 0 else 0,
-        "total_units": round(t_units, 2),
+        "total_units": round(t_units, 2) if has_t_units else None,
         "ml_wins": mw, "ml_losses": ml,
         "ml_pct": round(mw / (mw + ml) * 100, 1) if (mw + ml) > 0 else 0,
         "ml_units": round(m_units, 2),
@@ -180,7 +200,7 @@ def get_performance(
         db = get_supabase()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (_today_et() - timedelta(days=days)).isoformat()
 
     rows = _safe_get_graded(db, {"snapshot_date": f"gte.{since}"})
 
@@ -234,9 +254,12 @@ def get_performance_season() -> dict:
 
     season = _count_results(rows)
     season["total_games_graded"] = len(rows)
-    season["spread_record"] = f"{season['spread_wins']}-{season['spread_losses']}"
-    season["total_record"] = f"{season['total_wins']}-{season['total_losses']}"
-    season["ml_record"] = f"{season['ml_wins']}-{season['ml_losses']}"
+    sw, sl = season["spread_wins"], season["spread_losses"]
+    tw, tl = season["total_wins"], season["total_losses"]
+    mw, ml_ = season["ml_wins"], season["ml_losses"]
+    season["spread_record"] = f"{sw}-{sl}" if (sw + sl) > 0 else None
+    season["total_record"] = f"{tw}-{tl}" if (tw + tl) > 0 else None
+    season["ml_record"] = f"{mw}-{ml_}" if (mw + ml_) > 0 else None
     season["last_updated"] = datetime.now(timezone.utc).isoformat()
 
     buckets_def = [

@@ -37,13 +37,13 @@ const KELLY_LABELS: Record<number, string> = {
 // ---------------------------------------------------------------------------
 
 const BankrollContext = createContext<BankrollContextValue>({
-  bankroll: null,
-  kellyMultiplier: 0.25,
-  unitSize: null,
+  bankroll: 1000,
+  kellyMultiplier: 0.5,
+  unitSize: 10,
   setBankroll: () => {},
   setKellyMultiplier: () => {},
   kellyBetSize: () => null,
-  kellyLabel: "Quarter Kelly",
+  kellyLabel: "Half Kelly",
 });
 
 export function useBankroll() {
@@ -54,23 +54,26 @@ export function useBankroll() {
 // Provider
 // ---------------------------------------------------------------------------
 
+/** Default bankroll used when user hasn't configured one. */
+const DEFAULT_BANKROLL = 1000;
+
 function loadFromStorage(): BankrollSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
-        bankroll: typeof parsed.bankroll === "number" ? parsed.bankroll : null,
+        bankroll: typeof parsed.bankroll === "number" ? parsed.bankroll : DEFAULT_BANKROLL,
         kellyMultiplier:
           [1.0, 0.5, 0.25, 0.125].includes(parsed.kellyMultiplier)
             ? parsed.kellyMultiplier
-            : 0.25,
+            : 0.5,
       };
     }
   } catch {
     // localStorage unavailable or corrupt
   }
-  return { bankroll: null, kellyMultiplier: 0.25 };
+  return { bankroll: DEFAULT_BANKROLL, kellyMultiplier: 0.5 };
 }
 
 function saveToStorage(settings: BankrollSettings) {
@@ -82,8 +85,8 @@ function saveToStorage(settings: BankrollSettings) {
 }
 
 export function BankrollProvider({ children }: { children: ReactNode }) {
-  const [bankroll, setBankrollState] = useState<number | null>(null);
-  const [kellyMultiplier, setKellyMultiplierState] = useState<KellyMultiplier>(0.25);
+  const [bankroll, setBankrollState] = useState<number | null>(DEFAULT_BANKROLL);
+  const [kellyMultiplier, setKellyMultiplierState] = useState<KellyMultiplier>(0.5);
   const [hydrated, setHydrated] = useState(false);
 
   // Hydrate from localStorage on mount
@@ -117,7 +120,7 @@ export function BankrollProvider({ children }: { children: ReactNode }) {
         setBankroll: setBankrollState,
         setKellyMultiplier: setKellyMultiplierState,
         kellyBetSize,
-        kellyLabel: KELLY_LABELS[kellyMultiplier] ?? "Quarter Kelly",
+        kellyLabel: KELLY_LABELS[kellyMultiplier] ?? "Half Kelly",
       }}
     >
       {children}

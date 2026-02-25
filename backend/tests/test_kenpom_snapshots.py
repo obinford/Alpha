@@ -7,7 +7,52 @@ Verifies:
 - Edge cases: ties, pushes, zero edges
 """
 
+import sys
+from datetime import date
+from pathlib import Path
+
 import pytest
+
+# Ensure backend/ is on sys.path so we can import intelligence.kenpom_snapshots.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from intelligence.kenpom_snapshots import _game_date_from_commence
+
+
+# ---------------------------------------------------------------------------
+# Game-date derivation from commence_time
+# ---------------------------------------------------------------------------
+
+def test_game_date_evening_et():
+    """8 PM ET game on Feb 19 = 01:00 UTC Feb 20 → should bucket as Feb 19."""
+    assert _game_date_from_commence("2026-02-20T01:00:00Z") == date(2026, 2, 19)
+
+
+def test_game_date_afternoon_et():
+    """2 PM ET game on Feb 19 = 19:00 UTC Feb 19 → should bucket as Feb 19."""
+    assert _game_date_from_commence("2026-02-19T19:00:00Z") == date(2026, 2, 19)
+
+
+def test_game_date_late_night_et():
+    """11 PM ET game on Feb 19 = 04:00 UTC Feb 20 → should bucket as Feb 19."""
+    assert _game_date_from_commence("2026-02-20T04:00:00Z") == date(2026, 2, 19)
+
+
+def test_game_date_early_morning_et():
+    """1 AM ET game on Feb 20 = 06:00 UTC Feb 20 → should bucket as Feb 20."""
+    assert _game_date_from_commence("2026-02-20T06:00:00Z") == date(2026, 2, 20)
+
+
+def test_game_date_none_falls_back():
+    """No commence_time → falls back to provided date or today."""
+    fallback = date(2026, 3, 1)
+    assert _game_date_from_commence(None, fallback=fallback) == fallback
+
+
+def test_game_date_invalid_falls_back():
+    """Invalid commence_time → falls back."""
+    fallback = date(2026, 3, 1)
+    assert _game_date_from_commence("not-a-date", fallback=fallback) == fallback
 
 
 # ---------------------------------------------------------------------------
@@ -358,3 +403,239 @@ def test_unit_no_odds():
     """No odds → None."""
     assert _calc_unit_result(None, True) is None
     assert _calc_unit_result(None, False) is None
+
+
+# ---------------------------------------------------------------------------
+# Repair unit logic tests — mirrors repair_kenpom_units() logic
+# ---------------------------------------------------------------------------
+
+def _determine_spread_odds(spread_edge, pin_home_odds, pin_away_odds):
+    """Determine which odds to use based on spread edge direction."""
+    if spread_edge is not None and spread_edge > 0:
+        return pin_home_odds or -110
+    elif spread_edge is not None and spread_edge < 0:
+        return pin_away_odds or -110
+    return None
+
+
+def _determine_ml_odds(kp_wp, pin_home_ml, pin_away_ml):
+    """Determine ML odds — no default, skip if NULL."""
+    if kp_wp is not None and kp_wp > 0.5:
+        return pin_home_ml
+    elif kp_wp is not None and kp_wp < 0.5:
+        return pin_away_ml
+    return None
+
+
+def test_repair_spread_odds_home():
+    """Positive spread edge → use home odds."""
+    odds = _determine_spread_odds(2.5, -108, -112)
+    assert odds == -108
+
+
+def test_repair_spread_odds_away():
+    """Negative spread edge → use away odds."""
+    odds = _determine_spread_odds(-3.0, -108, -112)
+    assert odds == -112
+
+
+def test_repair_spread_odds_default():
+    """Missing odds → default to -110."""
+    odds = _determine_spread_odds(2.5, None, None)
+    assert odds == -110
+
+
+def test_repair_spread_odds_zero_edge():
+    """Zero edge → no bet, return None."""
+    odds = _determine_spread_odds(0, -108, -112)
+    assert odds is None
+
+
+def test_repair_ml_odds_home():
+    """KP favors home → use home ML."""
+    odds = _determine_ml_odds(0.65, -150, 130)
+    assert odds == -150
+
+
+def test_repair_ml_odds_away():
+    """KP favors away → use away ML."""
+    odds = _determine_ml_odds(0.35, -150, 130)
+    assert odds == 130
+
+
+def test_repair_ml_odds_skip_null():
+    """Missing ML odds → None (skip, no default)."""
+    odds = _determine_ml_odds(0.65, None, None)
+    assert odds is None
+
+
+def test_repair_ml_odds_even():
+    """Even kp_wp → no pick → None."""
+    odds = _determine_ml_odds(0.5, -150, 130)
+    assert odds is None
+
+
+def test_repair_full_scenario():
+    """Full repair scenario: win at -110 spread, loss on total, win ML."""
+    # Spread: edge > 0, home odds -110, spread_correct=True → +0.91u
+    s_odds = _determine_spread_odds(2.5, -110, -110)
+    s_units = _calc_unit_result(s_odds, True)
+    assert s_units == pytest.approx(0.9091, abs=0.001)
+
+    # Total: edge > 0, over odds -110, total_correct=False → -1.0u
+    t_odds = -110
+    t_units = _calc_unit_result(t_odds, False)
+    assert t_units == -1.0
+
+    # ML: kp_wp=0.7, home ML -150, ml_correct=True → +0.6667u
+    ml_odds = _determine_ml_odds(0.7, -150, 130)
+    ml_units = _calc_unit_result(ml_odds, True)
+    assert ml_units == pytest.approx(0.6667, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# _count_results API helper tests
+# ---------------------------------------------------------------------------
+# Inline the function to avoid importing kenpom.py's full dependency chain
+# (FastAPI, db, supabase).  Kept in sync with backend/api/routes/kenpom.py.
+def _count_results(rows: list[dict]) -> dict:
+    sw = sl = tw = tl = mw = ml = 0
+    s_units = t_units = m_units = 0.0
+    has_s_units = has_t_units = False
+    for r in rows:
+        if r.get("result_spread_correct") is True:
+            sw += 1
+        elif r.get("result_spread_correct") is False:
+            sl += 1
+        if r.get("result_total_correct") is True:
+            tw += 1
+        elif r.get("result_total_correct") is False:
+            tl += 1
+        if r.get("result_ml_correct") is True:
+            mw += 1
+        elif r.get("result_ml_correct") is False:
+            ml += 1
+        su = r.get("spread_unit_result")
+        tu = r.get("total_unit_result")
+        mu = r.get("ml_unit_result")
+        if su is not None:
+            s_units += su
+            has_s_units = True
+        if tu is not None:
+            t_units += tu
+            has_t_units = True
+        if mu is not None:
+            m_units += mu
+    return {
+        "spread_wins": sw, "spread_losses": sl,
+        "spread_pct": round(sw / (sw + sl) * 100, 1) if (sw + sl) > 0 else 0,
+        "spread_units": round(s_units, 2) if has_s_units else None,
+        "total_wins": tw, "total_losses": tl,
+        "total_pct": round(tw / (tw + tl) * 100, 1) if (tw + tl) > 0 else 0,
+        "total_units": round(t_units, 2) if has_t_units else None,
+        "ml_wins": mw, "ml_losses": ml,
+        "ml_pct": round(mw / (mw + ml) * 100, 1) if (mw + ml) > 0 else 0,
+        "ml_units": round(m_units, 2),
+    }
+
+
+def test_count_results_units_without_pinnacle():
+    """Unit results should be summed even when pinnacle_spread_home is NULL.
+
+    This is the core bug fix: repair may set spread_unit_result on rows that
+    lack pinnacle_spread_home. The old code gated units on spread_graded > 0
+    (which required pinnacle_spread_home), causing +0.00u display.
+    """
+    rows = [
+        {
+            "result_spread_correct": True,
+            "result_total_correct": False,
+            "result_ml_correct": True,
+            "spread_unit_result": 0.91,
+            "total_unit_result": -1.0,
+            "ml_unit_result": 0.67,
+            "pinnacle_spread_home": None,  # No Pinnacle data
+            "pinnacle_total": None,
+        },
+    ]
+    result = _count_results(rows)
+    assert result["spread_wins"] == 1
+    assert result["spread_losses"] == 0
+    assert result["spread_units"] == 0.91
+    assert result["total_units"] == -1.0
+    assert result["ml_units"] == 0.67
+
+
+def test_count_results_null_results_excluded():
+    """Rows where result_spread_correct is None should not count as W or L.
+
+    This ensures the Feb 15 fix still works: games with no Pinnacle data
+    that were never properly graded show — not 0-0.
+    """
+    rows = [
+        {
+            "result_spread_correct": None,
+            "result_total_correct": None,
+            "result_ml_correct": None,
+            "spread_unit_result": None,
+            "total_unit_result": None,
+            "ml_unit_result": None,
+            "pinnacle_spread_home": None,
+            "pinnacle_total": None,
+        },
+    ]
+    result = _count_results(rows)
+    assert result["spread_wins"] == 0
+    assert result["spread_losses"] == 0
+    assert result["spread_units"] is None
+    assert result["total_units"] is None
+
+
+def test_count_results_mixed_rows():
+    """Mix of rows with and without Pinnacle data / unit results."""
+    rows = [
+        # Row with full data
+        {
+            "result_spread_correct": True,
+            "spread_unit_result": 0.91,
+            "result_total_correct": False,
+            "total_unit_result": -1.0,
+            "result_ml_correct": True,
+            "ml_unit_result": 0.67,
+            "pinnacle_spread_home": -3.5,
+            "pinnacle_total": 145.5,
+        },
+        # Row repaired without Pinnacle columns
+        {
+            "result_spread_correct": False,
+            "spread_unit_result": -1.0,
+            "result_total_correct": True,
+            "total_unit_result": 0.91,
+            "result_ml_correct": False,
+            "ml_unit_result": -1.0,
+            "pinnacle_spread_home": None,
+            "pinnacle_total": None,
+        },
+        # Ungraded row (Feb 15 style — no results at all)
+        {
+            "result_spread_correct": None,
+            "spread_unit_result": None,
+            "result_total_correct": None,
+            "total_unit_result": None,
+            "result_ml_correct": None,
+            "ml_unit_result": None,
+            "pinnacle_spread_home": None,
+            "pinnacle_total": None,
+        },
+    ]
+    result = _count_results(rows)
+    assert result["spread_wins"] == 1
+    assert result["spread_losses"] == 1
+    assert result["spread_pct"] == 50.0
+    assert result["spread_units"] == pytest.approx(-0.09, abs=0.01)
+    assert result["total_wins"] == 1
+    assert result["total_losses"] == 1
+    assert result["total_units"] == pytest.approx(-0.09, abs=0.01)
+    assert result["ml_wins"] == 1
+    assert result["ml_losses"] == 1
+    assert result["ml_units"] == pytest.approx(-0.33, abs=0.01)
