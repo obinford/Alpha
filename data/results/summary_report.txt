@@ -5,80 +5,80 @@ Phase 1 | 2019-2025 | Pitcher Strikeouts
 =======================================================
 
 THESIS VALIDATION: MEAN VS MEDIAN GAP
-  Starts where mean > median: 84.2%
-  Average gap (K): 0.375
-  Over-only ROI (exploiting gap): +17.7%
-  Over-only win rate: 60.7%
-  Strong overs (gap >= 0.3): 6114 bets, +19.1% ROI
+  Starts where mean > median: 74.4%
+  Average gap (K): 0.246
+  Over-only ROI (exploiting gap): +20.0%
+  Over-only win rate: 62.3%
+  Strong overs (gap >= 0.3): 12024 bets, +23.0% ROI
 
 OVERALL PERFORMANCE:
-  Total starts analyzed: 12,270
-  Total bets placed: 7,691
-  Win rate: 60.7%
-  ROI: +17.7%
-  Units profit: +2288.1
+  Total starts analyzed: 27,017
+  Total bets placed: 18,435
+  Win rate: 62.3%
+  ROI: +20.0%
+  Units profit: +6415.7
 
 BY TIER:
-  A+  (7%+ edge):  4459 bets | 63.8% win rate | +21.8% ROI | +1940.4 units
-  A   (5-7% edge):  1580 bets | 58.6% win rate | +11.9% ROI | +281.6 units
-  B   (3-5% edge):  1652 bets | 54.5% win rate | +4.0% ROI | +66.1 units
+  A+  (7%+ edge): 12128 bets | 64.2% win rate | +22.6% ROI | +5478.6 units
+  A   (5-7% edge):  3170 bets | 58.6% win rate | +11.9% ROI | +565.4 units
+  B   (3-5% edge):  3137 bets | 58.6% win rate | +11.9% ROI | +371.7 units
 
 BY SEASON:
-  2019:  1040 bets | 60.8% WR | +16.8% ROI | +295.3 units
-  2020:   394 bets | 60.2% WR | +16.7% ROI | +110.3 units
-  2021:  1197 bets | 61.7% WR | +19.0% ROI | +388.5 units
-  2022:  1193 bets | 62.5% WR | +21.4% ROI | +434.7 units
-  2023:  1210 bets | 59.1% WR | +13.8% ROI | +278.0 units
-  2024:  1384 bets | 60.7% WR | +18.1% ROI | +416.2 units
-  2025:  1273 bets | 59.8% WR | +17.1% ROI | +365.1 units
+  2019:  2288 bets | 62.4% WR | +19.7% ROI | +777.3 units
+  2020:  1013 bets | 61.9% WR | +18.8% ROI | +338.0 units
+  2021:  2921 bets | 62.0% WR | +19.8% ROI | +1001.4 units
+  2022:  2942 bets | 62.3% WR | +20.0% ROI | +1023.5 units
+  2023:  2992 bets | 63.0% WR | +21.1% ROI | +1102.8 units
+  2024:  3115 bets | 61.9% WR | +19.0% ROI | +1037.6 units
+  2025:  3164 bets | 62.3% WR | +20.5% ROI | +1135.1 units
 
 BANKROLL:
   Starting: 1,000 units
-  Ending: 3,288.1 units
-  Max drawdown: 21.0 units (0.6%)
+  Ending: 7,415.7 units
+  Max drawdown: 37.3 units (0.5%)
 
 DISTRIBUTION FIT:
-  NegBin preferred: 41.9% of starts
-  Average skewness: 0.772
+  NegBin preferred: 5.8% of starts
+  Average skewness: 0.584
 
 CALIBRATION:
     50%-55%: no bets
-    55%-60%: predicted 57.6% → actual 56.8% (3647 bets)
-    60%-65%: predicted 62.3% → actual 62.9% (2778 bets)
-    65%-70%: predicted 66.9% → actual 65.0% (1071 bets)
-    70%-75%: predicted 71.9% → actual 74.5% (165 bets)
-    75%-80%: predicted 78.0% → actual 100.0% (25 bets)
-    80%-85%: predicted 80.4% → actual 100.0% (5 bets)
+    55%-60%: predicted 57.7% → actual 58.9% (7288 bets)
+    60%-65%: predicted 62.4% → actual 62.3% (7646 bets)
+    65%-70%: predicted 66.7% → actual 68.3% (3215 bets)
+    70%-75%: predicted 71.6% → actual 79.8% (253 bets)
+    75%-80%: predicted 78.1% → actual 90.3% (31 bets)
+    80%-85%: predicted 80.0% → actual 0.0% (2 bets)
     85%-90%: no bets
    90%-100%: no bets
 
 TOP 10 MOST PROFITABLE PITCHERS:
-   1. Sandy Alcantara           +80.8 units (119 bets, 71% WR)
-   2. Sonny Gray                +58.1 units (135 bets, 64% WR)
-   3. Jake Irvin                +54.9 units (89 bets, 70% WR)
-   4. Kyle Hendricks            +54.3 units (116 bets, 66% WR)
-   5. Seth Lugo                 +54.3 units (126 bets, 63% WR)
-   6. Robbie Ray                +54.2 units (100 bets, 68% WR)
-   7. Framber Valdez            +54.0 units (107 bets, 67% WR)
-   8. Jordan Montgomery         +52.9 units (119 bets, 66% WR)
-   9. Antonio Senzatela         +51.3 units (115 bets, 65% WR)
-  10. Mike Clevinger            +48.3 units (82 bets, 67% WR)
+   1. Chris Bassitt             +83.8 units (117 bets, 71% WR)
+   2. Nathan Eovaldi            +66.2 units (92 bets, 74% WR)
+   3. Logan Webb                +65.3 units (120 bets, 68% WR)
+   4. Tyler Anderson            +63.6 units (117 bets, 67% WR)
+   5. Jameson Taillon           +60.8 units (99 bets, 68% WR)
+   6. Pablo López               +58.0 units (104 bets, 67% WR)
+   7. Trevor Williams           +54.1 units (84 bets, 71% WR)
+   8. Yu Darvish                +53.9 units (106 bets, 68% WR)
+   9. Sonny Gray                +52.5 units (114 bets, 66% WR)
+  10. Erick Fedde               +51.9 units (83 bets, 70% WR)
 
 TOP 10 WORST PITCHERS TO BET:
-   1. Charlie Morton            -16.1 units (89 bets, 47% WR)
-   2. Joe Musgrove              -3.4 units (26 bets, 46% WR)
-   3. Kutter Crawford           -2.8 units (92 bets, 50% WR)
-   4. Lance McCullers           +1.9 units (111 bets, 51% WR)
-   5. Zach Davies               +2.5 units (93 bets, 54% WR)
-   6. Jameson Taillon           +2.9 units (110 bets, 52% WR)
-   7. Max Scherzer              +4.0 units (63 bets, 54% WR)
-   8. Michael King              +5.3 units (80 bets, 57% WR)
-   9. George Kirby              +5.9 units (66 bets, 55% WR)
-  10. Jon Gray                  +6.0 units (77 bets, 56% WR)
+   1. Noah Syndergaard          -16.3 units (50 bets, 42% WR)
+   2. Andrew Heaney             -14.1 units (114 bets, 51% WR)
+   3. Roansy Contreras          -11.0 units (17 bets, 35% WR)
+   4. Sixto Sánchez             -10.5 units (6 bets, 0% WR)
+   5. Kodai Senga               -10.2 units (28 bets, 43% WR)
+   6. Bryce Miller              -9.9 units (37 bets, 41% WR)
+   7. Stephen Strasburg         -9.5 units (26 bets, 42% WR)
+   8. Keegan Akin               -9.4 units (15 bets, 33% WR)
+   9. Josh Winckowski           -9.0 units (11 bets, 27% WR)
+  10. Tyler Gilbert             -9.0 units (11 bets, 27% WR)
 
 OVER vs UNDER BREAKDOWN:
-  Over bets: 7691 | 60.7% WR | +17.7% ROI
-  Under bets: 0 | 0.0% WR | +0.0% ROI
+  Over bets: 18431 | 62.3% WR | +20.0% ROI
+  Under bets: 4 | 25.0% WR | -52.3% ROI
 
 =======================================================
 VERDICT: THESIS CONFIRMED

@@ -1,35 +1,35 @@
 {
-  "total_starts": 12270,
-  "total_bets": 7691,
-  "total_wins": 4670,
-  "win_rate": 0.6072032245481732,
-  "total_wagered": 12940.0,
-  "total_pnl": 2288.093,
-  "roi": 0.17682326120556413,
+  "total_starts": 27017,
+  "total_bets": 18435,
+  "total_wins": 11484,
+  "win_rate": 0.6229454841334419,
+  "total_wagered": 32148.0,
+  "total_pnl": 6415.709000000001,
+  "roi": 0.19956790469080504,
   "by_tier": {
     "A+": {
-      "bets": 4459,
-      "wins": 2844,
-      "win_rate": 0.6378111684234133,
-      "wagered": 8918.0,
-      "pnl": 1940.3919999999998,
-      "roi": 0.217581520520296
+      "bets": 12128,
+      "wins": 7788,
+      "win_rate": 0.6421503957783641,
+      "wagered": 24256.0,
+      "pnl": 5478.583999999999,
+      "roi": 0.22586510554089706
     },
     "A": {
-      "bets": 1580,
-      "wins": 926,
-      "win_rate": 0.5860759493670886,
-      "wagered": 2370.0,
-      "pnl": 281.6010000000001,
-      "roi": 0.1188189873417722
+      "bets": 3170,
+      "wins": 1858,
+      "win_rate": 0.5861198738170347,
+      "wagered": 4755.0,
+      "pnl": 565.3830000000003,
+      "roi": 0.1189028391167193
     },
     "B": {
-      "bets": 1652,
-      "wins": 900,
-      "win_rate": 0.5447941888619855,
-      "wagered": 1652.0,
-      "pnl": 66.09999999999997,
-      "roi": 0.04001210653753025
+      "bets": 3137,
+      "wins": 1838,
+      "win_rate": 0.5859101051960471,
+      "wagered": 3137.0,
+      "pnl": 371.7419999999999,
+      "roi": 0.11850239081925404
     },
     "Monitor": {
       "bets": 0,
@@ -38,75 +38,75 @@
       "wagered": 0.0,
       "pnl": 0.0,
       "roi": 0.0,
-      "monitored": 1698
+      "monitored": 3205
     }
   },
   "by_season": {
     "2019": {
-      "bets": 1040,
-      "wins": 632,
-      "win_rate": 0.6076923076923076,
-      "pnl": 295.266,
-      "roi": 0.16824273504273504
+      "bets": 2288,
+      "wins": 1428,
+      "win_rate": 0.6241258741258742,
+      "pnl": 777.275,
+      "roi": 0.19690310322989232
     },
     "2020": {
-      "bets": 394,
-      "wins": 237,
-      "win_rate": 0.6015228426395939,
-      "pnl": 110.32700000000001,
-      "roi": 0.16741578148710168
+      "bets": 1013,
+      "wins": 627,
+      "win_rate": 0.6189536031589339,
+      "pnl": 337.989,
+      "roi": 0.18756326304106546
     },
     "2021": {
-      "bets": 1197,
-      "wins": 739,
-      "win_rate": 0.6173767752715121,
-      "pnl": 388.52049999999997,
-      "roi": 0.1900320371729029
+      "bets": 2921,
+      "wins": 1811,
+      "win_rate": 0.6199931530297843,
+      "pnl": 1001.393,
+      "roi": 0.19776695961291596
     },
     "2022": {
-      "bets": 1193,
-      "wins": 746,
-      "win_rate": 0.625314333612741,
-      "pnl": 434.6555,
-      "roi": 0.21443290577207696
+      "bets": 2942,
+      "wins": 1832,
+      "win_rate": 0.6227056424201224,
+      "pnl": 1023.5255,
+      "roi": 0.19980976085895558
     },
     "2023": {
-      "bets": 1210,
-      "wins": 715,
-      "win_rate": 0.5909090909090909,
-      "pnl": 277.98150000000004,
-      "roi": 0.13764867541470663
+      "bets": 2992,
+      "wins": 1886,
+      "win_rate": 0.6303475935828877,
+      "pnl": 1102.79,
+      "roi": 0.21142446319018404
     },
     "2024": {
-      "bets": 1384,
-      "wins": 840,
-      "win_rate": 0.6069364161849711,
-      "pnl": 416.23400000000004,
-      "roi": 0.18050043365134433
+      "bets": 3115,
+      "wins": 1928,
+      "win_rate": 0.6189406099518459,
+      "pnl": 1037.6455,
+      "roi": 0.19032382611885548
     },
     "2025": {
-      "bets": 1273,
-      "wins": 761,
-      "win_rate": 0.5978004713275726,
-      "pnl": 365.1085,
-      "roi": 0.1714929544387036
+      "bets": 3164,
+      "wins": 1972,
+      "win_rate": 0.6232616940581542,
+      "pnl": 1135.091,
+      "roi": 0.20472378032284244
     }
   },
-  "mean_gt_median_pct": 0.8418092909535453,
-  "avg_mean_median_gap": 0.3749114506927465,
-  "over_bets": 7691,
-  "over_roi": 0.17682326120556413,
-  "over_win_rate": 0.6072032245481732,
-  "over_pnl": 2288.093,
-  "under_bets": 0,
-  "under_roi": 0.0,
-  "under_win_rate": 0.0,
-  "under_pnl": 0.0,
-  "strong_over_bets": 6114,
-  "strong_over_roi": 0.19053917754931923,
-  "strong_over_win_rate": 0.6172718351324828,
-  "avg_skewness": 0.7715835862247361,
-  "nbinom_preferred_pct": 0.41923390383048087,
+  "mean_gt_median_pct": 0.7443461524225488,
+  "avg_mean_median_gap": 0.2456567568567939,
+  "over_bets": 18431,
+  "over_roi": 0.1997476975731176,
+  "over_win_rate": 0.6230264228745049,
+  "over_pnl": 6419.891,
+  "under_bets": 4,
+  "under_roi": -0.52275,
+  "under_win_rate": 0.25,
+  "under_pnl": -4.182,
+  "strong_over_bets": 12024,
+  "strong_over_roi": 0.22989047853971384,
+  "strong_over_win_rate": 0.6441284098469727,
+  "avg_skewness": 0.5844815107621661,
+  "nbinom_preferred_pct": 0.05807454565643854,
   "calibration": [
     {
       "bin": "50%-55%",
@@ -116,39 +116,39 @@
     },
     {
       "bin": "55%-60%",
-      "predicted_avg": 0.5763532218261583,
-      "actual_rate": 0.5684123937482862,
-      "count": 3647
+      "predicted_avg": 0.5771480104281009,
+      "actual_rate": 0.5891877058177827,
+      "count": 7288
     },
     {
       "bin": "60%-65%",
-      "predicted_avg": 0.6228244420446365,
-      "actual_rate": 0.6292296616270698,
-      "count": 2778
+      "predicted_avg": 0.6241896024064871,
+      "actual_rate": 0.6230708867381638,
+      "count": 7646
     },
     {
       "bin": "65%-70%",
-      "predicted_avg": 0.6691861811391223,
-      "actual_rate": 0.6498599439775911,
-      "count": 1071
+      "predicted_avg": 0.667130699844479,
+      "actual_rate": 0.6830482115085537,
+      "count": 3215
     },
     {
       "bin": "70%-75%",
-      "predicted_avg": 0.7190672727272727,
-      "actual_rate": 0.7454545454545455,
-      "count": 165
+      "predicted_avg": 0.7155648221343873,
+      "actual_rate": 0.7984189723320159,
+      "count": 253
     },
     {
       "bin": "75%-80%",
-      "predicted_avg": 0.7801279999999999,
-      "actual_rate": 1.0,
-      "count": 25
+      "predicted_avg": 0.7810999999999999,
+      "actual_rate": 0.9032258064516129,
+      "count": 31
     },
     {
       "bin": "80%-85%",
-      "predicted_avg": 0.8035400000000001,
-      "actual_rate": 1.0,
-      "count": 5
+      "predicted_avg": 0.8003,
+      "actual_rate": 0.0,
+      "count": 2
     },
     {
       "bin": "85%-90%",
@@ -164,152 +164,152 @@
     }
   ],
   "starting_bankroll": 1000.0,
-  "ending_bankroll": 3288.0930000000485,
-  "max_drawdown": 21.04649999999947,
-  "max_drawdown_pct": 0.639481110749176,
+  "ending_bankroll": 7415.709000001202,
+  "max_drawdown": 37.27749999999969,
+  "max_drawdown_pct": 0.5025473498622506,
   "top_10_pitchers": [
     {
-      "pitcher_name": "Sandy Alcantara",
-      "total_pnl": 80.8495,
-      "bets": 119,
-      "wins": 85,
+      "pitcher_name": "Chris Bassitt",
+      "total_pnl": 83.75850000000001,
+      "bets": 117,
+      "wins": 83,
+      "win_rate": 0.7094017094017094
+    },
+    {
+      "pitcher_name": "Nathan Eovaldi",
+      "total_pnl": 66.171,
+      "bets": 92,
+      "wins": 68,
+      "win_rate": 0.7391304347826086
+    },
+    {
+      "pitcher_name": "Logan Webb",
+      "total_pnl": 65.2595,
+      "bets": 120,
+      "wins": 82,
+      "win_rate": 0.6833333333333333
+    },
+    {
+      "pitcher_name": "Tyler Anderson",
+      "total_pnl": 63.623000000000005,
+      "bets": 117,
+      "wins": 78,
+      "win_rate": 0.6666666666666666
+    },
+    {
+      "pitcher_name": "Jameson Taillon",
+      "total_pnl": 60.80650000000001,
+      "bets": 99,
+      "wins": 67,
+      "win_rate": 0.6767676767676768
+    },
+    {
+      "pitcher_name": "Pablo L\u00f3pez",
+      "total_pnl": 57.9885,
+      "bets": 104,
+      "wins": 70,
+      "win_rate": 0.6730769230769231
+    },
+    {
+      "pitcher_name": "Trevor Williams",
+      "total_pnl": 54.081,
+      "bets": 84,
+      "wins": 60,
       "win_rate": 0.7142857142857143
     },
     {
-      "pitcher_name": "Sonny Gray",
-      "total_pnl": 58.0765,
-      "bets": 135,
-      "wins": 86,
-      "win_rate": 0.6370370370370371
-    },
-    {
-      "pitcher_name": "Jake Irvin",
-      "total_pnl": 54.853500000000004,
-      "bets": 89,
-      "wins": 62,
-      "win_rate": 0.6966292134831461
-    },
-    {
-      "pitcher_name": "Kyle Hendricks",
-      "total_pnl": 54.261,
-      "bets": 116,
-      "wins": 77,
-      "win_rate": 0.6637931034482759
-    },
-    {
-      "pitcher_name": "Seth Lugo",
-      "total_pnl": 54.25950000000001,
-      "bets": 126,
-      "wins": 80,
-      "win_rate": 0.6349206349206349
-    },
-    {
-      "pitcher_name": "Robbie Ray",
-      "total_pnl": 54.170500000000004,
-      "bets": 100,
-      "wins": 68,
-      "win_rate": 0.68
-    },
-    {
-      "pitcher_name": "Framber Valdez",
-      "total_pnl": 53.989000000000004,
-      "bets": 107,
+      "pitcher_name": "Yu Darvish",
+      "total_pnl": 53.94350000000001,
+      "bets": 106,
       "wins": 72,
-      "win_rate": 0.6728971962616822
+      "win_rate": 0.6792452830188679
     },
     {
-      "pitcher_name": "Jordan Montgomery",
-      "total_pnl": 52.941500000000005,
-      "bets": 119,
-      "wins": 78,
-      "win_rate": 0.6554621848739496
-    },
-    {
-      "pitcher_name": "Antonio Senzatela",
-      "total_pnl": 51.306000000000004,
-      "bets": 115,
+      "pitcher_name": "Sonny Gray",
+      "total_pnl": 52.48800000000001,
+      "bets": 114,
       "wins": 75,
-      "win_rate": 0.6521739130434783
+      "win_rate": 0.6578947368421053
     },
     {
-      "pitcher_name": "Mike Clevinger",
-      "total_pnl": 48.2635,
-      "bets": 82,
-      "wins": 55,
-      "win_rate": 0.6707317073170732
+      "pitcher_name": "Erick Fedde",
+      "total_pnl": 51.8995,
+      "bets": 83,
+      "wins": 58,
+      "win_rate": 0.6987951807228916
     }
   ],
   "bottom_10_pitchers": [
     {
-      "pitcher_name": "Charlie Morton",
-      "total_pnl": -16.142999999999997,
-      "bets": 89,
-      "wins": 42,
-      "win_rate": 0.47191011235955055
+      "pitcher_name": "Noah Syndergaard",
+      "total_pnl": -16.320999999999998,
+      "bets": 50,
+      "wins": 21,
+      "win_rate": 0.42
     },
     {
-      "pitcher_name": "Joe Musgrove",
-      "total_pnl": -3.365499999999999,
-      "bets": 26,
+      "pitcher_name": "Andrew Heaney",
+      "total_pnl": -14.098999999999993,
+      "bets": 114,
+      "wins": 58,
+      "win_rate": 0.5087719298245614
+    },
+    {
+      "pitcher_name": "Roansy Contreras",
+      "total_pnl": -11.001,
+      "bets": 17,
+      "wins": 6,
+      "win_rate": 0.35294117647058826
+    },
+    {
+      "pitcher_name": "Sixto S\u00e1nchez",
+      "total_pnl": -10.5,
+      "bets": 6,
+      "wins": 0,
+      "win_rate": 0.0
+    },
+    {
+      "pitcher_name": "Kodai Senga",
+      "total_pnl": -10.229,
+      "bets": 28,
       "wins": 12,
-      "win_rate": 0.46153846153846156
+      "win_rate": 0.42857142857142855
     },
     {
-      "pitcher_name": "Kutter Crawford",
-      "total_pnl": -2.779499999999996,
-      "bets": 92,
-      "wins": 46,
-      "win_rate": 0.5
+      "pitcher_name": "Bryce Miller",
+      "total_pnl": -9.866,
+      "bets": 37,
+      "wins": 15,
+      "win_rate": 0.40540540540540543
     },
     {
-      "pitcher_name": "Lance McCullers",
-      "total_pnl": 1.946500000000004,
-      "bets": 111,
-      "wins": 57,
-      "win_rate": 0.5135135135135135
+      "pitcher_name": "Stephen Strasburg",
+      "total_pnl": -9.5015,
+      "bets": 26,
+      "wins": 11,
+      "win_rate": 0.4230769230769231
     },
     {
-      "pitcher_name": "Zach Davies",
-      "total_pnl": 2.492500000000004,
-      "bets": 93,
-      "wins": 50,
-      "win_rate": 0.5376344086021505
+      "pitcher_name": "Keegan Akin",
+      "total_pnl": -9.41,
+      "bets": 15,
+      "wins": 5,
+      "win_rate": 0.3333333333333333
     },
     {
-      "pitcher_name": "Jameson Taillon",
-      "total_pnl": 2.9005000000000045,
-      "bets": 110,
-      "wins": 57,
-      "win_rate": 0.5181818181818182
+      "pitcher_name": "Josh Winckowski",
+      "total_pnl": -9.046,
+      "bets": 11,
+      "wins": 3,
+      "win_rate": 0.2727272727272727
     },
     {
-      "pitcher_name": "Max Scherzer",
-      "total_pnl": 3.9505000000000026,
-      "bets": 63,
-      "wins": 34,
-      "win_rate": 0.5396825396825397
-    },
-    {
-      "pitcher_name": "Michael King",
-      "total_pnl": 5.267000000000004,
-      "bets": 80,
-      "wins": 46,
-      "win_rate": 0.575
-    },
-    {
-      "pitcher_name": "George Kirby",
-      "total_pnl": 5.903500000000003,
-      "bets": 66,
-      "wins": 36,
-      "win_rate": 0.5454545454545454
-    },
-    {
-      "pitcher_name": "Jon Gray",
-      "total_pnl": 5.994500000000004,
-      "bets": 77,
-      "wins": 43,
-      "win_rate": 0.5584415584415584
+      "pitcher_name": "Tyler Gilbert",
+      "total_pnl": -9.046,
+      "bets": 11,
+      "wins": 3,
+      "win_rate": 0.2727272727272727
     }
   ],
-  "daily_bankroll_count": 1171
+  "daily_bankroll_count": 1139
 }
