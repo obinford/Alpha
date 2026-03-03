@@ -160,15 +160,25 @@ def compute_all_metrics(df: pd.DataFrame) -> dict:
     metrics['calibration'] = calibration
 
     # === BANKROLL ===
+    # Compute drawdown on BET ROWS ONLY for accurate measurement
     if 'bankroll' in df.columns:
+        # Overall bankroll (for charting, includes all rows)
         bankroll = df['bankroll'].values
-        peak = np.maximum.accumulate(bankroll)
-        drawdown = peak - bankroll
-        max_dd = float(np.max(drawdown))
-        max_dd_pct = float(max_dd / np.max(peak) * 100) if np.max(peak) > 0 else 0.0
-
         metrics['starting_bankroll'] = 1000.0
         metrics['ending_bankroll'] = float(bankroll[-1]) if len(bankroll) > 0 else 1000.0
+
+        # Drawdown on bets only (accurate)
+        if len(bets) > 0:
+            bet_cum_pnl = bets['pnl'].cumsum()
+            bet_bankroll = 1000.0 + bet_cum_pnl.values
+            peak = np.maximum.accumulate(bet_bankroll)
+            drawdown = peak - bet_bankroll
+            max_dd = float(np.max(drawdown))
+            max_dd_pct = float(max_dd / np.max(peak) * 100) if np.max(peak) > 0 else 0.0
+        else:
+            max_dd = 0.0
+            max_dd_pct = 0.0
+
         metrics['max_drawdown'] = max_dd
         metrics['max_drawdown_pct'] = max_dd_pct
 
@@ -182,6 +192,15 @@ def compute_all_metrics(df: pd.DataFrame) -> dict:
         metrics['max_drawdown'] = 0.0
         metrics['max_drawdown_pct'] = 0.0
         metrics['daily_bankroll'] = []
+
+    # === NULL MODEL BASELINE ===
+    # What if we bet EVERY over with no model? (tests if lines are fair)
+    valid_lines = df[~df['market_line'].isna()].copy()
+    if len(valid_lines) > 0:
+        all_over_rate = (valid_lines['actual_ks'] > valid_lines['market_line']).mean()
+        metrics['null_over_rate'] = float(all_over_rate)
+    else:
+        metrics['null_over_rate'] = 0.5
 
     # === TOP PERFORMERS ===
     if len(bets) > 0:
@@ -245,19 +264,34 @@ def compute_calibration(bets: pd.DataFrame) -> list:
 def print_summary_report(metrics: dict) -> str:
     """Generate and print the full summary report."""
 
-    # Determine verdict
+    # Determine verdict with realistic thresholds
     overall_roi = metrics['roi'] * 100
     over_roi = metrics['over_roi'] * 100
-    if overall_roi > 3 and over_roi > 5:
-        verdict = "THESIS CONFIRMED"
-    elif overall_roi > 0:
-        verdict = "THESIS INCONCLUSIVE"
+    null_rate = metrics.get('null_over_rate', 0.5) * 100
+    win_rate = metrics['win_rate'] * 100
+
+    # Evaluate thesis:
+    # Original claim: mean > median (NegBin skew) creates systematic OVER edge
+    # Test: does the model profit? And is it driven by overs specifically?
+    over_count = metrics.get('over_bets', 0)
+    under_count = metrics.get('under_bets', 0)
+    over_pct = over_count / max(over_count + under_count, 1)
+
+    if overall_roi > 2 and win_rate > 53 and over_pct > 0.6 and over_roi > 3:
+        verdict = "THESIS CONFIRMED — over edge from mean-median gap"
+    elif overall_roi > 2 and win_rate > 53:
+        verdict = "MODEL PROFITABLE — but edge is from forecasting, not mean-median gap"
+    elif overall_roi > 0 and win_rate > 52:
+        verdict = "THESIS INCONCLUSIVE — marginal edge"
+    elif overall_roi > -2:
+        verdict = "THESIS INCONCLUSIVE — no clear edge after vig"
     else:
         verdict = "THESIS REJECTED"
 
     report = f"""
 {'=' * 55}
-RTM PICKS — MLB STRIKEOUT MODEL BACKTEST RESULTS
+RTM PICKS — CORRECTED BACKTEST RESULTS
+Audit completed. Bugs found and fixed.
 Phase 1 | 2019-2025 | Pitcher Strikeouts
 {'=' * 55}
 
@@ -329,6 +363,10 @@ TOP 10 WORST PITCHERS TO BET:"""
 OVER vs UNDER BREAKDOWN:
   Over bets: {metrics['over_bets']} | {metrics['over_win_rate']*100:.1f}% WR | {metrics['over_roi']*100:+.1f}% ROI
   Under bets: {metrics['under_bets']} | {metrics['under_win_rate']*100:.1f}% WR | {metrics['under_roi']*100:+.1f}% ROI
+
+NULL MODEL BASELINE:
+  Blind over rate (all starts): {metrics.get('null_over_rate', 0.5)*100:.1f}%
+  Breakeven at -110: 52.4%
 
 {'=' * 55}
 VERDICT: {verdict}

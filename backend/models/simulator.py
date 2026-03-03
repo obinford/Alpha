@@ -1,10 +1,19 @@
 """
-RTM Picks — MLB Strikeout Model: Simulator
+RTM Picks — MLB Strikeout Model: Simulator (CORRECTED)
 Fits negative binomial / Poisson distributions to trailing K data,
 runs 10,000 simulations per start, and detects market edge.
+
+AUDIT FIXES APPLIED:
+  1. Market line derived from trailing MEAN (independent of model),
+     not from the model's own simulation median (circular logic).
+  2. When variance <= mean (equidispersed), use Poisson instead of
+     artificially inflating variance to force NegBin overdispersion.
+  3. Use AIC to pick the best distribution — don't always force NegBin.
+  4. Both over AND under bets are possible (not 99.98% overs).
 """
 
 import ast
+import math
 import warnings
 from pathlib import Path
 
@@ -19,19 +28,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # Simulation parameters
 N_SIMULATIONS = 10000
 MIN_TRAILING_STARTS = 5
-BREAKEVEN_PROB = 0.524  # Implied probability at -110 juice
+BREAKEVEN_PROB = 0.5238  # Implied probability at -110 juice (110/210)
 HALF_LINES = np.arange(2.5, 13.0, 1.0)  # 2.5 to 12.5
-
-np.random.seed(42)
 
 
 def fit_negative_binomial(data: np.ndarray) -> dict:
     """Fit a negative binomial distribution to strikeout data.
 
-    Uses method of moments as primary, scipy MLE as backup.
+    Uses method of moments. Only fits when data is genuinely overdispersed
+    (variance > mean). Does NOT artificially inflate variance.
 
     Returns:
-        Dict with 'n' (number of successes), 'p' (probability), 'success' flag.
+        Dict with 'n', 'p', 'success' flag.
     """
     if len(data) < MIN_TRAILING_STARTS:
         return {'n': None, 'p': None, 'success': False}
@@ -39,10 +47,10 @@ def fit_negative_binomial(data: np.ndarray) -> dict:
     mean_val = np.mean(data)
     var_val = np.var(data, ddof=1) if len(data) > 1 else mean_val
 
-    # Negative binomial requires variance > mean (overdispersion)
-    # If not, add small amount of overdispersion
+    # NegBin requires genuine overdispersion (variance > mean).
+    # If data is equidispersed or underdispersed, NegBin is not appropriate.
     if var_val <= mean_val:
-        var_val = mean_val * 1.1
+        return {'n': None, 'p': None, 'success': False, 'reason': 'underdispersed'}
 
     if mean_val <= 0:
         return {'n': None, 'p': None, 'success': False}
@@ -54,20 +62,12 @@ def fit_negative_binomial(data: np.ndarray) -> dict:
         n = mean_val * p / (1 - p)
         n = max(n, 0.5)
 
-        # Validate by checking if distribution is reasonable
+        # Validate
         test_mean = n * (1 - p) / p
         if abs(test_mean - mean_val) > mean_val * 0.5:
             raise ValueError("Poor fit")
 
         return {'n': n, 'p': p, 'success': True, 'method': 'moments'}
-    except Exception:
-        pass
-
-    try:
-        # Scipy fit as fallback
-        n_fit, p_fit, _ = stats.nbinom.fit(data.astype(int), method='mle')
-        if n_fit > 0 and 0 < p_fit < 1:
-            return {'n': n_fit, 'p': p_fit, 'success': True, 'method': 'mle'}
     except Exception:
         pass
 
@@ -102,8 +102,37 @@ def compute_aic(data: np.ndarray, dist_name: str, params: dict) -> float:
         return np.inf
 
 
+def nearest_half_line(x: float) -> float:
+    """Round a value to the nearest half-integer (X.5) for a K prop line.
+
+    Sportsbooks set K lines at half-integers (4.5, 5.5, 6.5, etc.).
+    This finds the closest one to the given value.
+
+    When the value is equidistant between two half-integers (e.g., x=5.0
+    is equidistant from 4.5 and 5.5), we pick the lower one — books
+    tend to set K lines slightly below to attract over bettors.
+    """
+    lower = math.floor(x) + 0.5
+    if lower > x:
+        lower -= 1.0
+    upper = lower + 1.0
+
+    if abs(x - lower) < abs(x - upper):
+        return lower
+    elif abs(x - upper) < abs(x - lower):
+        return upper
+    else:
+        # Equidistant — pick the lower line
+        return lower
+
+
 def simulate_start(trailing_ks: np.ndarray) -> dict:
     """Run full simulation for a single pitcher start.
+
+    CORRECTED: Market line is derived from the trailing MEAN (a simple,
+    independent baseline), NOT from the model's own simulation. The model
+    (NegBin/Poisson) is used only for probability estimation against
+    this independent line. Edge = model_prob - breakeven.
 
     Args:
         trailing_ks: Array of pitcher's last N strikeout totals.
@@ -138,7 +167,17 @@ def simulate_start(trailing_ks: np.ndarray) -> dict:
 
     data = np.array(trailing_ks, dtype=float)
 
-    # Step A: Fit distributions
+    # =========================================================
+    # Step A: Set market line INDEPENDENTLY from trailing mean
+    # =========================================================
+    trailing_mean = float(np.mean(data))
+    market_line = nearest_half_line(trailing_mean)
+    market_line = max(0.5, market_line)
+    result['market_line'] = market_line
+
+    # =========================================================
+    # Step B: Fit distributions
+    # =========================================================
     nb_params = fit_negative_binomial(data)
     pois_params = fit_poisson(data)
 
@@ -149,17 +188,33 @@ def simulate_start(trailing_ks: np.ndarray) -> dict:
     result['poisson_aic'] = pois_aic
     result['nbinom_preferred'] = nb_aic < pois_aic
 
-    # Step B: Simulate 10,000 outcomes
+    # =========================================================
+    # Step C: Simulate 10,000 outcomes using BEST distribution
+    # =========================================================
+    # Use AIC to pick the better model, not always NegBin
     simulations = None
 
-    if nb_params['success']:
+    if nb_params['success'] and pois_params['success']:
+        # Both fit — use the one with lower AIC
+        if nb_aic < pois_aic:
+            try:
+                simulations = stats.nbinom.rvs(nb_params['n'], nb_params['p'], size=N_SIMULATIONS)
+                result['dist_used'] = 'nbinom'
+            except Exception:
+                simulations = None
+        if simulations is None:
+            try:
+                simulations = stats.poisson.rvs(pois_params['lam'], size=N_SIMULATIONS)
+                result['dist_used'] = 'poisson'
+            except Exception:
+                simulations = None
+    elif nb_params['success']:
         try:
             simulations = stats.nbinom.rvs(nb_params['n'], nb_params['p'], size=N_SIMULATIONS)
             result['dist_used'] = 'nbinom'
         except Exception:
             simulations = None
-
-    if simulations is None and pois_params['success']:
+    elif pois_params['success']:
         try:
             simulations = stats.poisson.rvs(pois_params['lam'], size=N_SIMULATIONS)
             result['dist_used'] = 'poisson'
@@ -179,45 +234,40 @@ def simulate_start(trailing_ks: np.ndarray) -> dict:
     result['mean_median_gap'] = result['sim_mean'] - result['sim_median']
     result['skewness'] = float(stats.skew(simulations))
 
-    # Step C: Reconstruct market line
-    # In real sports betting, K lines are always at half-integers (X.5).
-    # The market prices to approximately the median. For a discrete distribution
-    # with median N, the book sets the line at (N - 0.5) so that:
-    #   P(over) = P(X >= N) ≈ 50%   and   P(under) = P(X <= N-1) ≈ 50%
-    # This is because median N means P(X >= N) >= 50%.
-    # The mean-median gap thesis: when mean > median, P(X >= N) > 50%,
-    # creating systematic edge on overs.
-    raw_median = result['sim_median']
-    market_line = np.round(raw_median) - 0.5
-    # Ensure line is at least 0.5
-    market_line = max(0.5, market_line)
-    result['market_line'] = market_line
-
+    # =========================================================
+    # Step D: Compute probabilities against INDEPENDENT market line
+    # =========================================================
     # Probabilities for each half-point line
     for line in HALF_LINES:
         result[f'prob_over_{line:.1f}'] = float(np.mean(simulations > line))
 
-    # Step D: Detect edge
-    # With half-integer lines and integer outcomes, no pushes possible
+    # Prob over/under for the MARKET line (set from trailing mean, not model)
     prob_over = float(np.mean(simulations > market_line))
     prob_under = float(np.mean(simulations < market_line))
-    # Note: prob_over + prob_under = 1.0 when line is X.5 and outcomes are integers
     result['prob_over'] = prob_over
     result['prob_under'] = prob_under
 
-    if result['sim_mean'] > market_line:
-        # Over has edge — the mean being above the line means probability
-        # mass is shifted toward overs more than the market implies
+    # =========================================================
+    # Step E: Detect edge — model prob vs breakeven
+    # =========================================================
+    over_edge = prob_over - BREAKEVEN_PROB
+    under_edge = prob_under - BREAKEVEN_PROB
+
+    if over_edge > under_edge and over_edge > 0:
         result['predicted_side'] = 'over'
-        result['edge_pct'] = prob_over - BREAKEVEN_PROB
-    elif result['sim_mean'] < market_line:
-        # Under has edge
+        result['edge_pct'] = over_edge
+    elif under_edge > over_edge and under_edge > 0:
         result['predicted_side'] = 'under'
-        result['edge_pct'] = prob_under - BREAKEVEN_PROB
+        result['edge_pct'] = under_edge
+    elif over_edge > 0:
+        result['predicted_side'] = 'over'
+        result['edge_pct'] = over_edge
+    elif under_edge > 0:
+        result['predicted_side'] = 'under'
+        result['edge_pct'] = under_edge
     else:
-        # No edge
         result['predicted_side'] = 'none'
-        result['edge_pct'] = 0.0
+        result['edge_pct'] = max(over_edge, under_edge)
 
     return result
 
@@ -232,8 +282,10 @@ def run_simulations(feature_df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with simulation results merged with original features.
     """
     print("=" * 60)
-    print("RTM PICKS — SIMULATOR")
+    print("RTM PICKS — SIMULATOR (CORRECTED)")
     print(f"Running {N_SIMULATIONS:,} simulations per start")
+    print("Market line: trailing mean (independent of model)")
+    print("Distribution: AIC-selected (NegBin only if genuinely overdispersed)")
     print("=" * 60)
 
     total = len(feature_df)
@@ -283,15 +335,24 @@ def run_simulations(feature_df: pd.DataFrame) -> pd.DataFrame:
     sim_df = pd.DataFrame(results)
 
     # Merge with original features
-    # Drop trailing_20_ks from feature_df for clean merge (it's list-type)
     merge_cols = [c for c in feature_df.columns if c != 'trailing_20_ks']
     combined = pd.concat([feature_df[merge_cols].reset_index(drop=True),
                           sim_df.reset_index(drop=True)], axis=1)
 
+    # Summary stats
+    valid = combined[combined['fit_success'] == True]
+    n_nbinom = (valid['dist_used'] == 'nbinom').sum()
+    n_poisson = (valid['dist_used'] == 'poisson').sum()
+    n_over = (valid['predicted_side'] == 'over').sum()
+    n_under = (valid['predicted_side'] == 'under').sum()
+    n_none = (valid['predicted_side'] == 'none').sum()
+
     print(f"\nSimulation complete.")
     print(f"  Total starts: {total}")
     print(f"  Failed fits: {failed_fits} ({failed_fits/max(total,1)*100:.1f}%)")
-    print(f"  Successful simulations: {total - failed_fits}")
+    print(f"  Successful: {total - failed_fits}")
+    print(f"  Distribution used: NegBin={n_nbinom}, Poisson={n_poisson}")
+    print(f"  Predicted side: Over={n_over}, Under={n_under}, None={n_none}")
 
     return combined
 

@@ -1,0 +1,220 @@
+═══════════════════════════════════════════════════════════════
+RTM PICKS — MLB STRIKEOUT MODEL AUDIT REPORT
+Date: 2026-03-03
+═══════════════════════════════════════════════════════════════
+
+EXECUTIVE SUMMARY
+─────────────────
+The original backtest reported 62.3% win rate, +20.0% ROI, and 0.5%
+max drawdown across 18,435 bets. These numbers were too good to be true.
+
+After a complete 8-point audit, we found 3 bugs (1 critical, 1 major,
+1 minor). After fixing all bugs, the corrected results are:
+
+  BEFORE (BUGGY):  62.3% WR | +20.0% ROI | 18,435 bets | 0.5% DD
+  AFTER (FIXED):   57.4% WR | +10.1% ROI | 10,948 bets | 1.3% DD
+
+The corrected model is profitable, but the ORIGINAL THESIS (mean-median
+gap from NegBin right-skew creates systematic OVER edge) is NOT confirmed.
+The model bets 85% UNDERS. The edge comes from simple forecasting —
+predicting which side of the nearest .5 line the K total will land on.
+
+
+═══════════════════════════════════════════════════════════════
+BUGS FOUND
+═══════════════════════════════════════════════════════════════
+
+BUG 1: CIRCULAR MARKET LINE LOGIC (CRITICAL)
+─────────────────────────────────────────────
+WHAT:
+  The market line was derived FROM the model's own simulation median:
+    market_line = round(sim_median) - 0.5
+  Then the model computed edge against that same line:
+    prob_over = mean(10K_NegBin_sims > market_line)
+    edge = prob_over - 0.524
+
+WHY IT'S WRONG:
+  The model was comparing itself to itself. For ANY right-skewed
+  distribution where line = round(median) - 0.5:
+    P(X > line) = P(X >= round(median)) >= 50%
+  Since NegBin is right-skewed (mean > median), prob_over was
+  ALWAYS above 50%, creating phantom "edge" on every start.
+
+EVIDENCE:
+  - 99.98% of bets were overs (18,431 over vs 4 under)
+  - 85.8% of ALL starts showed positive edge (should be ~55-65%)
+  - 45% of starts classified as A+ tier (7%+ edge)
+  - Over rate on ALL starts using model's line: 59.4%
+  - Over rate using trailing-mean-based line: 47.3%
+  - Average market line was 0.74 Ks BELOW the mean
+
+IMPACT:
+  This single bug inflated ROI from ~10% to ~20% and win rate from
+  ~57% to ~62%. It also made the model think overs were always +EV
+  (99.98% overs), hiding the fact that most edge is on unders.
+
+CODE (simulator.py, lines 190-193):
+  BEFORE: market_line = np.round(result['sim_median']) - 0.5
+  AFTER:  market_line = nearest_half_line(np.mean(trailing_ks))
+
+FIX:
+  Market line now derived from trailing MEAN (independent of model).
+  The nearest_half_line() function finds the closest X.5 value to
+  the simple trailing average. This separates the "market" from
+  the "model" — the model must ADD VALUE over the simple baseline
+  to find edge.
+
+
+BUG 2: ARTIFICIAL VARIANCE INFLATION (MAJOR)
+─────────────────────────────────────────────
+WHAT:
+  When trailing K data had variance <= mean (equidispersed), the code
+  ARTIFICIALLY inflated variance to force NegBin overdispersion:
+    if var_val <= mean_val:
+        var_val = mean_val * 1.1  # ARTIFICIAL
+
+WHY IT'S WRONG:
+  51.8% of starts had this artificial inflation applied. This:
+  a) Forced right-skew where none existed in the data
+  b) Made NegBin "preferred" over Poisson even when Poisson was
+     the correct model (K counts are naturally near-Poisson)
+  c) Created artificial mean-median gap, inflating "thesis" evidence
+
+EVIDENCE:
+  - 51.8% of starts had variance artificially inflated
+  - All 5 random pitcher checks showed inflation
+  - Example: Trevor Rogers, var=1.84, mean=3.95 → var inflated to 4.35
+    (actual data was UNDERDISPERSED, meaning Poisson was correct)
+
+IMPACT:
+  Made the NegBin model appear to fit well when it shouldn't have,
+  creating artificial right-skew and inflating the mean-median gap.
+
+CODE (simulator.py, lines 42-45):
+  BEFORE: if var_val <= mean_val: var_val = mean_val * 1.1
+  AFTER:  if var_val <= mean_val: return {'success': False, 'reason': 'underdispersed'}
+
+FIX:
+  When variance <= mean, return NegBin fit failure and use Poisson instead.
+  AIC comparison now correctly selects the best distribution.
+  Result: NegBin used in 5.8% of starts (genuinely overdispersed),
+  Poisson used in 94.2%.
+
+
+BUG 3: DRAWDOWN DILUTION (MINOR)
+─────────────────────────────────
+WHAT:
+  Max drawdown was computed over ALL rows including ~8,600 non-bet rows
+  where P&L = 0. These zero-P&L rows diluted the drawdown percentage.
+
+WHY IT'S WRONG:
+  Drawdown should measure peak-to-trough on actual betting capital.
+  Including non-bet rows made it look like the strategy never had
+  meaningful pullbacks.
+
+EVIDENCE:
+  - Reported: 0.5% max drawdown (all rows, peak of ~7,400)
+  - Corrected: 1.3% max drawdown (bets only, peak of ~2,600)
+  - Only 7% losing days in a 30-day window (should be 35-45%)
+
+IMPACT:
+  Made the strategy appear unrealistically smooth. Corrected drawdown
+  (1.3%) is still low but more defensible with 57% WR.
+
+FIX:
+  Drawdown now computed on bet rows only in metrics.py.
+
+
+═══════════════════════════════════════════════════════════════
+AUDIT RESULTS (ALL 8 CHECKS)
+═══════════════════════════════════════════════════════════════
+
+1. LOOKAHEAD BIAS:           PASS (20/20 checks clean)
+2. MARKET LINE CIRCULAR:     FAIL → FIXED (Bug 1)
+3. BET RESULT CALCULATION:   PASS (P&L correct at -110)
+4. EDGE CALCULATION:         FAIL → FIXED (consequence of Bug 1)
+5. DISTRIBUTION FITTING:     FAIL → FIXED (Bug 2)
+6. DATA INTEGRITY:           PASS (no dupes, correct K distribution)
+7. MAX DRAWDOWN:             FAIL → FIXED (Bug 3)
+8. WIN RATE SANITY:          FAIL → FIXED (consequence of Bug 1)
+
+
+═══════════════════════════════════════════════════════════════
+CORRECTED RESULTS
+═══════════════════════════════════════════════════════════════
+
+  Total starts analyzed:     27,017
+  Total bets placed:         10,948 (was 18,435)
+  Win rate:                  57.4% (was 62.3%)
+  ROI:                       +10.1% (was +20.0%)
+  Units profit:              +1,579.6 (was +6,415.7)
+  Max drawdown:              1.3% (was 0.5%)
+
+  Over bets:    1,656 (15.1%) at 58.0% WR, +11.6% ROI
+  Under bets:   9,292 (84.9%) at 57.3% WR, +9.9% ROI
+
+  Distribution: NegBin 5.8%, Poisson 94.2%
+  Null over rate (blind): 47.3% (below 52.4% breakeven)
+
+MEAN/MEDIAN THESIS:
+  Over-only ROI:             +11.6%
+  Gap attribution:           NOT the primary driver
+  The model bets 85% UNDERS, not overs.
+  Edge comes from forecasting accuracy, not NegBin skew.
+
+BY SEASON (corrected):
+  2019:  1,358 bets | 55.2% WR | +6.8% ROI
+  2020:    553 bets | 55.3% WR | +5.9% ROI
+  2021:  1,818 bets | 58.9% WR | +13.3% ROI
+  2022:  1,762 bets | 58.1% WR | +11.8% ROI
+  2023:  1,747 bets | 57.4% WR | +8.9% ROI
+  2024:  1,869 bets | 56.8% WR | +8.6% ROI
+  2025:  1,841 bets | 58.1% WR | +11.7% ROI
+
+
+═══════════════════════════════════════════════════════════════
+VERDICT: MODEL PROFITABLE — but edge is from forecasting,
+         not mean-median gap
+═══════════════════════════════════════════════════════════════
+
+The original thesis — that NegBin right-skew (mean > median) creates
+a systematic edge on OVER bets — is NOT confirmed:
+
+  1. The corrected model bets 85% UNDERS, not overs
+  2. Blind over rate is 47.3% (below breakeven) with proper lines
+  3. Only 5.8% of starts are genuinely overdispersed (NegBin)
+  4. 94.2% of starts follow Poisson (mean ≈ median, no skew edge)
+
+What IS confirmed:
+  - Trailing K averages are predictive of future K totals
+  - When the mean is far from the nearest .5 line, the model can
+    identify the likely side with ~57% accuracy
+  - This creates a genuine +10% ROI on simulated market lines
+
+IMPORTANT CAVEATS:
+  - Market lines are RECONSTRUCTED (nearest .5 to trailing mean),
+    not actual sportsbook lines
+  - Real books would set sharper lines, reducing edge significantly
+  - Real-world ROI would likely be 0-5%, not 10%
+  - Phase 2 should integrate actual odds data from The Odds API
+
+
+═══════════════════════════════════════════════════════════════
+RECOMMENDATIONS FOR PHASE 2
+═══════════════════════════════════════════════════════════════
+
+1. USE ACTUAL ODDS DATA: Pull historical K prop lines from The Odds API
+   for 2023+. This eliminates the reconstructed-line problem entirely.
+
+2. REFRAME THE THESIS: The edge isn't from NegBin skew — it's from
+   forecasting K totals more accurately than the market. Refocus the
+   model on pitcher-specific K rate prediction.
+
+3. ADD OPPONENT K RATE: Team-level K% against starters is a strong
+   feature missing from the current model.
+
+4. ADD PITCHER VELOCITY/SPIN: Statcast data (when available) would
+   improve in-season predictions for pitchers whose stuff is trending.
+
+5. LIVE ODDS COMPARISON: Only bet when the model's probability differs
+   from the implied probability of actual sportsbook odds by > 3%.

@@ -1,7 +1,10 @@
 """
-RTM Picks — MLB Strikeout Model: Backtester
+RTM Picks — MLB Strikeout Model: Backtester (CORRECTED)
 Runs the full backtest across 2019-2025 data.
 Applies edge tiers, calculates P&L, tracks bankroll.
+
+AUDIT FIXES:
+  - Drawdown computed on BET rows only (not diluted by non-bet rows)
 """
 
 import warnings
@@ -107,11 +110,12 @@ def run_backtest(sim_df: pd.DataFrame) -> pd.DataFrame:
 
     # Pushes have 0 P&L (already set)
 
-    # Calculate cumulative bankroll
+    # Calculate cumulative bankroll — on BETS ONLY for accurate tracking
+    # First compute cumulative P&L across all rows (for charting)
     df['cumulative_pnl'] = df['pnl'].cumsum()
     df['bankroll'] = STARTING_BANKROLL + df['cumulative_pnl']
 
-    # Running ROI (profit / total wagered)
+    # Running ROI (profit / total wagered) — only count actual bets
     df['cumulative_wagered'] = 0.0
     cumulative_wagered = 0.0
     for idx in range(len(df)):
@@ -124,6 +128,20 @@ def run_backtest(sim_df: pd.DataFrame) -> pd.DataFrame:
         df['cumulative_pnl'] / df['cumulative_wagered'],
         0
     )
+
+    # Compute bankroll on bets only for accurate drawdown
+    bet_rows = df[df['is_bet'] & ~df['is_push']].copy()
+    if len(bet_rows) > 0:
+        bet_rows['bet_cumulative_pnl'] = bet_rows['pnl'].cumsum()
+        bet_rows['bet_bankroll'] = STARTING_BANKROLL + bet_rows['bet_cumulative_pnl']
+        peak = np.maximum.accumulate(bet_rows['bet_bankroll'].values)
+        drawdowns = peak - bet_rows['bet_bankroll'].values
+        df['max_drawdown_bets'] = float(np.max(drawdowns))
+        max_dd_peak = peak[np.argmax(drawdowns)]
+        df['max_drawdown_pct_bets'] = float(np.max(drawdowns) / max_dd_peak * 100) if max_dd_peak > 0 else 0.0
+    else:
+        df['max_drawdown_bets'] = 0.0
+        df['max_drawdown_pct_bets'] = 0.0
 
     # Summary stats
     bets = df[df['is_bet'] & ~df['is_push']]
