@@ -11,8 +11,11 @@
 
 -- ─── Users ─────────────────────────────────────────────────────────────────
 
+-- id is the same UUID as the Supabase auth user (auth.users.id); deleting the
+-- auth user cascades to the gamification profile. No default — the id is always
+-- supplied from auth (e.g. a handle_new_user trigger or the app on first login).
 CREATE TABLE IF NOT EXISTS users (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          UUID PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
     email       TEXT UNIQUE NOT NULL,
     timezone    TEXT NOT NULL DEFAULT 'UTC',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
